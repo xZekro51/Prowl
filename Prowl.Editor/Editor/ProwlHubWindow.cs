@@ -68,10 +68,10 @@ public class ProwlHubWindow : EditorWindow
             gui.Draw2D.DrawRectFilled(gui.CurrentNode.LayoutData.Rect, DarkBG);
 
             // Title bar
-            DrawTitleBar();
+            //DrawTitleBar(); we don't need this
 
             // Content area
-            using (gui.Node("Content").Top(50).ExpandWidth().ExpandHeight(-50).Layout(LayoutType.Row).Enter())
+            using (gui.Node("Content").Top(0).ExpandWidth().ExpandHeight(-50).Layout(LayoutType.Row).Enter())
             {
                 // Sidebar
                 DrawSidebar();
@@ -89,7 +89,7 @@ public class ProwlHubWindow : EditorWindow
             gui.Draw2D.DrawRectFilled(gui.CurrentNode.LayoutData.Rect, SidebarBG);
 
             // Hub logo and title
-            using (gui.Node("HubTitle").Width(200).ExpandHeight().Layout(LayoutType.Row).Spacing(10).Padding(20, 0).Enter())
+            using (gui.Node("HubTitle").Width(200).ExpandHeight().Padding(20, 0).Layout(LayoutType.Row).Spacing(10).Enter())
             {
                 using (gui.Node("Logo").Width(30).ExpandHeight().Enter())
                 {
@@ -102,11 +102,12 @@ public class ProwlHubWindow : EditorWindow
                 }
             }
 
+            // Spacer
+            using (gui.Node("Spacer").ExpandWidth().ExpandHeight().Enter()) { }
+
             // Window controls (top right)
             using (gui.Node("WindowControls").Width(100).ExpandHeight().Layout(LayoutType.Row).Enter())
             {
-                gui.CurrentNode.Left(Offset.Percentage(1f, -100));
-
                 using (gui.Node("MinimizeBtn").Width(50).ExpandHeight().Enter())
                 {
                     if (gui.IsNodeHovered())
@@ -149,11 +150,11 @@ public class ProwlHubWindow : EditorWindow
 
                     if (isSelected)
                     {
-                        gui.Draw2D.DrawRectFilled(gui.CurrentNode.LayoutData.Rect, Color.white * 0.15f, 8);
+                        gui.Draw2D.DrawRectFilled(gui.CurrentNode.LayoutData.Rect, Color.white * 0.15f, (float)EditorStylePrefs.Instance.ButtonRoundness);
                     }
                     else if (isHovered)
                     {
-                        gui.Draw2D.DrawRectFilled(gui.CurrentNode.LayoutData.Rect, Color.white * 0.08f, 8);
+                        gui.Draw2D.DrawRectFilled(gui.CurrentNode.LayoutData.Rect, Color.white * 0.08f, (float)EditorStylePrefs.Instance.ButtonRoundness);
                     }
 
                     if (gui.IsNodePressed())
@@ -188,6 +189,12 @@ public class ProwlHubWindow : EditorWindow
             // Projects table
             DrawProjectsTable();
         }
+
+        // Create project overlay
+        if (_createTabOpen)
+        {
+            DrawCreateProjectOverlay();
+        }
     }
 
     private void DrawProjectsHeader()
@@ -195,26 +202,28 @@ public class ProwlHubWindow : EditorWindow
         using (gui.Node("Header").ExpandWidth().Height(60).Layout(LayoutType.Row).Spacing(20).Enter())
         {
             // Projects title
-            using (gui.Node("Title").ExpandHeight().FitContentWidth().Enter())
+            using (gui.Node("Title").FitContentWidth().ExpandHeight().Enter())
             {
                 gui.Draw2D.DrawText("Projects", 32, gui.CurrentNode.LayoutData.Rect, Color.white);
             }
 
             // Search box
-            using (gui.Node("Search").Width(300).Height(35).Top(12).Enter())
+            using (gui.Node("SearchContainer").Width(300).Height(35).Top(12).Enter())
             {
                 gui.Draw2D.DrawRectFilled(gui.CurrentNode.LayoutData.Rect, Color.black * 0.3f, 6);
                 gui.Draw2D.DrawRect(gui.CurrentNode.LayoutData.Rect, Color.white * 0.2f, 1, 6);
 
                 var searchRect = gui.CurrentNode.LayoutData.Rect;
-                searchRect.x += 10;
-                searchRect.width -= 20;
+                searchRect.x += 40;
+                searchRect.width -= 50;
+                searchRect.y += 2;
+                searchRect.height -= 4;
 
-                string placeholder = string.IsNullOrEmpty(_searchText) ? FontAwesome6.MagnifyingGlass + " Search" : "";
-                if (!string.IsNullOrEmpty(placeholder))
-                {
-                    gui.Draw2D.DrawText(placeholder, 14, searchRect, Color.white * 0.5f);
-                }
+                // Search icon
+                var iconRect = gui.CurrentNode.LayoutData.Rect;
+                iconRect.x += 10;
+                iconRect.width = 20;
+                gui.Draw2D.DrawText(FontAwesome6.MagnifyingGlass, 14, iconRect, Color.white * 0.5f);
 
                 gui.InputField("SearchInput", ref _searchText, 255, Gui.InputFieldFlags.None, 
                     searchRect.x, searchRect.y, searchRect.width, searchRect.height, EditorGUI.InputStyle);
@@ -266,12 +275,6 @@ public class ProwlHubWindow : EditorWindow
 
             // Table content
             DrawTableContent();
-        }
-
-        // Create project overlay
-        if (_createTabOpen)
-        {
-            DrawCreateProjectOverlay();
         }
     }
 
@@ -442,7 +445,7 @@ public class ProwlHubWindow : EditorWindow
             // Actions column
             using (gui.Node("ActionsColumn").Width(50).ExpandHeight().Enter())
             {
-                if (gui.IsNodeHovered())
+                if (isHovered)
                 {
                     using (gui.Node("MenuBtn").Width(30).Height(30).Enter())
                     {
@@ -472,7 +475,7 @@ public class ProwlHubWindow : EditorWindow
     private void DrawCreateProjectOverlay()
     {
         // Overlay background
-        using (gui.Node("CreateOverlay").Left(250).Top(0).ExpandWidth(-250).ExpandHeight().Enter())
+        using (gui.Node("CreateOverlay").Left(0).Top(0).ExpandWidth().ExpandHeight().Enter())
         {
             gui.Draw2D.DrawRectFilled(gui.CurrentNode.LayoutData.Rect, Color.black * 0.5f);
 
