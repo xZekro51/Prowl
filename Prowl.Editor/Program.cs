@@ -65,8 +65,8 @@ public static class Program
             EditorGuiManager.Initialize();
             ImporterAttribute.GenerateLookUp();
 
-            // Start with the project window open
-            new ProjectsWindow();
+            // Start with the Prowl Hub window open
+            new ProwlHubWindow();
         };
 
         Application.Update += () =>

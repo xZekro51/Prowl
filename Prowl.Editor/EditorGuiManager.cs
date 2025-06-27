@@ -356,6 +356,7 @@ public static class EditorGuiManager
     }
 
     [MenuItem("File/Build Project")] public static void File_BuildProject() => new BuildWindow();
+    [MenuItem("File/Hub")] public static void File_Hub() => new ProwlHubWindow();
 
 
     #region Templates
