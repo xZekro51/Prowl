@@ -72,6 +72,76 @@ public static partial class Graphics
     [LibraryImport("Shcore.dll")]
     internal static partial int SetProcessDpiAwareness(int value);
 
+    [LibraryImport("user32.dll")]
+    private static partial int GetDpiForWindow(IntPtr hwnd);
+
+    [LibraryImport("user32.dll")]
+    private static partial int GetSystemMetrics(int nIndex);
+
+    private const int SM_CXSCREEN = 0;
+    private const int SM_CYSCREEN = 1;
+
+    /// <summary>
+    /// Gets the system DPI scale factor (1.0 = 100% scaling, 1.25 = 125% scaling, etc.)
+    /// </summary>
+    public static double GetSystemDpiScale()
+    {
+        if (RuntimeUtils.IsWindows())
+        {
+            try
+            {
+                // Get DPI for the main window
+                int dpi = GetDpiForWindow(Screen.Handle);
+                if (dpi > 0)
+                {
+                    // Standard DPI is 96, so scale factor = current DPI / 96
+                    return dpi / 96.0;
+                }
+            }
+            catch
+            {
+                // Fallback if Win32 calls fail
+            }
+        }
+        else if (RuntimeUtils.IsMac())
+        {
+            // On macOS, try to get the native scale from Metal bindings
+            try
+            {
+                var mainScreen = Veldrid.MetalBindings.UIScreen.mainScreen;
+                var nativeScale = mainScreen.nativeScale;
+                if (nativeScale.Value > 0)
+                {
+                    return nativeScale.Value;
+                }
+            }
+            catch
+            {
+                // Fallback if Metal bindings fail
+            }
+        }
+
+        // Fallback: calculate from framebuffer vs window size ratio
+        try
+        {
+            var targetRes = TargetResolution;
+            var screenSize = Screen.Size;
+            if (screenSize.x > 0 && screenSize.y > 0)
+            {
+                // Use the average of X and Y scaling to get a single scale factor
+                double scaleX = (double)targetRes.x / screenSize.x;
+                double scaleY = (double)targetRes.y / screenSize.y;
+                return (scaleX + scaleY) / 2.0;
+            }
+        }
+        catch
+        {
+            // Final fallback
+        }
+
+        return 1.0; // No scaling
+    }
+
     public static void Initialize(bool VSync = true, GraphicsBackend preferredBackend = GraphicsBackend.OpenGL)
     {
         GraphicsDeviceOptions deviceOptions = new()

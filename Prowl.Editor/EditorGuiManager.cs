@@ -82,7 +82,11 @@ public static class EditorGuiManager
         Vector2 framebufferAndInputScale = new((float)Graphics.TargetResolution.x / Screen.Size.x, Graphics.TargetResolution.y / (float)Screen.Size.y);
 
         Gui.PointerWheel = Input.MouseWheelDelta;
-        double scale = EditorStylePrefs.Instance.Scale;
+        
+        // Combine editor scale with system DPI scale
+        double editorScale = EditorStylePrefs.Instance.Scale;
+        double systemDpiScale = Graphics.GetSystemDpiScale();
+        double combinedScale = editorScale * systemDpiScale;
 
         Veldrid.CommandList commandList = Graphics.GetCommandList();
         commandList.Name = "GUI Command Buffer";
@@ -91,7 +95,7 @@ public static class EditorGuiManager
         commandList.ClearColorTarget(0, Veldrid.RgbaFloat.Black);
         commandList.ClearDepthStencil(1.0f, 0);
 
-        Gui.ProcessFrame(commandList, screenRect, (float)scale, framebufferAndInputScale, EditorPreferences.Instance.AntiAliasing, (g) =>
+        Gui.ProcessFrame(commandList, screenRect, (float)combinedScale, framebufferAndInputScale, EditorPreferences.Instance.AntiAliasing, (g) =>
         {
             // Draw Background
             g.Draw2D.DrawRectFilled(g.ScreenRect, EditorStylePrefs.Instance.Background);

@@ -37,8 +37,8 @@ public class ProwlHubWindow : EditorWindow
     private bool _sortAscending = false;
 
     protected override bool Center { get; } = true;
-    protected override double Width { get; } = 1200;
-    protected override double Height { get; } = 800;
+    protected override double Width { get; }
+    protected override double Height { get; }
     protected override bool BackgroundFade { get; } = true;
     protected override bool TitleBar { get; } = false;
     protected override bool RoundCorners => false;
@@ -67,6 +67,15 @@ public class ProwlHubWindow : EditorWindow
     public ProwlHubWindow()
     {
         Title = FontAwesome6.Cube + " Hub";
+
+        // Scale window size based on system DPI scaling
+        double systemScale = Graphics.GetSystemDpiScale();
+        double baseWidth = 1200;
+        double baseHeight = 800;
+        
+        // Apply system scaling to get appropriate window size
+        Width = baseWidth / systemScale; // Divide because the UI system will scale it back up
+        Height = baseHeight / systemScale;
 
         _tabs = [
             (FontAwesome6.FolderOpen + "  Projects", DrawProjectsTab),
