@@ -53,6 +53,12 @@ public class ProwlHubWindow : EditorWindow
     static readonly Color AccentPurple = new Color(0.6f, 0.2f, 1.0f, 1.0f);
     static readonly Color AccentCyan = new Color(0.2f, 1.0f, 0.8f, 1.0f);
 
+    // Improved color scheme for better readability
+    static readonly Color ReadableWhite = new Color(0.95f, 0.95f, 0.95f, 1.0f);
+    static readonly Color ReadableGray = new Color(0.75f, 0.75f, 0.75f, 1.0f);
+    static readonly Color ReadableDarkGray = new Color(0.6f, 0.6f, 0.6f, 1.0f);
+    static readonly Color HighContrastText = new Color(1.0f, 1.0f, 1.0f, 1.0f);
+
     // Particle system for background effects
     private struct Particle
     {
@@ -259,13 +265,13 @@ public class ProwlHubWindow : EditorWindow
             gui.Draw2D.DrawCircleFilled(center, 100f * pulseScale, glowColor);
             gui.Draw2D.DrawCircleFilled(center, 80f * pulseScale, AccentPurple * (alpha * 0.3f));
 
-            // Welcome text with typewriter effect
+            // Welcome text with typewriter effect - Improved readability
             string welcomeText = "Welcome to Prowl Hub";
             int visibleChars = Math.Min(welcomeText.Length, (int)(_welcomeAnimTime * 8));
             string displayText = welcomeText.Substring(0, visibleChars);
             
-            var textRect = new Rect(center.x - 200, center.y + 80, 400, 50);
-            gui.Draw2D.DrawText(displayText, 24, textRect, Color.white * alpha);
+            var textRect = new Rect(center.x - 250, center.y + 80, 500, 60);
+            gui.Draw2D.DrawText(displayText, 28, textRect, HighContrastText * alpha);
 
             gui.SetZIndex(0, true);
         }
@@ -273,7 +279,7 @@ public class ProwlHubWindow : EditorWindow
 
     private void DrawEnhancedSidebar(float alpha)
     {
-        using (gui.Node("Sidebar").Width(250).ExpandHeight().Layout(LayoutType.Column).Spacing(5).Padding(20).Enter())
+        using (gui.Node("Sidebar").Width(280).ExpandHeight().Layout(LayoutType.Column).Spacing(8).Padding(25).Enter())
         {
             var sidebarRect = gui.CurrentNode.LayoutData.Rect;
             
@@ -287,8 +293,8 @@ public class ProwlHubWindow : EditorWindow
             gui.Draw2D.DrawVerticalGradient(glowRect.Position, new Vector2(glowRect.x, glowRect.y + glowRect.height), (float)glowRect.width, 
                 HubBlue * (alpha * 0.1f), Color.clear);
 
-            // Hub title with glow effect
-            using (gui.Node("HubTitle").ExpandWidth().Height(60).Padding(0, 10).Enter())
+            // Hub title with glow effect - Improved readability
+            using (gui.Node("HubTitle").ExpandWidth().Height(70).Padding(0, 15).Enter())
             {
                 var titleRect = gui.CurrentNode.LayoutData.Rect;
                 Color titleGlow = HubBlue * (_titleGlowIntensity * alpha * 0.5f);
@@ -296,12 +302,12 @@ public class ProwlHubWindow : EditorWindow
                 // Glow background
                 gui.Draw2D.DrawRectFilled(titleRect, titleGlow, 8f);
                 
-                // Title text with effects
-                gui.Draw2D.DrawText(FontAwesome6.Cube + " Prowl Hub", 20, titleRect, Color.white * alpha);
+                // Title text with improved size and contrast
+                gui.Draw2D.DrawText(FontAwesome6.Cube + " Prowl Hub", 24, titleRect, HighContrastText * alpha);
             }
 
             // Animated separator
-            using (gui.Node("Separator").ExpandWidth().Height(2).Enter())
+            using (gui.Node("Separator").ExpandWidth().Height(3).Enter())
             {
                 var sepRect = gui.CurrentNode.LayoutData.Rect;
                 float gradientProgress = (float)((_backgroundAnimTime * 0.5) % 1.0);
@@ -310,7 +316,7 @@ public class ProwlHubWindow : EditorWindow
                     HubBlue * (alpha * gradientProgress), AccentPurple * (alpha * (1f - gradientProgress)));
             }
 
-            // Enhanced tab buttons
+            // Enhanced tab buttons with better spacing
             for (int i = 0; i < _tabs.Length; i++)
             {
                 DrawEnhancedTabButton(i, alpha);
@@ -320,7 +326,7 @@ public class ProwlHubWindow : EditorWindow
 
     private void DrawEnhancedTabButton(int index, float alpha)
     {
-        using (gui.Node($"Tab_{index}").ExpandWidth().Height(45).Enter())
+        using (gui.Node($"Tab_{index}").ExpandWidth().Height(50).Enter())
         {
             bool isSelected = _currentTab == index;
             bool isHovered = gui.IsNodeHovered();
@@ -351,13 +357,13 @@ public class ProwlHubWindow : EditorWindow
             if (gui.IsNodePressed())
                 _currentTab = index;
 
-            // Enhanced text with color transitions
-            Color textColor = Color.Lerp(Color.white * 0.7f, Color.white, selectionAnim);
+            // Enhanced text with better colors and size
+            Color textColor = Color.Lerp(ReadableGray, HighContrastText, selectionAnim);
             textColor = Color.Lerp(textColor, AccentCyan, hoverAnim * 0.3f);
             
             var textRect = tabRect;
-            textRect.x += 15;
-            gui.Draw2D.DrawText(_tabs[index].Item1, 16, textRect, textColor * alpha);
+            textRect.x += 20;
+            gui.Draw2D.DrawText(_tabs[index].Item1, 18, textRect, textColor * alpha);
             
             // Add subtle particle trail for selected tab
             if (isSelected)
@@ -414,7 +420,7 @@ public class ProwlHubWindow : EditorWindow
 
     private void DrawProjectsTab()
     {
-        using (gui.Node("ProjectsTab").ExpandWidth().ExpandHeight().Layout(LayoutType.Column).Padding(30).Enter())
+        using (gui.Node("ProjectsTab").ExpandWidth().ExpandHeight().Layout(LayoutType.Column).Padding(40).Enter())
         {
             // Header with enhanced animations
             DrawEnhancedProjectsHeader();
@@ -432,20 +438,20 @@ public class ProwlHubWindow : EditorWindow
 
     private void DrawEnhancedProjectsHeader()
     {
-        using (gui.Node("Header").ExpandWidth().Height(60).Layout(LayoutType.Row).Spacing(20).Enter())
+        using (gui.Node("Header").ExpandWidth().Height(70).Layout(LayoutType.Row).Spacing(25).Enter())
         {
-            // Projects title with glow effect
+            // Projects title with glow effect - Improved readability
             using (gui.Node("Title").FitContentWidth().ExpandHeight().Enter())
             {
                 var titleRect = gui.CurrentNode.LayoutData.Rect;
                 
                 // Add animated underline
-                var underlineRect = new Rect(titleRect.x, titleRect.y + titleRect.height - 5, titleRect.width, 3);
+                var underlineRect = new Rect(titleRect.x, titleRect.y + titleRect.height - 6, titleRect.width, 4);
                 float underlineProgress = (float)((_backgroundAnimTime * 0.8) % 1.0);
                 gui.Draw2D.DrawHorizontalGradient(underlineRect.Position, new Vector2(underlineRect.x + underlineRect.width, underlineRect.y), 
                     (float)underlineRect.height, HubBlue * underlineProgress, AccentPurple * (1f - underlineProgress));
                 
-                gui.Draw2D.DrawText("Projects", 32, titleRect, Color.white);
+                gui.Draw2D.DrawText("Projects", 36, titleRect, HighContrastText);
             }
 
             // Enhanced search box with glow
@@ -455,16 +461,16 @@ public class ProwlHubWindow : EditorWindow
             using (gui.Node("Spacer").ExpandWidth().ExpandHeight().Enter()) { }
 
             // Enhanced buttons
-            DrawEnhancedButton("AddBtn", "Add", 80, Color.white * 0.2f, () => 
+            DrawEnhancedButton("AddBtn", "Add", 90, Color.white * 0.2f, () => 
                 OpenDialog("Add Existing Project", (x) => ProjectCache.Instance.AddProject(new Project(new DirectoryInfo(x)))));
             
-            DrawEnhancedButton("NewBtn", "New project", 120, HubBlue, () => _createTabOpen = !_createTabOpen);
+            DrawEnhancedButton("NewBtn", "New project", 140, HubBlue, () => _createTabOpen = !_createTabOpen);
         }
     }
 
     private void DrawEnhancedSearchBox()
     {
-        using (gui.Node("SearchContainer").Width(300).Height(35).Top(12).Enter())
+        using (gui.Node("SearchContainer").Width(350).Height(40).Top(15).Enter())
         {
             var searchRect = gui.CurrentNode.LayoutData.Rect;
             var interact = gui.GetInteractable(gui.CurrentNode);
@@ -472,32 +478,32 @@ public class ProwlHubWindow : EditorWindow
             
             // Animated border and glow
             float focusAnim = gui.AnimateBool(isFocused, 0.3f, EaseType.CubicOut);
-            Color borderColor = Color.Lerp(Color.white * 0.2f, HubBlue, focusAnim);
+            Color borderColor = Color.Lerp(ReadableDarkGray * 0.4f, HubBlue, focusAnim);
             
-            gui.Draw2D.DrawRectFilled(searchRect, Color.black * 0.3f, 6);
-            gui.Draw2D.DrawRect(searchRect, borderColor, 1 + focusAnim * 2, 6);
+            gui.Draw2D.DrawRectFilled(searchRect, Color.black * 0.4f, 8);
+            gui.Draw2D.DrawRect(searchRect, borderColor, 2 + focusAnim * 2, 8);
             
             // Add glow effect when focused
             if (focusAnim > 0.01f)
             {
                 var glowRect = searchRect;
-                glowRect.Expand(focusAnim * 4f);
-                gui.Draw2D.DrawRect(glowRect, HubBlue * (focusAnim * 0.3f), 1f, 8);
+                glowRect.Expand(focusAnim * 5f);
+                gui.Draw2D.DrawRect(glowRect, HubBlue * (focusAnim * 0.4f), 1f, 10);
             }
 
             var inputRect = searchRect;
-            inputRect.x += 40;
-            inputRect.width -= 50;
-            inputRect.y += 2;
-            inputRect.height -= 4;
+            inputRect.x += 45;
+            inputRect.width -= 55;
+            inputRect.y += 3;
+            inputRect.height -= 6;
 
-            // Animated search icon
+            // Animated search icon - Improved size and contrast
             var iconRect = searchRect;
-            iconRect.x += 10;
-            iconRect.width = 20;
+            iconRect.x += 12;
+            iconRect.width = 25;
             float iconScale = 1f + focusAnim * 0.2f;
-            Color iconColor = Color.Lerp(Color.white * 0.5f, HubBlue, focusAnim);
-            gui.Draw2D.DrawText(FontAwesome6.MagnifyingGlass, 14 * iconScale, iconRect, iconColor);
+            Color iconColor = Color.Lerp(ReadableGray, HubBlue, focusAnim);
+            gui.Draw2D.DrawText(FontAwesome6.MagnifyingGlass, 16 * iconScale, iconRect, iconColor);
 
             gui.InputField("SearchInput", ref _searchText, 255, Gui.InputFieldFlags.None, 
                 inputRect.x, inputRect.y, inputRect.width, inputRect.height, EditorGUI.InputStyle);
@@ -506,7 +512,7 @@ public class ProwlHubWindow : EditorWindow
 
     private void DrawEnhancedButton(string id, string text, double width, Color baseColor, System.Action onPressed)
     {
-        using (gui.Node(id).Width(width).Height(35).Top(12).Enter())
+        using (gui.Node(id).Width(width).Height(40).Top(15).Enter())
         {
             bool isHovered = gui.IsNodeHovered();
             bool isPressed = gui.IsNodePressed();
@@ -523,18 +529,19 @@ public class ProwlHubWindow : EditorWindow
             if (hoverAnim > 0.01f)
             {
                 var glowRect = btnRect;
-                glowRect.Expand(hoverAnim * 3f);
-                gui.Draw2D.DrawRectFilled(glowRect, btnColor * (hoverAnim * 0.3f), 8);
+                glowRect.Expand(hoverAnim * 4f);
+                gui.Draw2D.DrawRectFilled(glowRect, btnColor * (hoverAnim * 0.3f), 10);
             }
             
-            gui.Draw2D.DrawRectFilled(btnRect, btnColor, 6);
+            gui.Draw2D.DrawRectFilled(btnRect, btnColor, 8);
             
             // Add subtle inner highlight
             var highlightRect = btnRect;
             highlightRect.height *= 0.5f;
-            gui.Draw2D.DrawRectFilled(highlightRect, Color.white * (0.1f + hoverAnim * 0.1f), 6, CornerRounding.Top);
+            gui.Draw2D.DrawRectFilled(highlightRect, Color.white * (0.15f + hoverAnim * 0.15f), 8, CornerRounding.Top);
             
-            gui.Draw2D.DrawText(text, btnRect, Color.white);
+            // Improved text with better size
+            gui.Draw2D.DrawText(text, 16, btnRect, HighContrastText);
 
             if (isPressed)
                 onPressed?.Invoke();
@@ -543,7 +550,7 @@ public class ProwlHubWindow : EditorWindow
 
     private void DrawEnhancedProjectsTable()
     {
-        using (gui.Node("Table").Top(80).ExpandWidth().ExpandHeight(-80).Layout(LayoutType.Column).Enter())
+        using (gui.Node("Table").Top(90).ExpandWidth().ExpandHeight(-90).Layout(LayoutType.Column).Enter())
         {
             // Table header with enhanced effects
             DrawEnhancedTableHeader();
@@ -555,7 +562,7 @@ public class ProwlHubWindow : EditorWindow
 
     private void DrawEnhancedTableHeader()
     {
-        using (gui.Node("TableHeader").ExpandWidth().Height(40).Layout(LayoutType.Row).Enter())
+        using (gui.Node("TableHeader").ExpandWidth().Height(45).Layout(LayoutType.Row).Enter())
         {
             var headerRect = gui.CurrentNode.LayoutData.Rect;
             
@@ -564,18 +571,18 @@ public class ProwlHubWindow : EditorWindow
             gui.Draw2D.DrawHorizontalGradient(headerRect.Position, new Vector2(headerRect.x + headerRect.width, headerRect.y), 
                 (float)headerRect.height, HubBlue * 0.1f, AccentPurple * 0.1f);
 
-            // Icon columns with animations
-            DrawAnimatedHeaderIcon(FontAwesome6.Star, 50, AccentCyan);
-            DrawAnimatedHeaderIcon(FontAwesome6.Link, 50, HubBlue);
-            DrawAnimatedHeaderIcon(FontAwesome6.Cube, 50, AccentPurple);
+            // Icon columns with animations - Better spacing
+            DrawAnimatedHeaderIcon(FontAwesome6.Star, 60, AccentCyan);
+            DrawAnimatedHeaderIcon(FontAwesome6.Link, 60, HubBlue);
+            DrawAnimatedHeaderIcon(FontAwesome6.Cube, 60, AccentPurple);
 
             // Sortable columns with enhanced effects
-            DrawEnhancedSortableHeader("Name", SortBy.Name, 400);
-            DrawEnhancedSortableHeader("Modified", SortBy.Modified, 150);
-            DrawEnhancedSortableHeader("Editor version", SortBy.EditorVersion, 150);
+            DrawEnhancedSortableHeader("Name", SortBy.Name, 420);
+            DrawEnhancedSortableHeader("Modified", SortBy.Modified, 160);
+            DrawEnhancedSortableHeader("Editor version", SortBy.EditorVersion, 160);
 
             // Actions column
-            using (gui.Node("ActionsHeader").Width(50).ExpandHeight().Enter())
+            using (gui.Node("ActionsHeader").Width(60).ExpandHeight().Enter())
             {
                 // Empty header for actions column
             }
@@ -590,15 +597,16 @@ public class ProwlHubWindow : EditorWindow
             bool isHovered = gui.IsNodeHovered();
             
             float hoverAnim = gui.AnimateBool(isHovered, 0.3f, EaseType.CubicOut);
-            Color iconColor = Color.Lerp(Color.white * 0.5f, accentColor, hoverAnim);
+            Color iconColor = Color.Lerp(ReadableGray, accentColor, hoverAnim);
             
-            gui.Draw2D.DrawText(icon, iconRect, iconColor);
+            // Improved icon size for better visibility
+            gui.Draw2D.DrawText(icon, 18, iconRect, iconColor);
             
             // Add pulse effect on hover
             if (hoverAnim > 0.01f)
             {
                 gui.Draw2D.DrawCircleFilled(new Vector2(iconRect.x + iconRect.width / 2, iconRect.y + iconRect.height / 2), 
-                    15f * hoverAnim, accentColor * (hoverAnim * 0.2f));
+                    18f * hoverAnim, accentColor * (hoverAnim * 0.2f));
             }
         }
     }
@@ -639,9 +647,10 @@ public class ProwlHubWindow : EditorWindow
             }
 
             var rect = headerRect;
-            rect.x += 10;
-            Color textColor = Color.Lerp(Color.white * 0.7f, Color.white, selectedAnim);
-            gui.Draw2D.DrawText(displayText, 14, rect, textColor);
+            rect.x += 15;
+            // Improved text color and size for better readability
+            Color textColor = Color.Lerp(ReadableGray, HighContrastText, selectedAnim);
+            gui.Draw2D.DrawText(displayText, 16, rect, textColor);
         }
     }
 
@@ -676,7 +685,7 @@ public class ProwlHubWindow : EditorWindow
 
     private void DrawNoProjectsAnimation()
     {
-        using (gui.Node("NoProjects").ExpandWidth().Height(200).Enter())
+        using (gui.Node("NoProjects").ExpandWidth().Height(250).Enter())
         {
             var rect = gui.CurrentNode.LayoutData.Rect;
             Vector2 center = new Vector2(rect.x + rect.width / 2, rect.y + rect.height / 2);
@@ -684,18 +693,18 @@ public class ProwlHubWindow : EditorWindow
             // Animated loading indicator
             Vector4 hubBlueVec = new Vector4(HubBlue.r, HubBlue.g, HubBlue.b, HubBlue.a);
             Vector4 whiteVec = new Vector4(Color.white.r * 0.2f, Color.white.g * 0.2f, Color.white.b * 0.2f, Color.white.a * 0.2f);
-            gui.Draw2D.LoadingIndicatorCircle(center, 30, hubBlueVec, whiteVec, 8, 1f);
+            gui.Draw2D.LoadingIndicatorCircle(center, 40, hubBlueVec, whiteVec, 8, 1f);
             
-            // Pulsing text
+            // Improved text size and contrast
             float textAlpha = (float)(Math.Sin(_backgroundAnimTime * 2f) * 0.3f + 0.7f);
-            var textRect = new Rect(center.x - 100, center.y + 50, 200, 30);
-            gui.Draw2D.DrawText("No projects found", 16, textRect, Color.white * textAlpha);
+            var textRect = new Rect(center.x - 120, center.y + 60, 240, 40);
+            gui.Draw2D.DrawText("No projects found", 18, textRect, ReadableWhite * textAlpha);
         }
     }
 
     private void DrawEnhancedProjectRow(Project project, int index)
     {
-        using (gui.Node($"ProjectRow_{project.Name}_{index}").ExpandWidth().Height(65).Layout(LayoutType.Row).Enter())
+        using (gui.Node($"ProjectRow_{project.Name}_{index}").ExpandWidth().Height(70).Layout(LayoutType.Row).Enter())
         {
             bool isSelected = SelectedProject == project;
             bool isHovered = gui.IsNodeHovered();
@@ -720,7 +729,7 @@ public class ProwlHubWindow : EditorWindow
             // Add animated side accent for selected row
             if (selectAnim > 0.01f)
             {
-                var accentRect = new Rect(rowRect.x, rowRect.y, 4, rowRect.height);
+                var accentRect = new Rect(rowRect.x, rowRect.y, 5, rowRect.height);
                 gui.Draw2D.DrawRectFilled(accentRect, HubBlue * selectAnim);
             }
 
@@ -735,76 +744,76 @@ public class ProwlHubWindow : EditorWindow
                 isOpened = false;
             }
 
-            // Enhanced row icons with hover effects
-            DrawEnhancedRowIcon(FontAwesome6.Star, 50, AccentCyan * 0.3f, isHovered);
-            DrawEnhancedRowIcon(FontAwesome6.CloudArrowUp, 50, HubBlue * 0.3f, isHovered);
-            DrawEnhancedRowIcon(FontAwesome6.Cube, 50, AccentPurple * 0.3f, isHovered);
+            // Enhanced row icons with hover effects - Better spacing
+            DrawEnhancedRowIcon(FontAwesome6.Star, 60, AccentCyan * 0.4f, isHovered);
+            DrawEnhancedRowIcon(FontAwesome6.CloudArrowUp, 60, HubBlue * 0.4f, isHovered);
+            DrawEnhancedRowIcon(FontAwesome6.Cube, 60, AccentPurple * 0.4f, isHovered);
 
-            // Name column with enhanced styling
-            using (gui.Node("NameColumn").Width(400).ExpandHeight().Padding(15, 10).Layout(LayoutType.Column).Enter())
+            // Name column with enhanced styling - Better text contrast
+            using (gui.Node("NameColumn").Width(420).ExpandHeight().Padding(20, 12).Layout(LayoutType.Column).Enter())
             {
-                using (gui.Node("ProjectName").ExpandWidth().Height(25).Enter())
+                using (gui.Node("ProjectName").ExpandWidth().Height(28).Enter())
                 {
-                    Color nameColor = Color.Lerp(Color.white, AccentCyan, selectAnim * 0.5f);
-                    gui.Draw2D.DrawText(project.Name, 18, gui.CurrentNode.LayoutData.Rect, nameColor);
+                    Color nameColor = Color.Lerp(HighContrastText, AccentCyan, selectAnim * 0.5f);
+                    gui.Draw2D.DrawText(project.Name, 20, gui.CurrentNode.LayoutData.Rect, nameColor);
                 }
 
-                using (gui.Node("ProjectPath").ExpandWidth().Height(20).Enter())
+                using (gui.Node("ProjectPath").ExpandWidth().Height(22).Enter())
                 {
                     string path = project.ProjectPath;
                     if (path.Length > 60)
                         path = "..." + path.Substring(path.Length - 60);
 
-                    gui.Draw2D.DrawText(path, 14, gui.CurrentNode.LayoutData.Rect, Color.white * 0.6f);
+                    gui.Draw2D.DrawText(path, 15, gui.CurrentNode.LayoutData.Rect, ReadableGray);
                 }
             }
 
-            // Modified column
-            using (gui.Node("ModifiedColumn").Width(150).ExpandHeight().Padding(10).Enter())
+            // Modified column - Better text readability
+            using (gui.Node("ModifiedColumn").Width(160).ExpandHeight().Padding(12).Enter())
             {
                 string timeAgo = GetFormattedLastModifiedTime(project.ProjectDirectory.LastWriteTime);
-                gui.Draw2D.DrawText(timeAgo, 14, gui.CurrentNode.LayoutData.Rect, Color.white * 0.6f);
+                gui.Draw2D.DrawText(timeAgo, 15, gui.CurrentNode.LayoutData.Rect, ReadableGray);
             }
 
-            // Editor version column
-            using (gui.Node("VersionColumn").Width(150).ExpandHeight().Padding(10).Layout(LayoutType.Row).Spacing(10).Enter())
+            // Editor version column - Improved contrast
+            using (gui.Node("VersionColumn").Width(160).ExpandHeight().Padding(12).Layout(LayoutType.Row).Spacing(10).Enter())
             {
                 using (gui.Node("VersionText").FitContentWidth().ExpandHeight().Enter())
                 {
-                    gui.Draw2D.DrawText("2022.3.51f1", 14, gui.CurrentNode.LayoutData.Rect, Color.white * 0.6f);
+                    gui.Draw2D.DrawText("2022.3.51f1", 15, gui.CurrentNode.LayoutData.Rect, ReadableGray);
                 }
 
                 if (!project.IsValid())
                 {
-                    using (gui.Node("WarningIcon").Width(20).ExpandHeight().Enter())
+                    using (gui.Node("WarningIcon").Width(25).ExpandHeight().Enter())
                     {
-                        // Pulsing warning icon
+                        // Pulsing warning icon - Better size and contrast
                         float pulseAlpha = (float)(Math.Sin(_backgroundAnimTime * 4f) * 0.3f + 0.7f);
-                        gui.Draw2D.DrawText(FontAwesome6.TriangleExclamation, gui.CurrentNode.LayoutData.Rect, EditorStylePrefs.Yellow * pulseAlpha);
+                        gui.Draw2D.DrawText(FontAwesome6.TriangleExclamation, 18, gui.CurrentNode.LayoutData.Rect, EditorStylePrefs.Yellow * pulseAlpha);
                     }
                 }
             }
 
             // Enhanced actions column
-            using (gui.Node("ActionsColumn").Width(50).ExpandHeight().Enter())
+            using (gui.Node("ActionsColumn").Width(60).ExpandHeight().Enter())
             {
                 if (isHovered)
                 {
-                    using (gui.Node("MenuBtn").Width(30).Height(30).Enter())
+                    using (gui.Node("MenuBtn").Width(35).Height(35).Enter())
                     {
-                        gui.CurrentNode.Left(10).Top(17.5);
+                        gui.CurrentNode.Left(12).Top(17.5);
                         
                         bool btnHovered = gui.IsNodeHovered();
                         float btnHoverAnim = gui.AnimateBool(btnHovered, 0.2f, EaseType.QuadOut);
 
                         if (btnHoverAnim > 0.01f)
-                            gui.Draw2D.DrawRectFilled(gui.CurrentNode.LayoutData.Rect, Color.white * (0.1f * btnHoverAnim), 4);
+                            gui.Draw2D.DrawRectFilled(gui.CurrentNode.LayoutData.Rect, Color.white * (0.15f * btnHoverAnim), 6);
 
                         if (gui.IsNodePressed())
                             ShowProjectContextMenu(project);
 
-                        Color iconColor = Color.Lerp(Color.white * 0.7f, AccentCyan, btnHoverAnim);
-                        gui.Draw2D.DrawText(FontAwesome6.EllipsisVertical, gui.CurrentNode.LayoutData.Rect, iconColor);
+                        Color iconColor = Color.Lerp(ReadableGray, AccentCyan, btnHoverAnim);
+                        gui.Draw2D.DrawText(FontAwesome6.EllipsisVertical, 16, gui.CurrentNode.LayoutData.Rect, iconColor);
                     }
                 }
             }
@@ -819,14 +828,15 @@ public class ProwlHubWindow : EditorWindow
             float hoverAnim = gui.AnimateBool(iconHovered, 0.2f, EaseType.QuadOut);
             
             Color iconColor = Color.Lerp(color, color * 2f, hoverAnim);
-            gui.Draw2D.DrawText(icon, gui.CurrentNode.LayoutData.Rect, iconColor);
+            // Better icon size for visibility
+            gui.Draw2D.DrawText(icon, 16, gui.CurrentNode.LayoutData.Rect, iconColor);
             
             // Add subtle glow on hover
             if (hoverAnim > 0.01f)
             {
                 var iconRect = gui.CurrentNode.LayoutData.Rect;
                 gui.Draw2D.DrawCircleFilled(new Vector2(iconRect.x + iconRect.width / 2, iconRect.y + iconRect.height / 2), 
-                    12f * hoverAnim, iconColor * (hoverAnim * 0.3f));
+                    15f * hoverAnim, iconColor * (hoverAnim * 0.3f));
             }
         }
     }
@@ -840,24 +850,24 @@ public class ProwlHubWindow : EditorWindow
             // Overlay background with animated fade
             using (gui.Node("CreateOverlay").Left(0).Top(0).ExpandWidth().ExpandHeight().Enter())
             {
-                gui.Draw2D.DrawRectFilled(gui.CurrentNode.LayoutData.Rect, Color.black * (0.6f * overlayAnim));
+                gui.Draw2D.DrawRectFilled(gui.CurrentNode.LayoutData.Rect, Color.black * (0.7f * overlayAnim));
 
-                // Enhanced create project panel with slide animation
-                using (gui.Node("CreatePanel").Width(450).Height(550).Enter())
+                // Enhanced create project panel with slide animation - Better size
+                using (gui.Node("CreatePanel").Width(500).Height(600).Enter())
                 {
                     float slideOffset = (1f - overlayAnim) * 100f;
-                    gui.CurrentNode.Left(Offset.Percentage(0.5f, -225 + slideOffset)).Top(Offset.Percentage(0.5f, -275));
+                    gui.CurrentNode.Left(Offset.Percentage(0.5f, -250 + slideOffset)).Top(Offset.Percentage(0.5f, -300));
 
                     var panelRect = gui.CurrentNode.LayoutData.Rect;
                     
                     // Enhanced panel background with glow
-                    gui.Draw2D.DrawRectFilled(panelRect, SidebarBG * overlayAnim, 12);
-                    gui.Draw2D.DrawRect(panelRect, HubBlue * (overlayAnim * 0.5f), 2f, 12);
+                    gui.Draw2D.DrawRectFilled(panelRect, SidebarBG * overlayAnim, 15);
+                    gui.Draw2D.DrawRect(panelRect, HubBlue * (overlayAnim * 0.6f), 3f, 15);
                     
                     // Add animated glow around panel
                     var glowRect = panelRect;
-                    glowRect.Expand(6f);
-                    gui.Draw2D.DrawRect(glowRect, HubBlue * (overlayAnim * 0.3f), 1f, 15);
+                    glowRect.Expand(8f);
+                    gui.Draw2D.DrawRect(glowRect, HubBlue * (overlayAnim * 0.4f), 1f, 18);
 
                     DrawEnhancedCreateProjectContent(overlayAnim);
                 }
@@ -867,49 +877,49 @@ public class ProwlHubWindow : EditorWindow
 
     private void DrawEnhancedCreateProjectContent(float overlayAnim)
     {
-        using (gui.Node("CreateContent").ExpandWidth().ExpandHeight().Layout(LayoutType.Column).Padding(30).Spacing(20).Enter())
+        using (gui.Node("CreateContent").ExpandWidth().ExpandHeight().Layout(LayoutType.Column).Padding(35).Spacing(25).Enter())
         {
-            // Enhanced header with glow effect
-            using (gui.Node("CreateHeader").ExpandWidth().Height(40).Layout(LayoutType.Row).Enter())
+            // Enhanced header with glow effect - Better readability
+            using (gui.Node("CreateHeader").ExpandWidth().Height(45).Layout(LayoutType.Row).Enter())
             {
                 using (gui.Node("CreateTitle").ExpandWidth().ExpandHeight().Enter())
                 {
                     var titleRect = gui.CurrentNode.LayoutData.Rect;
-                    Color titleColor = Color.Lerp(Color.white, AccentCyan, _titleGlowIntensity * 0.3f);
-                    gui.Draw2D.DrawText("Create project", 24, titleRect, titleColor * overlayAnim);
+                    Color titleColor = Color.Lerp(HighContrastText, AccentCyan, _titleGlowIntensity * 0.3f);
+                    gui.Draw2D.DrawText("Create project", 28, titleRect, titleColor * overlayAnim);
                 }
 
-                using (gui.Node("CloseBtn").Width(30).Height(30).Enter())
+                using (gui.Node("CloseBtn").Width(35).Height(35).Enter())
                 {
                     bool closeHovered = gui.IsNodeHovered();
                     float closeHoverAnim = gui.AnimateBool(closeHovered, 0.2f, EaseType.QuadOut);
                     
                     if (closeHoverAnim > 0.01f)
-                        gui.Draw2D.DrawRectFilled(gui.CurrentNode.LayoutData.Rect, EditorStylePrefs.Red * (0.8f * closeHoverAnim * overlayAnim), 4);
+                        gui.Draw2D.DrawRectFilled(gui.CurrentNode.LayoutData.Rect, EditorStylePrefs.Red * (0.8f * closeHoverAnim * overlayAnim), 6);
 
                     if (gui.IsNodePressed())
                         _createTabOpen = false;
 
-                    gui.Draw2D.DrawText(FontAwesome6.Xmark, gui.CurrentNode.LayoutData.Rect, Color.white * overlayAnim);
+                    gui.Draw2D.DrawText(FontAwesome6.Xmark, 18, gui.CurrentNode.LayoutData.Rect, HighContrastText * overlayAnim);
                 }
             }
 
-            // Enhanced template preview with animations
-            using (gui.Node("TemplatePreview").ExpandWidth().Height(150).Enter())
+            // Enhanced template preview with animations - Better size
+            using (gui.Node("TemplatePreview").ExpandWidth().Height(180).Enter())
             {
                 var previewRect = gui.CurrentNode.LayoutData.Rect;
                 
                 // Animated background
-                gui.Draw2D.DrawRectFilled(previewRect, HubBlue * (0.3f * overlayAnim), 8);
-                gui.Draw2D.DrawRect(previewRect, HubBlue * (0.7f * overlayAnim), 2, 8);
+                gui.Draw2D.DrawRectFilled(previewRect, HubBlue * (0.3f * overlayAnim), 10);
+                gui.Draw2D.DrawRect(previewRect, HubBlue * (0.7f * overlayAnim), 2, 10);
                 
                 // Floating icon with rotation
                 float iconRotation = (float)(_backgroundAnimTime * 30f);
                 Vector2 iconCenter = new Vector2(previewRect.x + previewRect.width / 2, previewRect.y + previewRect.height / 2);
                 
-                // Add multiple layers for depth
-                gui.Draw2D.DrawText(FontAwesome6.PuzzlePiece, 70, new Rect(iconCenter.x - 35, iconCenter.y - 35, 70, 70), AccentPurple * (overlayAnim * 0.3f));
-                gui.Draw2D.DrawText(FontAwesome6.PuzzlePiece, 60, new Rect(iconCenter.x - 30, iconCenter.y - 30, 60, 60), Color.white * overlayAnim);
+                // Add multiple layers for depth - Better icon sizes
+                gui.Draw2D.DrawText(FontAwesome6.PuzzlePiece, 80, new Rect(iconCenter.x - 40, iconCenter.y - 40, 80, 80), AccentPurple * (overlayAnim * 0.4f));
+                gui.Draw2D.DrawText(FontAwesome6.PuzzlePiece, 70, new Rect(iconCenter.x - 35, iconCenter.y - 35, 70, 70), HighContrastText * overlayAnim);
             }
 
             // Enhanced project name input
@@ -928,14 +938,14 @@ public class ProwlHubWindow : EditorWindow
 
     private void DrawEnhancedInputSection(string label, ref string value, string inputId, float alpha)
     {
-        using (gui.Node("InputSection").ExpandWidth().Height(70).Layout(LayoutType.Column).Spacing(10).Enter())
+        using (gui.Node("InputSection").ExpandWidth().Height(80).Layout(LayoutType.Column).Spacing(12).Enter())
         {
-            using (gui.Node("InputLabel").ExpandWidth().Height(20).Enter())
+            using (gui.Node("InputLabel").ExpandWidth().Height(25).Enter())
             {
-                gui.Draw2D.DrawText(label, 16, gui.CurrentNode.LayoutData.Rect, Color.white * (0.8f * alpha));
+                gui.Draw2D.DrawText(label, 18, gui.CurrentNode.LayoutData.Rect, ReadableWhite * (0.9f * alpha));
             }
 
-            using (gui.Node("InputField").ExpandWidth().Height(40).Enter())
+            using (gui.Node("InputField").ExpandWidth().Height(45).Enter())
             {
                 var inputRect = gui.CurrentNode.LayoutData.Rect;
                 var interact = gui.GetInteractable(gui.CurrentNode);
@@ -943,14 +953,14 @@ public class ProwlHubWindow : EditorWindow
                 
                 float focusAnim = gui.AnimateBool(isFocused, 0.3f, EaseType.CubicOut);
                 
-                gui.Draw2D.DrawRectFilled(inputRect, Color.black * (0.3f * alpha), 6);
+                gui.Draw2D.DrawRectFilled(inputRect, Color.black * (0.4f * alpha), 8);
                 
-                Color borderColor = Color.Lerp(Color.white * 0.2f, HubBlue, focusAnim);
-                gui.Draw2D.DrawRect(inputRect, borderColor * alpha, 1 + focusAnim, 6);
+                Color borderColor = Color.Lerp(ReadableDarkGray * 0.5f, HubBlue, focusAnim);
+                gui.Draw2D.DrawRect(inputRect, borderColor * alpha, 2 + focusAnim, 8);
 
                 var textRect = inputRect;
-                textRect.x += 10;
-                textRect.width -= 20;
+                textRect.x += 12;
+                textRect.width -= 24;
 
                 gui.InputField(inputId, ref value, 255, Gui.InputFieldFlags.None,
                     textRect.x, textRect.y, textRect.width, textRect.height, EditorGUI.InputStyle);
@@ -960,30 +970,30 @@ public class ProwlHubWindow : EditorWindow
 
     private void DrawEnhancedLocationSection(float alpha)
     {
-        using (gui.Node("LocationSection").ExpandWidth().Height(70).Layout(LayoutType.Column).Spacing(10).Enter())
+        using (gui.Node("LocationSection").ExpandWidth().Height(80).Layout(LayoutType.Column).Spacing(12).Enter())
         {
-            using (gui.Node("LocationLabel").ExpandWidth().Height(20).Enter())
+            using (gui.Node("LocationLabel").ExpandWidth().Height(25).Enter())
             {
-                gui.Draw2D.DrawText("Location", 16, gui.CurrentNode.LayoutData.Rect, Color.white * (0.8f * alpha));
+                gui.Draw2D.DrawText("Location", 18, gui.CurrentNode.LayoutData.Rect, ReadableWhite * (0.9f * alpha));
             }
 
-            using (gui.Node("LocationRow").ExpandWidth().Height(40).Layout(LayoutType.Row).Spacing(10).Enter())
+            using (gui.Node("LocationRow").ExpandWidth().Height(45).Layout(LayoutType.Row).Spacing(12).Enter())
             {
                 using (gui.Node("LocationDisplay").ExpandWidth().ExpandHeight().Enter())
                 {
-                    gui.Draw2D.DrawRectFilled(gui.CurrentNode.LayoutData.Rect, Color.black * (0.3f * alpha), 6);
-                    gui.Draw2D.DrawRect(gui.CurrentNode.LayoutData.Rect, Color.white * (0.2f * alpha), 1, 6);
+                    gui.Draw2D.DrawRectFilled(gui.CurrentNode.LayoutData.Rect, Color.black * (0.4f * alpha), 8);
+                    gui.Draw2D.DrawRect(gui.CurrentNode.LayoutData.Rect, ReadableDarkGray * (0.5f * alpha), 2, 8);
 
                     string path = ProjectCache.Instance.SavedProjectsFolder;
                     if (path.Length > 35)
                         path = "..." + path.Substring(path.Length - 35);
 
                     var textRect = gui.CurrentNode.LayoutData.Rect;
-                    textRect.x += 10;
-                    gui.Draw2D.DrawText(path, 14, textRect, Color.white * (0.8f * alpha));
+                    textRect.x += 12;
+                    gui.Draw2D.DrawText(path, 16, textRect, ReadableWhite * (0.8f * alpha));
                 }
 
-                DrawEnhancedButton("BrowseBtn", FontAwesome6.FolderOpen, 40, Color.white * 0.2f, 
+                DrawEnhancedButton("BrowseBtn", FontAwesome6.FolderOpen, 45, Color.white * 0.3f, 
                     () => OpenDialog("Select Folder", (x) => ProjectCache.Instance.SavedProjectsFolder = x));
             }
         }
@@ -991,7 +1001,7 @@ public class ProwlHubWindow : EditorWindow
 
     private void DrawEnhancedCreateButton(float alpha)
     {
-        using (gui.Node("CreateButton").ExpandWidth().Height(40).Enter())
+        using (gui.Node("CreateButton").ExpandWidth().Height(45).Enter())
         {
             bool canCreate = !string.IsNullOrEmpty(_createName) && 
                            Directory.Exists(ProjectCache.Instance.SavedProjectsFolder) && 
@@ -1000,7 +1010,7 @@ public class ProwlHubWindow : EditorWindow
             bool isHovered = gui.IsNodeHovered();
             float hoverAnim = gui.AnimateBool(isHovered && canCreate, 0.2f, EaseType.QuadOut);
             
-            Color btnColor = canCreate ? HubBlue : Color.white * 0.3f;
+            Color btnColor = canCreate ? HubBlue : Color.white * 0.4f;
             btnColor = Color.Lerp(btnColor, btnColor * 1.3f, hoverAnim);
             
             var btnRect = gui.CurrentNode.LayoutData.Rect;
@@ -1009,23 +1019,24 @@ public class ProwlHubWindow : EditorWindow
             if (canCreate && hoverAnim > 0.01f)
             {
                 var glowRect = btnRect;
-                glowRect.Expand(hoverAnim * 4f);
-                gui.Draw2D.DrawRectFilled(glowRect, btnColor * (hoverAnim * 0.3f * alpha), 8);
+                glowRect.Expand(hoverAnim * 5f);
+                gui.Draw2D.DrawRectFilled(glowRect, btnColor * (hoverAnim * 0.4f * alpha), 10);
             }
 
-            gui.Draw2D.DrawRectFilled(btnRect, btnColor * alpha, 6);
+            gui.Draw2D.DrawRectFilled(btnRect, btnColor * alpha, 8);
             
             // Add animated progress bar effect on hover
             if (canCreate && hoverAnim > 0.01f)
             {
                 var progressRect = btnRect;
-                progressRect.height = 3;
-                progressRect.y = btnRect.y + btnRect.height - 3;
+                progressRect.height = 4;
+                progressRect.y = btnRect.y + btnRect.height - 4;
                 progressRect.width *= hoverAnim;
                 gui.Draw2D.DrawRectFilled(progressRect, AccentCyan * alpha, 2);
             }
             
-            gui.Draw2D.DrawText("Create project", btnRect, Color.white * alpha);
+            // Improved button text size
+            gui.Draw2D.DrawText("Create project", 18, btnRect, HighContrastText * alpha);
 
             if (gui.IsNodePressed() && canCreate)
             {
@@ -1048,7 +1059,7 @@ public class ProwlHubWindow : EditorWindow
 
     private void DrawInstallsTab()
     {
-        using (gui.Node("InstallsTab").ExpandWidth().ExpandHeight().Padding(30).Enter())
+        using (gui.Node("InstallsTab").ExpandWidth().ExpandHeight().Padding(40).Enter())
         {
             DrawComingSoonTab("Installs", FontAwesome6.Download);
         }
@@ -1056,7 +1067,7 @@ public class ProwlHubWindow : EditorWindow
 
     private void DrawLearnTab()
     {
-        using (gui.Node("LearnTab").ExpandWidth().ExpandHeight().Padding(30).Enter())
+        using (gui.Node("LearnTab").ExpandWidth().ExpandHeight().Padding(40).Enter())
         {
             DrawComingSoonTab("Learn", FontAwesome6.BookOpen);
         }
@@ -1064,7 +1075,7 @@ public class ProwlHubWindow : EditorWindow
 
     private void DrawCommunityTab()
     {
-        using (gui.Node("CommunityTab").ExpandWidth().ExpandHeight().Padding(30).Enter())
+        using (gui.Node("CommunityTab").ExpandWidth().ExpandHeight().Padding(40).Enter())
         {
             DrawComingSoonTab("Community", FontAwesome6.Users);
         }
@@ -1072,7 +1083,7 @@ public class ProwlHubWindow : EditorWindow
 
     private void DrawSettingsTab()
     {
-        using (gui.Node("SettingsTab").ExpandWidth().ExpandHeight().Padding(30).Enter())
+        using (gui.Node("SettingsTab").ExpandWidth().ExpandHeight().Padding(40).Enter())
         {
             DrawComingSoonTab("Settings", FontAwesome6.Gear);
         }
@@ -1083,21 +1094,21 @@ public class ProwlHubWindow : EditorWindow
         var rect = gui.CurrentNode.LayoutData.Rect;
         Vector2 center = new Vector2(rect.x + rect.width / 2, rect.y + rect.height / 2);
         
-        // Animated title
-        var titleRect = new Rect(center.x - 150, center.y - 100, 300, 60);
+        // Animated title - Improved readability
+        var titleRect = new Rect(center.x - 180, center.y - 120, 360, 70);
         float titleGlow = (float)(Math.Sin(_backgroundAnimTime * 1.5f) * 0.3f + 0.7f);
-        gui.Draw2D.DrawText(tabName, 32, titleRect, Color.white * titleGlow);
+        gui.Draw2D.DrawText(tabName, 36, titleRect, HighContrastText * titleGlow);
 
-        // Floating icon with rotation
+        // Floating icon with rotation - Better size
         float iconRotation = (float)(_backgroundAnimTime * 20f);
-        var iconRect = new Rect(center.x - 40, center.y - 40, 80, 80);
+        var iconRect = new Rect(center.x - 50, center.y - 50, 100, 100);
         Color iconColor = Color.Lerp(HubBlue, AccentPurple, (float)(Math.Sin(_backgroundAnimTime) * 0.5 + 0.5));
-        gui.Draw2D.DrawText(icon, 60, iconRect, iconColor);
+        gui.Draw2D.DrawText(icon, 70, iconRect, iconColor);
 
-        // Animated "coming soon" text
-        var comingSoonRect = new Rect(center.x - 100, center.y + 50, 200, 30);
+        // Animated "coming soon" text - Better contrast
+        var comingSoonRect = new Rect(center.x - 120, center.y + 60, 240, 35);
         float comingSoonAlpha = (float)(Math.Sin(_backgroundAnimTime * 2f) * 0.3f + 0.7f);
-        gui.Draw2D.DrawText("Coming soon...", 18, comingSoonRect, Color.white * (0.7f * comingSoonAlpha));
+        gui.Draw2D.DrawText("Coming soon...", 20, comingSoonRect, ReadableWhite * (0.8f * comingSoonAlpha));
 
         // Add some floating particles around the icon
         DrawTabSpecificParticles(center);
@@ -1109,7 +1120,7 @@ public class ProwlHubWindow : EditorWindow
         for (int i = 0; i < particleCount; i++)
         {
             float angle = (float)((i / (float)particleCount) * Math.PI * 2 + _backgroundAnimTime);
-            float distance = 80f + (float)(Math.Sin(_backgroundAnimTime * 2f + i) * 20f);
+            float distance = 90f + (float)(Math.Sin(_backgroundAnimTime * 2f + i) * 25f);
             
             Vector2 particlePos = new Vector2(
                 center.x + (float)Math.Cos(angle) * distance,
@@ -1117,9 +1128,9 @@ public class ProwlHubWindow : EditorWindow
             );
             
             float alpha = (float)(Math.Sin(_backgroundAnimTime * 3f + i) * 0.5f + 0.5f);
-            Color particleColor = Color.Lerp(HubBlue, AccentCyan, (float)Math.Sin(angle)) * (alpha * 0.5f);
+            Color particleColor = Color.Lerp(HubBlue, AccentCyan, (float)Math.Sin(angle)) * (alpha * 0.6f);
             
-            gui.Draw2D.DrawCircleFilled(particlePos, 3f, particleColor);
+            gui.Draw2D.DrawCircleFilled(particlePos, 4f, particleColor);
         }
     }
 
