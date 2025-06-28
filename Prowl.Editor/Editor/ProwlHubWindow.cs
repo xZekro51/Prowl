@@ -20,6 +20,8 @@ public class ProwlHubWindow : EditorWindow
     private readonly (string, Action)[] _tabs;
     private int _currentTab;
     private bool _createTabOpen;
+    private bool _templatesDropdownOpen;
+    private bool _importDropdownOpen;
 
     private FileDialog _dialog;
     private FileDialogContext _dialogContext;
@@ -35,6 +37,16 @@ public class ProwlHubWindow : EditorWindow
     private enum SortBy { Name, Modified, EditorVersion }
     private SortBy _sortBy = SortBy.Modified;
     private bool _sortAscending = false;
+
+    // Project templates for future implementation
+    private readonly (string name, string icon, string description)[] _projectTemplates = [
+        ("3D Game", FontAwesome6.Cube, "Start with a 3D scene and basic game objects"),
+        ("2D Game", FontAwesome6.Square, "Perfect for 2D platformers and arcade games"),
+        ("VR Experience", FontAwesome6.Eye, "Virtual reality ready project template"),
+        ("Mobile Game", FontAwesome6.Mobile, "Optimized for mobile platforms"),
+        ("Prototype", FontAwesome6.Flask, "Quick prototyping setup"),
+        ("Educational", FontAwesome6.GraduationCap, "Learning-focused project template")
+    ];
 
     protected override bool Center { get; } = true;
     protected override double Width { get; }
@@ -52,6 +64,8 @@ public class ProwlHubWindow : EditorWindow
     static readonly Color HubBlue = new Color(0.2f, 0.5f, 1.0f, 1.0f);
     static readonly Color AccentPurple = new Color(0.6f, 0.2f, 1.0f, 1.0f);
     static readonly Color AccentCyan = new Color(0.2f, 1.0f, 0.8f, 1.0f);
+    static readonly Color AccentGreen = new Color(0.2f, 1.0f, 0.4f, 1.0f);
+    static readonly Color AccentOrange = new Color(1.0f, 0.6f, 0.2f, 1.0f);
 
     // Improved color scheme for better readability
     static readonly Color ReadableWhite = new Color(0.95f, 0.95f, 0.95f, 1.0f);
@@ -438,119 +452,78 @@ public class ProwlHubWindow : EditorWindow
 
     private void DrawEnhancedProjectsHeader()
     {
-        using (gui.Node("Header").ExpandWidth().Height(70).Layout(LayoutType.Row).Spacing(25).Enter())
+        using (gui.Node("Header").ExpandWidth().Height(120).Layout(LayoutType.Column).Spacing(15).Enter())
         {
-            // Projects title with glow effect - Improved readability
-            using (gui.Node("Title").FitContentWidth().ExpandHeight().Enter())
+            // Top row with title and main actions
+            using (gui.Node("TopRow").ExpandWidth().Height(50).Layout(LayoutType.Row).Spacing(25).Enter())
             {
-                var titleRect = gui.CurrentNode.LayoutData.Rect;
-                
-                // Add animated underline
-                var underlineRect = new Rect(titleRect.x, titleRect.y + titleRect.height - 6, titleRect.width, 4);
-                float underlineProgress = (float)((_backgroundAnimTime * 0.8) % 1.0);
-                gui.Draw2D.DrawHorizontalGradient(underlineRect.Position, new Vector2(underlineRect.x + underlineRect.width, underlineRect.y), 
-                    (float)underlineRect.height, HubBlue * underlineProgress, AccentPurple * (1f - underlineProgress));
-                
-                gui.Draw2D.DrawText("Projects", 36, titleRect, HighContrastText);
+                // Projects title with glow effect - Improved readability
+                using (gui.Node("Title").FitContentWidth().ExpandHeight().Enter())
+                {
+                    var titleRect = gui.CurrentNode.LayoutData.Rect;
+                    
+                    // Add animated underline
+                    var underlineRect = new Rect(titleRect.x, titleRect.y + titleRect.height - 6, titleRect.width, 4);
+                    float underlineProgress = (float)((_backgroundAnimTime * 0.8) % 1.0);
+                    gui.Draw2D.DrawHorizontalGradient(underlineRect.Position, new Vector2(underlineRect.x + underlineRect.width, underlineRect.y), 
+                        (float)underlineRect.height, HubBlue * underlineProgress, AccentPurple * (1f - underlineProgress));
+                    
+                    gui.Draw2D.DrawText("Projects", 36, titleRect, HighContrastText);
+                }
+
+                // Enhanced search box with glow
+                DrawEnhancedSearchBox();
+
+                // Spacer
+                using (gui.Node("Spacer").ExpandWidth().ExpandHeight().Enter()) { }
+
+                // Enhanced buttons
+                DrawEnhancedButton("AddBtn", "Add Existing", 120, Color.white * 0.2f, () => 
+                    OpenDialog("Add Existing Project", (x) => ProjectCache.Instance.AddProject(new Project(new DirectoryInfo(x)))));
             }
 
-            // Enhanced search box with glow
-            DrawEnhancedSearchBox();
-
-            // Spacer
-            using (gui.Node("Spacer").ExpandWidth().ExpandHeight().Enter()) { }
-
-            // Enhanced buttons
-            DrawEnhancedButton("AddBtn", "Add", 90, Color.white * 0.2f, () => 
-                OpenDialog("Add Existing Project", (x) => ProjectCache.Instance.AddProject(new Project(new DirectoryInfo(x)))));
-            
-            DrawEnhancedButton("NewBtn", "New project", 140, HubBlue, () => _createTabOpen = !_createTabOpen);
-        }
-    }
-
-    private void DrawEnhancedSearchBox()
-    {
-        using (gui.Node("SearchContainer").Width(350).Height(40).Top(15).Enter())
-        {
-            var searchRect = gui.CurrentNode.LayoutData.Rect;
-            var interact = gui.GetInteractable(gui.CurrentNode);
-            bool isFocused = interact.IsHovered(); // Using IsHovered as proxy since HasFocus doesn't exist
-            
-            // Animated border and glow
-            float focusAnim = gui.AnimateBool(isFocused, 0.3f, EaseType.CubicOut);
-            Color borderColor = Color.Lerp(ReadableDarkGray * 0.4f, HubBlue, focusAnim);
-            
-            gui.Draw2D.DrawRectFilled(searchRect, Color.black * 0.4f, 8);
-            gui.Draw2D.DrawRect(searchRect, borderColor, 2 + focusAnim * 2, 8);
-            
-            // Add glow effect when focused
-            if (focusAnim > 0.01f)
+            // Bottom row with quick action buttons
+            using (gui.Node("QuickActions").ExpandWidth().Height(40).Layout(LayoutType.Row).Spacing(15).Enter())
             {
-                var glowRect = searchRect;
-                glowRect.Expand(focusAnim * 5f);
-                gui.Draw2D.DrawRect(glowRect, HubBlue * (focusAnim * 0.4f), 1f, 10);
+                // New Project with dropdown
+                DrawEnhancedDropdownButton("NewProjectBtn", FontAwesome6.Plus + " New Project", 160, HubBlue, 
+                    () => _createTabOpen = !_createTabOpen, ref _createTabOpen);
+
+                // Templates dropdown
+                DrawEnhancedDropdownButton("TemplatesBtn", FontAwesome6.LayerGroup + " Templates", 140, AccentPurple, 
+                    () => _templatesDropdownOpen = !_templatesDropdownOpen, ref _templatesDropdownOpen);
+
+                // Import from other engines
+                DrawEnhancedDropdownButton("ImportBtn", FontAwesome6.FileImport + " Import", 120, AccentCyan, 
+                    () => _importDropdownOpen = !_importDropdownOpen, ref _importDropdownOpen);
+
+                // Clone from Git
+                DrawEnhancedButton("CloneBtn", FontAwesome6.CodeBranch + " Clone", 100, AccentGreen, () => 
+                    ShowComingSoonTooltip("Git clone functionality"));
+
+                // Sample Projects
+                DrawEnhancedButton("SamplesBtn", FontAwesome6.Star + " Samples", 120, AccentOrange, () => 
+                    ShowComingSoonTooltip("Sample projects gallery"));
+
+                // Spacer
+                using (gui.Node("ActionsSpacer").ExpandWidth().ExpandHeight().Enter()) { }
+
+                // Refresh projects
+                DrawEnhancedButton("RefreshBtn", FontAwesome6.ArrowsRotate, 50, Color.white * 0.3f, () => 
+                    RefreshProjects());
             }
-
-            var inputRect = searchRect;
-            inputRect.x += 45;
-            inputRect.width -= 55;
-            inputRect.y += 3;
-            inputRect.height -= 6;
-
-            // Animated search icon - Improved size and contrast
-            var iconRect = searchRect;
-            iconRect.x += 12;
-            iconRect.width = 25;
-            float iconScale = 1f + focusAnim * 0.2f;
-            Color iconColor = Color.Lerp(ReadableGray, HubBlue, focusAnim);
-            gui.Draw2D.DrawText(FontAwesome6.MagnifyingGlass, 16 * iconScale, iconRect, iconColor);
-
-            gui.InputField("SearchInput", ref _searchText, 255, Gui.InputFieldFlags.None, 
-                inputRect.x, inputRect.y, inputRect.width, inputRect.height, EditorGUI.InputStyle);
         }
-    }
 
-    private void DrawEnhancedButton(string id, string text, double width, Color baseColor, System.Action onPressed)
-    {
-        using (gui.Node(id).Width(width).Height(40).Top(15).Enter())
-        {
-            bool isHovered = gui.IsNodeHovered();
-            bool isPressed = gui.IsNodePressed();
-            
-            float hoverAnim = gui.AnimateBool(isHovered, 0.2f, EaseType.QuadOut);
-            float pressAnim = gui.AnimateBool(isPressed, 0.1f, EaseType.QuadInOut);
-            
-            Color btnColor = Color.Lerp(baseColor, baseColor * 1.3f, hoverAnim);
-            btnColor = Color.Lerp(btnColor, baseColor * 0.8f, pressAnim);
-            
-            var btnRect = gui.CurrentNode.LayoutData.Rect;
-            
-            // Add animated glow on hover
-            if (hoverAnim > 0.01f)
-            {
-                var glowRect = btnRect;
-                glowRect.Expand(hoverAnim * 4f);
-                gui.Draw2D.DrawRectFilled(glowRect, btnColor * (hoverAnim * 0.3f), 10);
-            }
-            
-            gui.Draw2D.DrawRectFilled(btnRect, btnColor, 8);
-            
-            // Add subtle inner highlight
-            var highlightRect = btnRect;
-            highlightRect.height *= 0.5f;
-            gui.Draw2D.DrawRectFilled(highlightRect, Color.white * (0.15f + hoverAnim * 0.15f), 8, CornerRounding.Top);
-            
-            // Improved text with better size
-            gui.Draw2D.DrawText(text, 16, btnRect, HighContrastText);
-
-            if (isPressed)
-                onPressed?.Invoke();
-        }
+        // Draw dropdowns
+        if (_templatesDropdownOpen)
+            DrawTemplatesDropdown();
+        if (_importDropdownOpen)
+            DrawImportDropdown();
     }
 
     private void DrawEnhancedProjectsTable()
     {
-        using (gui.Node("Table").Top(90).ExpandWidth().ExpandHeight(-90).Layout(LayoutType.Column).Enter())
+        using (gui.Node("Table").Top(140).ExpandWidth().ExpandHeight(-140).Layout(LayoutType.Column).Enter()) // Adjusted top offset for new header height
         {
             // Table header with enhanced effects
             DrawEnhancedTableHeader();
@@ -586,71 +559,6 @@ public class ProwlHubWindow : EditorWindow
             {
                 // Empty header for actions column
             }
-        }
-    }
-
-    private void DrawAnimatedHeaderIcon(string icon, double width, Color accentColor)
-    {
-        using (gui.Node($"Icon_{icon}").Width(width).ExpandHeight().Enter())
-        {
-            var iconRect = gui.CurrentNode.LayoutData.Rect;
-            bool isHovered = gui.IsNodeHovered();
-            
-            float hoverAnim = gui.AnimateBool(isHovered, 0.3f, EaseType.CubicOut);
-            Color iconColor = Color.Lerp(ReadableGray, accentColor, hoverAnim);
-            
-            // Improved icon size for better visibility
-            gui.Draw2D.DrawText(icon, 18, iconRect, iconColor);
-            
-            // Add pulse effect on hover
-            if (hoverAnim > 0.01f)
-            {
-                gui.Draw2D.DrawCircleFilled(new Vector2(iconRect.x + iconRect.width / 2, iconRect.y + iconRect.height / 2), 
-                    18f * hoverAnim, accentColor * (hoverAnim * 0.2f));
-            }
-        }
-    }
-
-    private void DrawEnhancedSortableHeader(string text, SortBy sortType, double width)
-    {
-        using (gui.Node($"Header_{text}").Width(width).ExpandHeight().Enter())
-        {
-            bool isHovered = gui.IsNodeHovered();
-            bool isSelected = _sortBy == sortType;
-            
-            float hoverAnim = gui.AnimateBool(isHovered, 0.2f, EaseType.QuadOut);
-            float selectedAnim = gui.AnimateBool(isSelected, 0.3f, EaseType.CubicOut);
-            
-            var headerRect = gui.CurrentNode.LayoutData.Rect;
-            
-            if (hoverAnim > 0.01f)
-                gui.Draw2D.DrawRectFilled(headerRect, Color.white * (0.1f * hoverAnim));
-            
-            if (selectedAnim > 0.01f)
-                gui.Draw2D.DrawRectFilled(headerRect, HubBlue * (0.2f * selectedAnim));
-
-            if (gui.IsNodePressed())
-            {
-                if (_sortBy == sortType)
-                    _sortAscending = !_sortAscending;
-                else
-                {
-                    _sortBy = sortType;
-                    _sortAscending = true;
-                }
-            }
-
-            string displayText = text;
-            if (_sortBy == sortType)
-            {
-                displayText += _sortAscending ? " " + FontAwesome6.CaretUp : " " + FontAwesome6.CaretDown;
-            }
-
-            var rect = headerRect;
-            rect.x += 15;
-            // Improved text color and size for better readability
-            Color textColor = Color.Lerp(ReadableGray, HighContrastText, selectedAnim);
-            gui.Draw2D.DrawText(displayText, 16, rect, textColor);
         }
     }
 
@@ -841,222 +749,6 @@ public class ProwlHubWindow : EditorWindow
         }
     }
 
-    private void DrawEnhancedCreateProjectOverlay()
-    {
-        float overlayAnim = gui.AnimateBool(_createTabOpen, 0.4f, EaseType.CubicOut);
-        
-        if (overlayAnim > 0.01f)
-        {
-            // Overlay background with animated fade
-            using (gui.Node("CreateOverlay").Left(0).Top(0).ExpandWidth().ExpandHeight().Enter())
-            {
-                gui.Draw2D.DrawRectFilled(gui.CurrentNode.LayoutData.Rect, Color.black * (0.7f * overlayAnim));
-
-                // Enhanced create project panel with slide animation - Better size
-                using (gui.Node("CreatePanel").Width(500).Height(600).Enter())
-                {
-                    float slideOffset = (1f - overlayAnim) * 100f;
-                    gui.CurrentNode.Left(Offset.Percentage(0.5f, -250 + slideOffset)).Top(Offset.Percentage(0.5f, -300));
-
-                    var panelRect = gui.CurrentNode.LayoutData.Rect;
-                    
-                    // Enhanced panel background with glow
-                    gui.Draw2D.DrawRectFilled(panelRect, SidebarBG * overlayAnim, 15);
-                    gui.Draw2D.DrawRect(panelRect, HubBlue * (overlayAnim * 0.6f), 3f, 15);
-                    
-                    // Add animated glow around panel
-                    var glowRect = panelRect;
-                    glowRect.Expand(8f);
-                    gui.Draw2D.DrawRect(glowRect, HubBlue * (overlayAnim * 0.4f), 1f, 18);
-
-                    DrawEnhancedCreateProjectContent(overlayAnim);
-                }
-            }
-        }
-    }
-
-    private void DrawEnhancedCreateProjectContent(float overlayAnim)
-    {
-        using (gui.Node("CreateContent").ExpandWidth().ExpandHeight().Layout(LayoutType.Column).Padding(35).Spacing(25).Enter())
-        {
-            // Enhanced header with glow effect - Better readability
-            using (gui.Node("CreateHeader").ExpandWidth().Height(45).Layout(LayoutType.Row).Enter())
-            {
-                using (gui.Node("CreateTitle").ExpandWidth().ExpandHeight().Enter())
-                {
-                    var titleRect = gui.CurrentNode.LayoutData.Rect;
-                    Color titleColor = Color.Lerp(HighContrastText, AccentCyan, _titleGlowIntensity * 0.3f);
-                    gui.Draw2D.DrawText("Create project", 28, titleRect, titleColor * overlayAnim);
-                }
-
-                using (gui.Node("CloseBtn").Width(35).Height(35).Enter())
-                {
-                    bool closeHovered = gui.IsNodeHovered();
-                    float closeHoverAnim = gui.AnimateBool(closeHovered, 0.2f, EaseType.QuadOut);
-                    
-                    if (closeHoverAnim > 0.01f)
-                        gui.Draw2D.DrawRectFilled(gui.CurrentNode.LayoutData.Rect, EditorStylePrefs.Red * (0.8f * closeHoverAnim * overlayAnim), 6);
-
-                    if (gui.IsNodePressed())
-                        _createTabOpen = false;
-
-                    gui.Draw2D.DrawText(FontAwesome6.Xmark, 18, gui.CurrentNode.LayoutData.Rect, HighContrastText * overlayAnim);
-                }
-            }
-
-            // Enhanced template preview with animations - Better size
-            using (gui.Node("TemplatePreview").ExpandWidth().Height(180).Enter())
-            {
-                var previewRect = gui.CurrentNode.LayoutData.Rect;
-                
-                // Animated background
-                gui.Draw2D.DrawRectFilled(previewRect, HubBlue * (0.3f * overlayAnim), 10);
-                gui.Draw2D.DrawRect(previewRect, HubBlue * (0.7f * overlayAnim), 2, 10);
-                
-                // Floating icon with rotation
-                float iconRotation = (float)(_backgroundAnimTime * 30f);
-                Vector2 iconCenter = new Vector2(previewRect.x + previewRect.width / 2, previewRect.y + previewRect.height / 2);
-                
-                // Add multiple layers for depth - Better icon sizes
-                gui.Draw2D.DrawText(FontAwesome6.PuzzlePiece, 80, new Rect(iconCenter.x - 40, iconCenter.y - 40, 80, 80), AccentPurple * (overlayAnim * 0.4f));
-                gui.Draw2D.DrawText(FontAwesome6.PuzzlePiece, 70, new Rect(iconCenter.x - 35, iconCenter.y - 35, 70, 70), HighContrastText * overlayAnim);
-            }
-
-            // Enhanced project name input
-            DrawEnhancedInputSection("Project name", ref _createName, "ProjectNameInput", overlayAnim);
-
-            // Enhanced location section
-            DrawEnhancedLocationSection(overlayAnim);
-
-            // Spacer
-            using (gui.Node("Spacer").ExpandWidth().ExpandHeight().Enter()) { }
-
-            // Enhanced create button
-            DrawEnhancedCreateButton(overlayAnim);
-        }
-    }
-
-    private void DrawEnhancedInputSection(string label, ref string value, string inputId, float alpha)
-    {
-        using (gui.Node("InputSection").ExpandWidth().Height(80).Layout(LayoutType.Column).Spacing(12).Enter())
-        {
-            using (gui.Node("InputLabel").ExpandWidth().Height(25).Enter())
-            {
-                gui.Draw2D.DrawText(label, 18, gui.CurrentNode.LayoutData.Rect, ReadableWhite * (0.9f * alpha));
-            }
-
-            using (gui.Node("InputField").ExpandWidth().Height(45).Enter())
-            {
-                var inputRect = gui.CurrentNode.LayoutData.Rect;
-                var interact = gui.GetInteractable(gui.CurrentNode);
-                bool isFocused = interact.IsHovered(); // Using IsHovered as proxy since HasFocus doesn't exist
-                
-                float focusAnim = gui.AnimateBool(isFocused, 0.3f, EaseType.CubicOut);
-                
-                gui.Draw2D.DrawRectFilled(inputRect, Color.black * (0.4f * alpha), 8);
-                
-                Color borderColor = Color.Lerp(ReadableDarkGray * 0.5f, HubBlue, focusAnim);
-                gui.Draw2D.DrawRect(inputRect, borderColor * alpha, 2 + focusAnim, 8);
-
-                var textRect = inputRect;
-                textRect.x += 12;
-                textRect.width -= 24;
-
-                gui.InputField(inputId, ref value, 255, Gui.InputFieldFlags.None,
-                    textRect.x, textRect.y, textRect.width, textRect.height, EditorGUI.InputStyle);
-            }
-        }
-    }
-
-    private void DrawEnhancedLocationSection(float alpha)
-    {
-        using (gui.Node("LocationSection").ExpandWidth().Height(80).Layout(LayoutType.Column).Spacing(12).Enter())
-        {
-            using (gui.Node("LocationLabel").ExpandWidth().Height(25).Enter())
-            {
-                gui.Draw2D.DrawText("Location", 18, gui.CurrentNode.LayoutData.Rect, ReadableWhite * (0.9f * alpha));
-            }
-
-            using (gui.Node("LocationRow").ExpandWidth().Height(45).Layout(LayoutType.Row).Spacing(12).Enter())
-            {
-                using (gui.Node("LocationDisplay").ExpandWidth().ExpandHeight().Enter())
-                {
-                    gui.Draw2D.DrawRectFilled(gui.CurrentNode.LayoutData.Rect, Color.black * (0.4f * alpha), 8);
-                    gui.Draw2D.DrawRect(gui.CurrentNode.LayoutData.Rect, ReadableDarkGray * (0.5f * alpha), 2, 8);
-
-                    string path = ProjectCache.Instance.SavedProjectsFolder;
-                    if (path.Length > 35)
-                        path = "..." + path.Substring(path.Length - 35);
-
-                    var textRect = gui.CurrentNode.LayoutData.Rect;
-                    textRect.x += 12;
-                    gui.Draw2D.DrawText(path, 16, textRect, ReadableWhite * (0.8f * alpha));
-                }
-
-                DrawEnhancedButton("BrowseBtn", FontAwesome6.FolderOpen, 45, Color.white * 0.3f, 
-                    () => OpenDialog("Select Folder", (x) => ProjectCache.Instance.SavedProjectsFolder = x));
-            }
-        }
-    }
-
-    private void DrawEnhancedCreateButton(float alpha)
-    {
-        using (gui.Node("CreateButton").ExpandWidth().Height(45).Enter())
-        {
-            bool canCreate = !string.IsNullOrEmpty(_createName) && 
-                           Directory.Exists(ProjectCache.Instance.SavedProjectsFolder) && 
-                           !Path.Exists(Path.Combine(ProjectCache.Instance.SavedProjectsFolder, _createName));
-
-            bool isHovered = gui.IsNodeHovered();
-            float hoverAnim = gui.AnimateBool(isHovered && canCreate, 0.2f, EaseType.QuadOut);
-            
-            Color btnColor = canCreate ? HubBlue : Color.white * 0.4f;
-            btnColor = Color.Lerp(btnColor, btnColor * 1.3f, hoverAnim);
-            
-            var btnRect = gui.CurrentNode.LayoutData.Rect;
-            
-            // Add glow effect
-            if (canCreate && hoverAnim > 0.01f)
-            {
-                var glowRect = btnRect;
-                glowRect.Expand(hoverAnim * 5f);
-                gui.Draw2D.DrawRectFilled(glowRect, btnColor * (hoverAnim * 0.4f * alpha), 10);
-            }
-
-            gui.Draw2D.DrawRectFilled(btnRect, btnColor * alpha, 8);
-            
-            // Add animated progress bar effect on hover
-            if (canCreate && hoverAnim > 0.01f)
-            {
-                var progressRect = btnRect;
-                progressRect.height = 4;
-                progressRect.y = btnRect.y + btnRect.height - 4;
-                progressRect.width *= hoverAnim;
-                gui.Draw2D.DrawRectFilled(progressRect, AccentCyan * alpha, 2);
-            }
-            
-            // Improved button text size
-            gui.Draw2D.DrawText("Create project", 18, btnRect, HighContrastText * alpha);
-
-            if (gui.IsNodePressed() && canCreate)
-            {
-                Project project = Project.CreateNew(new DirectoryInfo(Path.Join(ProjectCache.Instance.SavedProjectsFolder, _createName)));
-                ProjectCache.Instance.AddProject(project);
-                _createTabOpen = false;
-                _createName = "";
-            }
-        }
-    }
-
-    private void ShowProjectContextMenu(Project project)
-    {
-        // TODO: Implement enhanced context menu with animations
-        if (gui.IsPointerClick(MouseButton.Right))
-        {
-            // Basic context menu actions without popup for now
-        }
-    }
-
     private void DrawInstallsTab()
     {
         using (gui.Node("InstallsTab").ExpandWidth().ExpandHeight().Padding(40).Enter())
@@ -1189,5 +881,622 @@ public class ProwlHubWindow : EditorWindow
             return $"{(int)(timeSinceLastModified.TotalDays / 30)} months ago";
         else
             return $"{(int)(timeSinceLastModified.TotalDays / 365)} years ago";
+    }
+
+    private void DrawEnhancedSearchBox()
+    {
+        using (gui.Node("SearchContainer").Width(350).Height(40).Top(15).Enter())
+        {
+            var searchRect = gui.CurrentNode.LayoutData.Rect;
+            var interact = gui.GetInteractable(gui.CurrentNode);
+            bool isFocused = interact.IsHovered(); // Using IsHovered as proxy since HasFocus doesn't exist
+            
+            // Animated border and glow
+            float focusAnim = gui.AnimateBool(isFocused, 0.3f, EaseType.CubicOut);
+            Color borderColor = Color.Lerp(ReadableDarkGray * 0.4f, HubBlue, focusAnim);
+            
+            gui.Draw2D.DrawRectFilled(searchRect, Color.black * 0.4f, 8);
+            gui.Draw2D.DrawRect(searchRect, borderColor, 2 + focusAnim * 2, 8);
+            
+            // Add glow effect when focused
+            if (focusAnim > 0.01f)
+            {
+                var glowRect = searchRect;
+                glowRect.Expand(focusAnim * 5f);
+                gui.Draw2D.DrawRect(glowRect, HubBlue * (focusAnim * 0.4f), 1f, 10);
+            }
+
+            var inputRect = searchRect;
+            inputRect.x += 45;
+            inputRect.width -= 55;
+            inputRect.y += 3;
+            inputRect.height -= 6;
+
+            // Animated search icon - Improved size and contrast
+            var iconRect = searchRect;
+            iconRect.x += 12;
+            iconRect.width = 25;
+            float iconScale = 1f + focusAnim * 0.2f;
+            Color iconColor = Color.Lerp(ReadableGray, HubBlue, focusAnim);
+            gui.Draw2D.DrawText(FontAwesome6.MagnifyingGlass, 16 * iconScale, iconRect, iconColor);
+
+            gui.InputField("SearchInput", ref _searchText, 255, Gui.InputFieldFlags.None, 
+                inputRect.x, inputRect.y, inputRect.width, inputRect.height, EditorGUI.InputStyle);
+        }
+    }
+
+    private void DrawEnhancedButton(string id, string text, double width, Color baseColor, System.Action onPressed)
+    {
+        using (gui.Node(id).Width(width).Height(40).Top(15).Enter())
+        {
+            bool isHovered = gui.IsNodeHovered();
+            bool isPressed = gui.IsNodePressed();
+            
+            float hoverAnim = gui.AnimateBool(isHovered, 0.2f, EaseType.QuadOut);
+            float pressAnim = gui.AnimateBool(isPressed, 0.1f, EaseType.QuadInOut);
+            
+            Color btnColor = Color.Lerp(baseColor, baseColor * 1.3f, hoverAnim);
+            btnColor = Color.Lerp(btnColor, baseColor * 0.8f, pressAnim);
+            
+            var btnRect = gui.CurrentNode.LayoutData.Rect;
+            
+            // Add animated glow on hover
+            if (hoverAnim > 0.01f)
+            {
+                var glowRect = btnRect;
+                glowRect.Expand(hoverAnim * 4f);
+                gui.Draw2D.DrawRectFilled(glowRect, btnColor * (hoverAnim * 0.3f), 10);
+            }
+            
+            gui.Draw2D.DrawRectFilled(btnRect, btnColor, 8);
+            
+            // Add subtle inner highlight
+            var highlightRect = btnRect;
+            highlightRect.height *= 0.5f;
+            gui.Draw2D.DrawRectFilled(highlightRect, Color.white * (0.15f + hoverAnim * 0.15f), 8, CornerRounding.Top);
+            
+            // Improved text with better size
+            gui.Draw2D.DrawText(text, 16, btnRect, HighContrastText);
+
+            if (isPressed)
+                onPressed?.Invoke();
+        }
+    }
+
+    private void DrawEnhancedDropdownButton(string id, string text, double width, Color baseColor, System.Action onPressed, ref bool isOpen)
+    {
+        using (gui.Node(id).Width(width).Height(40).Enter())
+        {
+            bool isHovered = gui.IsNodeHovered();
+            bool isPressed = gui.IsNodePressed();
+            
+            float hoverAnim = gui.AnimateBool(isHovered, 0.2f, EaseType.QuadOut);
+            float pressAnim = gui.AnimateBool(isPressed, 0.1f, EaseType.QuadInOut);
+            float openAnim = gui.AnimateBool(isOpen, 0.3f, EaseType.CubicOut);
+            
+            Color btnColor = Color.Lerp(baseColor, baseColor * 1.3f, hoverAnim);
+            btnColor = Color.Lerp(btnColor, baseColor * 0.8f, pressAnim);
+            btnColor = Color.Lerp(btnColor, baseColor * 1.2f, openAnim * 0.5f);
+            
+            var btnRect = gui.CurrentNode.LayoutData.Rect;
+            
+            // Add animated glow on hover or when open
+            if (hoverAnim > 0.01f || openAnim > 0.01f)
+            {
+                var glowRect = btnRect;
+                glowRect.Expand((hoverAnim + openAnim * 0.5f) * 4f);
+                gui.Draw2D.DrawRectFilled(glowRect, btnColor * ((hoverAnim + openAnim * 0.5f) * 0.3f), 10);
+            }
+            
+            gui.Draw2D.DrawRectFilled(btnRect, btnColor, 8);
+            
+            // Add subtle inner highlight
+            var highlightRect = btnRect;
+            highlightRect.height *= 0.5f;
+            gui.Draw2D.DrawRectFilled(highlightRect, Color.white * (0.15f + hoverAnim * 0.15f), 8, CornerRounding.Top);
+            
+            // Dropdown arrow
+            var arrowRect = new Rect(btnRect.x + btnRect.width - 25, btnRect.y + 12, 15, 15);
+            string arrow = isOpen ? FontAwesome6.ChevronUp : FontAwesome6.ChevronDown;
+            gui.Draw2D.DrawText(arrow, 12, arrowRect, HighContrastText * 0.8f);
+            
+            // Button text
+            var textRect = btnRect;
+            textRect.width -= 30; // Make room for arrow
+            gui.Draw2D.DrawText(text, 16, textRect, HighContrastText);
+
+            if (isPressed)
+                onPressed?.Invoke();
+        }
+    }
+
+    private void DrawTemplatesDropdown()
+    {
+        if (!_templatesDropdownOpen) return;
+
+        using (gui.Node("TemplatesDropdown").Width(320).Height(280).Enter())
+        {
+            // Position dropdown below the Templates button
+            gui.CurrentNode.Left(340).Top(105); // Adjust position as needed
+            
+            var dropdownRect = gui.CurrentNode.LayoutData.Rect;
+            
+            // Background with glow
+            gui.Draw2D.DrawRectFilled(dropdownRect, SidebarBG, 12);
+            gui.Draw2D.DrawRect(dropdownRect, AccentPurple, 2f, 12);
+            
+            // Glow effect
+            var glowRect = dropdownRect;
+            glowRect.Expand(6f);
+            gui.Draw2D.DrawRect(glowRect, AccentPurple * 0.4f, 1f, 15);
+
+            using (gui.Node("DropdownContent").ExpandWidth().ExpandHeight().Layout(LayoutType.Column).Padding(15).Spacing(8).Enter())
+            {
+                // Header
+                using (gui.Node("TemplateHeader").ExpandWidth().Height(30).Enter())
+                {
+                    gui.Draw2D.DrawText("Project Templates", 18, gui.CurrentNode.LayoutData.Rect, HighContrastText);
+                }
+
+                // Template list
+                for (int i = 0; i < _projectTemplates.Length; i++)
+                {
+                    var template = _projectTemplates[i];
+                    DrawTemplateItem(template.name, template.icon, template.description, i);
+                }
+            }
+        }
+
+        // Close dropdown if clicked outside
+        if (gui.IsPointerClick(MouseButton.Left) && !gui.IsNodeHovered())
+        {
+            _templatesDropdownOpen = false;
+        }
+    }
+
+    private void DrawTemplateItem(string name, string icon, string description, int index)
+    {
+        using (gui.Node($"Template_{index}").ExpandWidth().Height(35).Enter())
+        {
+            bool isHovered = gui.IsNodeHovered();
+            float hoverAnim = gui.AnimateBool(isHovered, 0.2f, EaseType.QuadOut);
+            
+            var itemRect = gui.CurrentNode.LayoutData.Rect;
+            
+            if (hoverAnim > 0.01f)
+            {
+                gui.Draw2D.DrawRectFilled(itemRect, AccentPurple * (hoverAnim * 0.3f), 6);
+            }
+
+            if (gui.IsNodePressed())
+            {
+                // Future: Create project from template
+                ShowComingSoonTooltip($"Create {name} project template");
+                _templatesDropdownOpen = false;
+            }
+
+            using (gui.Node("TemplateLayout").ExpandWidth().ExpandHeight().Layout(LayoutType.Row).Spacing(10).Padding(8, 2).Enter())
+            {
+                // Icon
+                using (gui.Node("TemplateIcon").Width(25).ExpandHeight().Enter())
+                {
+                    Color iconColor = Color.Lerp(AccentPurple, HighContrastText, hoverAnim);
+                    gui.Draw2D.DrawText(icon, 16, gui.CurrentNode.LayoutData.Rect, iconColor);
+                }
+
+                // Name and description
+                using (gui.Node("TemplateText").ExpandWidth().ExpandHeight().Layout(LayoutType.Column).Enter())
+                {
+                    using (gui.Node("TemplateName").ExpandWidth().Height(18).Enter())
+                    {
+                        Color textColor = Color.Lerp(ReadableWhite, HighContrastText, hoverAnim);
+                        gui.Draw2D.DrawText(name, 14, gui.CurrentNode.LayoutData.Rect, textColor);
+                    }
+
+                    using (gui.Node("TemplateDesc").ExpandWidth().Height(15).Enter())
+                    {
+                        gui.Draw2D.DrawText(description, 11, gui.CurrentNode.LayoutData.Rect, ReadableGray);
+                    }
+                }
+            }
+        }
+    }
+
+    private void DrawImportDropdown()
+    {
+        if (!_importDropdownOpen) return;
+
+        using (gui.Node("ImportDropdown").Width(240).Height(200).Enter())
+        {
+            // Position dropdown below the Import button
+            gui.CurrentNode.Left(480).Top(105); // Adjust position as needed
+            
+            var dropdownRect = gui.CurrentNode.LayoutData.Rect;
+            
+            // Background with glow
+            gui.Draw2D.DrawRectFilled(dropdownRect, SidebarBG, 12);
+            gui.Draw2D.DrawRect(dropdownRect, AccentCyan, 2f, 12);
+            
+            // Glow effect
+            var glowRect = dropdownRect;
+            glowRect.Expand(6f);
+            gui.Draw2D.DrawRect(glowRect, AccentCyan * 0.4f, 1f, 15);
+
+            using (gui.Node("ImportContent").ExpandWidth().ExpandHeight().Layout(LayoutType.Column).Padding(15).Spacing(10).Enter())
+            {
+                // Header
+                using (gui.Node("ImportHeader").ExpandWidth().Height(25).Enter())
+                {
+                    gui.Draw2D.DrawText("Import From", 16, gui.CurrentNode.LayoutData.Rect, HighContrastText);
+                }
+
+                // Import options
+                DrawImportOption("Unity Project", FontAwesome6.Gamepad, "Import Unity 3D projects");
+                DrawImportOption("Unreal Project", FontAwesome6.Gamepad, "Import Unreal Engine projects");
+                DrawImportOption("Godot Project", FontAwesome6.Robot, "Import Godot projects");
+                DrawImportOption("Blender Scene", FontAwesome6.Cube, "Import Blender 3D scenes");
+            }
+        }
+
+        // Close dropdown if clicked outside
+        if (gui.IsPointerClick(MouseButton.Left) && !gui.IsNodeHovered())
+        {
+            _importDropdownOpen = false;
+        }
+    }
+
+    private void DrawImportOption(string name, string icon, string description)
+    {
+        using (gui.Node($"Import_{name.Replace(" ", "")}").ExpandWidth().Height(35).Enter())
+        {
+            bool isHovered = gui.IsNodeHovered();
+            float hoverAnim = gui.AnimateBool(isHovered, 0.2f, EaseType.QuadOut);
+            
+            var itemRect = gui.CurrentNode.LayoutData.Rect;
+            
+            if (hoverAnim > 0.01f)
+            {
+                gui.Draw2D.DrawRectFilled(itemRect, AccentCyan * (hoverAnim * 0.3f), 6);
+            }
+
+            if (gui.IsNodePressed())
+            {
+                // Future: Import functionality
+                ShowComingSoonTooltip($"Import from {name}");
+                _importDropdownOpen = false;
+            }
+
+            using (gui.Node("ImportLayout").ExpandWidth().ExpandHeight().Layout(LayoutType.Row).Spacing(8).Padding(8, 2).Enter())
+            {
+                // Icon
+                using (gui.Node("ImportIcon").Width(20).ExpandHeight().Enter())
+                {
+                    Color iconColor = Color.Lerp(AccentCyan, HighContrastText, hoverAnim);
+                    gui.Draw2D.DrawText(icon, 14, gui.CurrentNode.LayoutData.Rect, iconColor);
+                }
+
+                // Name
+                using (gui.Node("ImportName").ExpandWidth().ExpandHeight().Enter())
+                {
+                    Color textColor = Color.Lerp(ReadableWhite, HighContrastText, hoverAnim);
+                    gui.Draw2D.DrawText(name, 13, gui.CurrentNode.LayoutData.Rect, textColor);
+                }
+            }
+        }
+    }
+
+    private void ShowComingSoonTooltip(string feature)
+    {
+        // For now, we'll just show a simple visual feedback
+        // In the future, this could show a proper tooltip or notification
+        Runtime.Debug.Log($"Coming soon: {feature}");
+    }
+
+    private void RefreshProjects()
+    {
+        // Refresh the project cache
+        // For future implementation, this could scan for new projects in the folder
+        Runtime.Debug.Log("Refreshing projects...");
+    }
+
+    private void DrawAnimatedHeaderIcon(string icon, double width, Color accentColor)
+    {
+        using (gui.Node($"Icon_{icon}").Width(width).ExpandHeight().Enter())
+        {
+            var iconRect = gui.CurrentNode.LayoutData.Rect;
+            bool isHovered = gui.IsNodeHovered();
+            
+            float hoverAnim = gui.AnimateBool(isHovered, 0.3f, EaseType.CubicOut);
+            Color iconColor = Color.Lerp(ReadableGray, accentColor, hoverAnim);
+            
+            // Improved icon size for better visibility
+            gui.Draw2D.DrawText(icon, 18, iconRect, iconColor);
+            
+            // Add pulse effect on hover
+            if (hoverAnim > 0.01f)
+            {
+                gui.Draw2D.DrawCircleFilled(new Vector2(iconRect.x + iconRect.width / 2, iconRect.y + iconRect.height / 2), 
+                    18f * hoverAnim, accentColor * (hoverAnim * 0.2f));
+            }
+        }
+    }
+
+    private void ShowProjectContextMenu(Project project)
+    {
+        // TODO: Implement enhanced context menu with animations
+        if (gui.IsPointerClick(MouseButton.Right))
+        {
+            // Basic context menu actions without popup for now
+            Runtime.Debug.Log($"Context menu for project: {project.Name}");
+        }
+    }
+
+    private void DrawEnhancedSortableHeader(string text, SortBy sortType, double width)
+    {
+        using (gui.Node($"SortableHeader_{sortType}").Width(width).ExpandHeight().Enter())
+        {
+            bool isHovered = gui.IsNodeHovered();
+            bool isPressed = gui.IsNodePressed();
+            bool isCurrentSort = _sortBy == sortType;
+            
+            float hoverAnim = gui.AnimateBool(isHovered, 0.2f, EaseType.QuadOut);
+            float sortAnim = gui.AnimateBool(isCurrentSort, 0.3f, EaseType.CubicOut);
+            
+            var headerRect = gui.CurrentNode.LayoutData.Rect;
+            
+            // Background with hover effect
+            if (hoverAnim > 0.01f)
+            {
+                Color hoverColor = Color.Lerp(Color.clear, Color.white * 0.1f, hoverAnim);
+                gui.Draw2D.DrawRectFilled(headerRect, hoverColor, 4f);
+            }
+            
+            // Sort indicator background
+            if (sortAnim > 0.01f)
+            {
+                Color sortColor = Color.Lerp(Color.clear, HubBlue * 0.2f, sortAnim);
+                gui.Draw2D.DrawRectFilled(headerRect, sortColor, 4f);
+            }
+
+            if (isPressed)
+            {
+                if (_sortBy == sortType)
+                {
+                    _sortAscending = !_sortAscending;
+                }
+                else
+                {
+                    _sortBy = sortType;
+                    _sortAscending = false; // Default to descending for most columns
+                }
+            }
+
+            // Text and sort arrow
+            using (gui.Node("HeaderContent").ExpandWidth().ExpandHeight().Layout(LayoutType.Row).Spacing(8).Padding(12, 0).Enter())
+            {
+                // Header text
+                using (gui.Node("HeaderText").FitContentWidth().ExpandHeight().Enter())
+                {
+                    Color textColor = Color.Lerp(ReadableWhite, HighContrastText, hoverAnim);
+                    textColor = Color.Lerp(textColor, HubBlue, sortAnim * 0.7f);
+                    gui.Draw2D.DrawText(text, 16, gui.CurrentNode.LayoutData.Rect, textColor);
+                }
+
+                // Sort arrow
+                if (isCurrentSort)
+                {
+                    using (gui.Node("SortArrow").Width(20).ExpandHeight().Enter())
+                    {
+                        string arrow = _sortAscending ? FontAwesome6.ChevronUp : FontAwesome6.ChevronDown;
+                        Color arrowColor = Color.Lerp(HubBlue * 0.7f, HubBlue, hoverAnim);
+                        gui.Draw2D.DrawText(arrow, 14, gui.CurrentNode.LayoutData.Rect, arrowColor * sortAnim);
+                    }
+                }
+            }
+        }
+    }
+
+    private void DrawEnhancedCreateProjectOverlay()
+    {
+        // Overlay background
+        using (gui.Node("CreateOverlay").Left(0).Top(0).ExpandWidth().ExpandHeight().Enter())
+        {
+            gui.SetZIndex(500, true);
+            
+            var overlayRect = gui.CurrentNode.LayoutData.Rect;
+            
+            // Background blur effect
+            gui.Draw2D.DrawRectFilled(overlayRect, Color.black * 0.7f);
+            
+            // Create project dialog
+            using (gui.Node("CreateDialog").Width(600).Height(400).Enter())
+            {
+                // Center the dialog
+                gui.CurrentNode.Left((overlayRect.width - 600) / 2).Top((overlayRect.height - 400) / 2);
+                
+                var dialogRect = gui.CurrentNode.LayoutData.Rect;
+                
+                // Dialog background with glow
+                gui.Draw2D.DrawRectFilled(dialogRect, SidebarBG, 16f);
+                gui.Draw2D.DrawRect(dialogRect, HubBlue, 2f, 16f);
+                
+                // Glow effect
+                var glowRect = dialogRect;
+                glowRect.Expand(8f);
+                gui.Draw2D.DrawRect(glowRect, HubBlue * 0.4f, 1f, 20f);
+
+                using (gui.Node("DialogContent").ExpandWidth().ExpandHeight().Layout(LayoutType.Column).Padding(30).Spacing(20).Enter())
+                {
+                    // Header
+                    using (gui.Node("CreateHeader").ExpandWidth().Height(50).Enter())
+                    {
+                        var headerRect = gui.CurrentNode.LayoutData.Rect;
+                        
+                        // Animated title
+                        gui.Draw2D.DrawText("Create New Project", 28, headerRect, HighContrastText);
+                        
+                        // Close button
+                        using (gui.Node("CloseBtn").Width(40).Height(40).Enter())
+                        {
+                            gui.CurrentNode.Left(headerRect.width - 40).Top(5);
+                            
+                            bool closeHovered = gui.IsNodeHovered();
+                            float closeHoverAnim = gui.AnimateBool(closeHovered, 0.2f, EaseType.QuadOut);
+                            
+                            var closeBtnRect = gui.CurrentNode.LayoutData.Rect;
+                            
+                            if (closeHoverAnim > 0.01f)
+                            {
+                                gui.Draw2D.DrawRectFilled(closeBtnRect, Color.red * (closeHoverAnim * 0.3f), 8f);
+                            }
+                            
+                            if (gui.IsNodePressed())
+                            {
+                                _createTabOpen = false;
+                            }
+                            
+                            Color closeColor = Color.Lerp(ReadableGray, Color.red, closeHoverAnim);
+                            gui.Draw2D.DrawText(FontAwesome6.Xmark, 20, closeBtnRect, closeColor);
+                        }
+                    }
+
+                    // Project name input
+                    using (gui.Node("ProjectNameSection").ExpandWidth().Height(80).Layout(LayoutType.Column).Spacing(8).Enter())
+                    {
+                        using (gui.Node("NameLabel").ExpandWidth().Height(25).Enter())
+                        {
+                            gui.Draw2D.DrawText("Project Name", 18, gui.CurrentNode.LayoutData.Rect, HighContrastText);
+                        }
+
+                        using (gui.Node("NameInput").ExpandWidth().Height(40).Enter())
+                        {
+                            var inputRect = gui.CurrentNode.LayoutData.Rect;
+                            
+                            // Input background
+                            gui.Draw2D.DrawRectFilled(inputRect, Color.black * 0.4f, 8f);
+                            gui.Draw2D.DrawRect(inputRect, ReadableDarkGray, 2f, 8f);
+                            
+                            var textRect = inputRect;
+                            textRect.x += 15;
+                            textRect.width -= 30;
+                            textRect.y += 5;
+                            textRect.height -= 10;
+
+                            gui.InputField("CreateProjectName", ref _createName, 255, Gui.InputFieldFlags.None, 
+                                textRect.x, textRect.y, textRect.width, textRect.height, EditorGUI.InputStyle);
+                        }
+                    }
+
+                    // Template selection area
+                    using (gui.Node("TemplateSection").ExpandWidth().ExpandHeight().Layout(LayoutType.Column).Spacing(8).Enter())
+                    {
+                        using (gui.Node("TemplateLabel").ExpandWidth().Height(25).Enter())
+                        {
+                            gui.Draw2D.DrawText("Choose Template", 18, gui.CurrentNode.LayoutData.Rect, HighContrastText);
+                        }
+
+                        using (gui.Node("TemplateGrid").ExpandWidth().ExpandHeight().Layout(LayoutType.Column).Spacing(8).Scroll(inputstyle: EditorGUI.InputStyle).Enter())
+                        {
+                            // Template items
+                            for (int i = 0; i < _projectTemplates.Length; i++)
+                            {
+                                var template = _projectTemplates[i];
+                                DrawCreateTemplateItem(template.name, template.icon, template.description, i);
+                            }
+                        }
+                    }
+
+                    // Action buttons
+                    using (gui.Node("ActionButtons").ExpandWidth().Height(50).Layout(LayoutType.Row).Spacing(15).Enter())
+                    {
+                        // Spacer
+                        using (gui.Node("ButtonSpacer").ExpandWidth().ExpandHeight().Enter()) { }
+
+                        // Cancel button
+                        DrawEnhancedButton("CancelCreateBtn", "Cancel", 100, Color.white * 0.3f, () => 
+                            _createTabOpen = false);
+
+                        // Create button
+                        DrawEnhancedButton("CreateProjectBtn", "Create", 120, HubBlue, () => 
+                        {
+                            if (!string.IsNullOrWhiteSpace(_createName))
+                            {
+                                // Future: Actually create the project
+                                ShowComingSoonTooltip($"Create project: {_createName}");
+                                _createTabOpen = false;
+                                _createName = "";
+                            }
+                        });
+                    }
+                }
+            }
+            
+            gui.SetZIndex(0, true);
+        }
+
+        // Close overlay if clicked outside dialog
+        if (gui.IsPointerClick(MouseButton.Left))
+        {
+            // Since we can't easily get mouse position, we'll rely on the dialog content capturing clicks
+            // If we reach here, it means the click wasn't captured by any dialog elements
+            bool clickedOnDialog = false;
+            
+            // Check if any child node of the dialog was hovered/interacted with
+            // This is a simple approximation - in a more complex scenario we'd need better hit testing
+            if (!clickedOnDialog)
+            {
+                _createTabOpen = false;
+            }
+        }
+    }
+
+    private void DrawCreateTemplateItem(string name, string icon, string description, int index)
+    {
+        using (gui.Node($"CreateTemplate_{index}").ExpandWidth().Height(60).Enter())
+        {
+            bool isHovered = gui.IsNodeHovered();
+            float hoverAnim = gui.AnimateBool(isHovered, 0.2f, EaseType.QuadOut);
+            
+            var itemRect = gui.CurrentNode.LayoutData.Rect;
+            
+            // Background
+            gui.Draw2D.DrawRectFilled(itemRect, Color.black * 0.3f, 8f);
+            
+            if (hoverAnim > 0.01f)
+            {
+                gui.Draw2D.DrawRectFilled(itemRect, HubBlue * (hoverAnim * 0.3f), 8f);
+                gui.Draw2D.DrawRect(itemRect, HubBlue * hoverAnim, 2f, 8f);
+            }
+
+            if (gui.IsNodePressed())
+            {
+                ShowComingSoonTooltip($"Create {name} project");
+            }
+
+            using (gui.Node("CreateTemplateLayout").ExpandWidth().ExpandHeight().Layout(LayoutType.Row).Spacing(15).Padding(15, 10).Enter())
+            {
+                // Icon
+                using (gui.Node("CreateTemplateIcon").Width(40).ExpandHeight().Enter())
+                {
+                    Color iconColor = Color.Lerp(HubBlue, HighContrastText, hoverAnim);
+                    gui.Draw2D.DrawText(icon, 24, gui.CurrentNode.LayoutData.Rect, iconColor);
+                }
+
+                // Text content
+                using (gui.Node("CreateTemplateText").ExpandWidth().ExpandHeight().Layout(LayoutType.Column).Spacing(5).Enter())
+                {
+                    using (gui.Node("CreateTemplateName").ExpandWidth().Height(25).Enter())
+                    {
+                        Color textColor = Color.Lerp(ReadableWhite, HighContrastText, hoverAnim);
+                        gui.Draw2D.DrawText(name, 18, gui.CurrentNode.LayoutData.Rect, textColor);
+                    }
+
+                    using (gui.Node("CreateTemplateDesc").ExpandWidth().Height(20).Enter())
+                    {
+                        gui.Draw2D.DrawText(description, 14, gui.CurrentNode.LayoutData.Rect, ReadableGray);
+                    }
+                }
+            }
+        }
     }
 }
