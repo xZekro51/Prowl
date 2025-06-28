@@ -26,6 +26,21 @@ public class ProwlHubWindow : EditorWindow
     private FileDialog _dialog;
     private FileDialogContext _dialogContext;
 
+    // Dialog state
+    private bool _showCloneDialog = false;
+    private string _cloneUrl = "";
+    private bool _showSamplesDialog = false;
+    private int _selectedTemplateIndex = 0;
+    private int _selectedSampleIndex = -1;
+    private string _importPath = "";
+    private string _importType = "";
+    private List<(string name, string url)> _sampleProjects = new()
+    {
+        ("Platformer Sample", "https://github.com/prowlengine/platformer-sample.git"),
+        ("TopDown RPG", "https://github.com/prowlengine/topdown-rpg-sample.git"),
+        ("Shooter Demo", "https://github.com/prowlengine/shooter-demo.git")
+    };
+
     // Animation state
     private float _backgroundAnimTime = 0f;
     private readonly List<Particle> _particles = new();
@@ -251,6 +266,10 @@ public class ProwlHubWindow : EditorWindow
                 }
                 gui.SetZIndex(0, true);
             }
+
+            // Draw dialogs
+            DrawCloneDialog();
+            DrawSamplesDialog();
         }
     }
 
@@ -480,6 +499,10 @@ public class ProwlHubWindow : EditorWindow
                 // Enhanced buttons
                 DrawEnhancedButton("AddBtn", "Add Existing", 120, Color.white * 0.2f, () => 
                     OpenDialog("Add Existing Project", (x) => ProjectCache.Instance.AddProject(new Project(new DirectoryInfo(x)))));
+                DrawEnhancedButton("CloneBtn", FontAwesome6.CodeBranch + " Clone", 100, AccentGreen, () => 
+                    _showCloneDialog = true);
+                DrawEnhancedButton("SamplesBtn", FontAwesome6.Star + " Samples", 120, AccentOrange, () => 
+                    _showSamplesDialog = true);
             }
 
             // Bottom row with quick action buttons
@@ -497,20 +520,12 @@ public class ProwlHubWindow : EditorWindow
                 DrawEnhancedDropdownButton("ImportBtn", FontAwesome6.FileImport + " Import", 120, AccentCyan, 
                     () => _importDropdownOpen = !_importDropdownOpen, ref _importDropdownOpen);
 
-                // Clone from Git
-                DrawEnhancedButton("CloneBtn", FontAwesome6.CodeBranch + " Clone", 100, AccentGreen, () => 
-                    ShowComingSoonTooltip("Git clone functionality"));
-
-                // Sample Projects
-                DrawEnhancedButton("SamplesBtn", FontAwesome6.Star + " Samples", 120, AccentOrange, () => 
-                    ShowComingSoonTooltip("Sample projects gallery"));
-
                 // Spacer
                 using (gui.Node("ActionsSpacer").ExpandWidth().ExpandHeight().Enter()) { }
 
                 // Refresh projects
                 DrawEnhancedButton("RefreshBtn", FontAwesome6.ArrowsRotate, 50, Color.white * 0.3f, () => 
-                    RefreshProjects());
+                    RefreshProjects(true));
             }
         }
 
@@ -1070,8 +1085,8 @@ public class ProwlHubWindow : EditorWindow
 
             if (gui.IsNodePressed())
             {
-                // Future: Create project from template
-                ShowComingSoonTooltip($"Create {name} project template");
+                _createTabOpen = true;
+                _selectedTemplateIndex = index;
                 _templatesDropdownOpen = false;
             }
 
@@ -1161,8 +1176,11 @@ public class ProwlHubWindow : EditorWindow
 
             if (gui.IsNodePressed())
             {
-                // Future: Import functionality
-                ShowComingSoonTooltip($"Import from {name}");
+                _importType = name;
+                OpenDialog($"Import {name}", (x) => {
+                    // TODO: Implement import logic for each engine
+                    ProjectCache.Instance.AddProject(new Project(new DirectoryInfo(x)));
+                });
                 _importDropdownOpen = false;
             }
 
@@ -1181,42 +1199,6 @@ public class ProwlHubWindow : EditorWindow
                     Color textColor = Color.Lerp(ReadableWhite, HighContrastText, hoverAnim);
                     gui.Draw2D.DrawText(name, 13, gui.CurrentNode.LayoutData.Rect, textColor);
                 }
-            }
-        }
-    }
-
-    private void ShowComingSoonTooltip(string feature)
-    {
-        // For now, we'll just show a simple visual feedback
-        // In the future, this could show a proper tooltip or notification
-        Runtime.Debug.Log($"Coming soon: {feature}");
-    }
-
-    private void RefreshProjects()
-    {
-        // Refresh the project cache
-        // For future implementation, this could scan for new projects in the folder
-        Runtime.Debug.Log("Refreshing projects...");
-    }
-
-    private void DrawAnimatedHeaderIcon(string icon, double width, Color accentColor)
-    {
-        using (gui.Node($"Icon_{icon}").Width(width).ExpandHeight().Enter())
-        {
-            var iconRect = gui.CurrentNode.LayoutData.Rect;
-            bool isHovered = gui.IsNodeHovered();
-            
-            float hoverAnim = gui.AnimateBool(isHovered, 0.3f, EaseType.CubicOut);
-            Color iconColor = Color.Lerp(ReadableGray, accentColor, hoverAnim);
-            
-            // Improved icon size for better visibility
-            gui.Draw2D.DrawText(icon, 18, iconRect, iconColor);
-            
-            // Add pulse effect on hover
-            if (hoverAnim > 0.01f)
-            {
-                gui.Draw2D.DrawCircleFilled(new Vector2(iconRect.x + iconRect.width / 2, iconRect.y + iconRect.height / 2), 
-                    18f * hoverAnim, accentColor * (hoverAnim * 0.2f));
             }
         }
     }
@@ -1421,8 +1403,11 @@ public class ProwlHubWindow : EditorWindow
                         {
                             if (!string.IsNullOrWhiteSpace(_createName))
                             {
-                                // Future: Actually create the project
-                                ShowComingSoonTooltip($"Create project: {_createName}");
+                                var template = _projectTemplates[_selectedTemplateIndex].name;
+                                var projectDir = System.IO.Path.Combine(ProjectCache.Instance.SavedProjectsFolder, _createName);
+                                System.IO.Directory.CreateDirectory(projectDir);
+                                // TODO: Copy template files based on template
+                                ProjectCache.Instance.AddProject(new Project(new DirectoryInfo(projectDir)));
                                 _createTabOpen = false;
                                 _createName = "";
                             }
@@ -1470,7 +1455,7 @@ public class ProwlHubWindow : EditorWindow
 
             if (gui.IsNodePressed())
             {
-                ShowComingSoonTooltip($"Create {name} project");
+                _selectedTemplateIndex = index;
             }
 
             using (gui.Node("CreateTemplateLayout").ExpandWidth().ExpandHeight().Layout(LayoutType.Row).Spacing(15).Padding(15, 10).Enter())
@@ -1497,6 +1482,114 @@ public class ProwlHubWindow : EditorWindow
                     }
                 }
             }
+        }
+    }
+
+    private void DrawCloneDialog()
+    {
+        if (!_showCloneDialog) return;
+        using (gui.Node("CloneDialogOverlay").Left(0).Top(0).ExpandWidth().ExpandHeight().Enter())
+        {
+            gui.SetZIndex(600, true);
+            var overlayRect = gui.CurrentNode.LayoutData.Rect;
+            gui.Draw2D.DrawRectFilled(overlayRect, Color.black * 0.7f);
+            using (gui.Node("CloneDialog").Width(500).Height(220).Enter())
+            {
+                gui.CurrentNode.Left((overlayRect.width - 500) / 2).Top((overlayRect.height - 220) / 2);
+                var dialogRect = gui.CurrentNode.LayoutData.Rect;
+                gui.Draw2D.DrawRectFilled(dialogRect, SidebarBG, 16f);
+                gui.Draw2D.DrawRect(dialogRect, AccentGreen, 2f, 16f);
+                using (gui.Node("CloneContent").ExpandWidth().ExpandHeight().Layout(LayoutType.Column).Padding(30).Spacing(20).Enter())
+                {
+                    gui.Draw2D.DrawText("Clone Project from Git", 22, gui.CurrentNode.LayoutData.Rect, HighContrastText);
+                    gui.InputField("CloneUrlInput", ref _cloneUrl, 512, Gui.InputFieldFlags.None, gui.CurrentNode.LayoutData.Rect.x, gui.CurrentNode.LayoutData.Rect.y+40, 440, 30, EditorGUI.InputStyle);
+                    using (gui.Node("CloneActions").ExpandWidth().Height(40).Layout(LayoutType.Row).Spacing(10).Enter())
+                    {
+                        DrawEnhancedButton("CancelCloneBtn", "Cancel", 100, Color.white * 0.3f, () => { _showCloneDialog = false; _cloneUrl = ""; });
+                        DrawEnhancedButton("DoCloneBtn", "Clone", 120, AccentGreen, () => {
+                            if (!string.IsNullOrWhiteSpace(_cloneUrl))
+                            {
+                                var projectName = System.IO.Path.GetFileNameWithoutExtension(_cloneUrl);
+                                var projectDir = System.IO.Path.Combine(ProjectCache.Instance.SavedProjectsFolder, projectName);
+                                System.IO.Directory.CreateDirectory(projectDir);
+                                // TODO: Use git to clone
+                                ProjectCache.Instance.AddProject(new Project(new DirectoryInfo(projectDir)));
+                                _showCloneDialog = false;
+                                _cloneUrl = "";
+                            }
+                        });
+                    }
+                }
+            }
+            gui.SetZIndex(0, true);
+        }
+    }
+
+    private void DrawSamplesDialog()
+    {
+        if (!_showSamplesDialog) return;
+        using (gui.Node("SamplesDialogOverlay").Left(0).Top(0).ExpandWidth().ExpandHeight().Enter())
+        {
+            gui.SetZIndex(600, true);
+            var overlayRect = gui.CurrentNode.LayoutData.Rect;
+            gui.Draw2D.DrawRectFilled(overlayRect, Color.black * 0.7f);
+            using (gui.Node("SamplesDialog").Width(500).Height(350).Enter())
+            {
+                gui.CurrentNode.Left((overlayRect.width - 500) / 2).Top((overlayRect.height - 350) / 2);
+                var dialogRect = gui.CurrentNode.LayoutData.Rect;
+                gui.Draw2D.DrawRectFilled(dialogRect, SidebarBG, 16f);
+                gui.Draw2D.DrawRect(dialogRect, AccentOrange, 2f, 16f);
+                using (gui.Node("SamplesContent").ExpandWidth().ExpandHeight().Layout(LayoutType.Column).Padding(30).Spacing(20).Enter())
+                {
+                    gui.Draw2D.DrawText("Sample Projects", 22, gui.CurrentNode.LayoutData.Rect, HighContrastText);
+                    for (int i = 0; i < _sampleProjects.Count; i++)
+                    {
+                        var sample = _sampleProjects[i];
+                        bool isSelected = _selectedSampleIndex == i;
+                        DrawEnhancedButton($"SampleBtn_{i}", sample.name, 400, isSelected ? AccentOrange : Color.white * 0.2f, () => _selectedSampleIndex = i);
+                    }
+                    using (gui.Node("SamplesActions").ExpandWidth().Height(40).Layout(LayoutType.Row).Spacing(10).Enter())
+                    {
+                        DrawEnhancedButton("CancelSamplesBtn", "Cancel", 100, Color.white * 0.3f, () => { _showSamplesDialog = false; _selectedSampleIndex = -1; });
+                        DrawEnhancedButton("ImportSampleBtn", "Import", 120, AccentOrange, () => {
+                            if (_selectedSampleIndex >= 0)
+                            {
+                                var sample = _sampleProjects[_selectedSampleIndex];
+                                var projectName = sample.name;
+                                var projectDir = System.IO.Path.Combine(ProjectCache.Instance.SavedProjectsFolder, projectName);
+                                System.IO.Directory.CreateDirectory(projectDir);
+                                // TODO: Use git to clone sample.url
+                                ProjectCache.Instance.AddProject(new Project(new DirectoryInfo(projectDir)));
+                                _showSamplesDialog = false;
+                                _selectedSampleIndex = -1;
+                            }
+                        });
+                    }
+                }
+            }
+            gui.SetZIndex(0, true);
+        }
+    }
+
+    private void RefreshProjects(bool rescan = false)
+    {
+        if (rescan)
+        {
+            ProjectCache.Instance.RescanProjects();
+        }
+        else
+        {
+            Runtime.Debug.Log("Refreshing projects...");
+        }
+    }
+
+    // Add this helper for table header icons
+    private void DrawAnimatedHeaderIcon(string icon, double width, Color color)
+    {
+        using (gui.Node($"HeaderIcon_{icon}").Width(width).ExpandHeight().Enter())
+        {
+            var rect = gui.CurrentNode.LayoutData.Rect;
+            gui.Draw2D.DrawText(icon, 18, rect, color);
         }
     }
 }

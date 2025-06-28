@@ -108,6 +108,25 @@ public class ProjectCache : ScriptableSingleton<ProjectCache>, ISerializationCal
     }
 
 
+    public void RescanProjects()
+    {
+        _projectCache.Clear();
+        _serializedProjects ??= new List<string>();
+        foreach (string path in _serializedProjects)
+        {
+            if (Directory.Exists(path))
+            {
+                Project project = new Project(new DirectoryInfo(path));
+                if (!_projectCache.Exists(x => x.ProjectPath == project.ProjectPath))
+                {
+                    _projectCache.Add(project);
+                }
+            }
+        }
+        Save();
+    }
+
+
     public void OnBeforeSerialize()
     {
         _serializedProjects = _projectCache.Select(x => x.ProjectPath).ToList();
