@@ -8,13 +8,13 @@ using System.IO;
 using System.Text;
 using System.Text.RegularExpressions;
 
-using Prowl.Runtime.GraphicsBackend.Primitives;
 using Prowl.Runtime.Rendering.Shaders;
 using Prowl.Runtime.Utils;
 using Prowl.Vector;
 
 using Shader = Prowl.Runtime.Resources.Shader;
 using Texture2D = Prowl.Runtime.Resources.Texture2D;
+using Texture3D = Prowl.Runtime.Resources.Texture3D;
 
 namespace Prowl.Runtime.AssetImporting;
 
@@ -475,6 +475,7 @@ public static class ShaderParser
                 ShaderPropertyType.Color => Color.White,
                 ShaderPropertyType.Matrix => Float4x4.Identity,
                 ShaderPropertyType.Texture2D => Texture2D.White,
+                ShaderPropertyType.Texture3D => Texture3D.White,
                 _ => throw new Exception($"Invalid property type") // Should never execute unless EnumParse() breaks.
             };
 
@@ -518,6 +519,10 @@ public static class ShaderParser
             case ShaderPropertyType.Texture2D:
                 ExpectToken("property", tokenizer, ShaderToken.Identifier);
                 return Texture2DParse(tokenizer.ParseQuotedStringValue());
+
+            case ShaderPropertyType.Texture3D:
+                ExpectToken("property", tokenizer, ShaderToken.Identifier);
+                return Texture3DParse(tokenizer.ParseQuotedStringValue());
         }
 
         throw new Exception($"Invalid property type");
@@ -839,6 +844,16 @@ public static class ShaderParser
             "surface" => Texture2D.Surface,
             "noise" => Texture2D.Noise,
             _ => throw new ParseException("texture 2d", $"unknown texture default: {texture}")
+        };
+    }
+
+
+    private static Texture3D Texture3DParse(string texture)
+    {
+        return texture switch
+        {
+            "white" => Texture3D.White,
+            _ => throw new ParseException("texture 3d", $"unknown texture default: {texture}")
         };
     }
 

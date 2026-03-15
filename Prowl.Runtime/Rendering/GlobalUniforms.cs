@@ -3,8 +3,6 @@
 
 using System.Runtime.InteropServices;
 
-using Prowl.Runtime.GraphicsBackend;
-using Prowl.Runtime.GraphicsBackend.Primitives;
 using Prowl.Vector;
 
 namespace Prowl.Runtime.Rendering;
@@ -64,7 +62,7 @@ public static class GlobalUniforms
         if (s_uniformBuffer == null)
         {
             // Create a dynamic uniform buffer
-            s_uniformBuffer = Graphics.Device.CreateBuffer<GlobalUniformsData>(
+            s_uniformBuffer = Graphics.CreateBuffer<GlobalUniformsData>(
                 BufferType.UniformBuffer,
                 [s_data],
                 true
@@ -82,7 +80,7 @@ public static class GlobalUniforms
 
         if (s_isDirty && s_uniformBuffer != null)
         {
-            Graphics.Device.UpdateBuffer(s_uniformBuffer, 0, [s_data]);
+            Graphics.UpdateBuffer(s_uniformBuffer, 0, [s_data]);
             s_isDirty = false;
         }
     }

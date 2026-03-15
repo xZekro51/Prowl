@@ -33,6 +33,7 @@ public abstract class Game
 
     private PaperRenderer _paperRenderer;
     private Paper _paper;
+    private int frameCounter;
 
     public Paper PaperInstance => _paper;
 
@@ -44,8 +45,6 @@ public abstract class Game
 
         Window.Load += () =>
         {
-            Graphics.Initialize();
-
             AudioContext.Initialize(44100, 2, 2048);
             //AudioContext.Initialize(sampleRate, channels, 2048);
 
@@ -92,7 +91,11 @@ public abstract class Game
 
                 EndUpdate();
 
-                Console.Title = $"{title} - {Window.InternalWindow.FramebufferSize.X}x{Window.InternalWindow.FramebufferSize.Y} - FPS: {1.0 / Time.DeltaTime}";
+                if (frameCounter++ % 60 == 0)
+                { 
+                    Console.Title = $"{title} - {Window.InternalWindow.FramebufferSize.X}x{Window.InternalWindow.FramebufferSize.Y} - FPS: {1.0 / Time.DeltaTime}";
+                }
+
             }
             catch (Exception e)
             {
@@ -108,7 +111,19 @@ public abstract class Game
             {
                 Scene? currentScene = Scene.Current;
 
-                Graphics.StartFrame();
+                // === Start Graphics ===
+
+                Graphics.UnbindFramebuffer();
+                Graphics.Viewport(0, 0, (uint)Window.InternalWindow.FramebufferSize.X, (uint)Window.InternalWindow.FramebufferSize.Y);
+                Graphics.SetState(new(), true);
+
+                Graphics.BindVertexArray(null);
+                Graphics.Clear(0, 0, 0, 1, ClearFlags.Color | ClearFlags.Depth | ClearFlags.Stencil);
+
+                Rendering.ShadowAtlas.TryInitialize();
+                Rendering.ShadowAtlas.Clear();
+
+                // === End of Start Graphics ===
 
                 BeginRender();
 
@@ -116,8 +131,8 @@ public abstract class Game
 
                 EndRender();
 
-                Graphics.Device.UnbindFramebuffer();
-                Graphics.Device.Viewport(0, 0, (uint)Window.InternalWindow.FramebufferSize.X, (uint)Window.InternalWindow.FramebufferSize.Y);
+                Graphics.UnbindFramebuffer();
+                Graphics.Viewport(0, 0, (uint)Window.InternalWindow.FramebufferSize.X, (uint)Window.InternalWindow.FramebufferSize.Y);
 
                 _paper.BeginFrame(delta);
 
@@ -129,7 +144,11 @@ public abstract class Game
 
                 _paper.EndFrame();
 
-                Graphics.EndFrame();
+                // === End Graphics ===
+
+                RenderTexture.UpdatePool();
+
+                // === End of End Graphics ===
 
                 Debug.ClearGizmos();
             }
@@ -156,7 +175,6 @@ public abstract class Game
             Scene.Unload();
 
             AudioContext.Deinitialize();
-            Graphics.Dispose();
 
             Debug.Log("Is terminating...");
         };

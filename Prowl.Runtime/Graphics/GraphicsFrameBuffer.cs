@@ -1,18 +1,23 @@
 ﻿// This file is part of the Prowl Game Engine
 // Licensed under the MIT License. See the LICENSE file in the project root for details.
-
 using System;
 
 using Silk.NET.OpenGL;
 
-namespace Prowl.Runtime.GraphicsBackend.OpenGL;
+namespace Prowl.Runtime;
 
-public sealed unsafe class GLFrameBuffer : GraphicsFrameBuffer
+public unsafe class GraphicsFrameBuffer
 {
+    public struct Attachment
+    {
+        public GraphicsTexture Texture;
+        public bool IsDepth;
+    }
+
     public uint Handle { get; private set; }
     public uint NumOfAttachments { get; private set; }
-    public override uint Width { get; protected set; }
-    public override uint Height { get; protected set; }
+    public uint Width { get; protected set; }
+    public uint Height { get; protected set; }
 
     public static readonly GLEnum[] buffers =
     [
@@ -29,14 +34,14 @@ public sealed unsafe class GLFrameBuffer : GraphicsFrameBuffer
         GLEnum.ColorAttachment29, GLEnum.ColorAttachment30, GLEnum.ColorAttachment31
     ];
 
-    public GLFrameBuffer(Attachment[] attachments, uint width, uint height)
+    public GraphicsFrameBuffer(Attachment[] attachments, uint width, uint height)
     {
         int numTextures = attachments.Length;
         if (numTextures < 0 || numTextures > Graphics.MaxFramebufferColorAttachments)
             throw new Exception("[FrameBuffer] Invalid number of textures! [0-" + Graphics.MaxFramebufferColorAttachments + "]");
 
         // Generate FBO
-        Handle = GLDevice.GL.GenFramebuffer();
+        Handle = Graphics.GL.GenFramebuffer();
         if (Handle <= 0)
             throw new Exception($"[FrameBuffer] Failed to generate new FrameBuffer.");
 
@@ -44,7 +49,7 @@ public sealed unsafe class GLFrameBuffer : GraphicsFrameBuffer
         Width = width;
         Height = height;
 
-        GLDevice.GL.BindFramebuffer(FramebufferTarget.Framebuffer, Handle);
+        Graphics.GL.BindFramebuffer(FramebufferTarget.Framebuffer, Handle);
 
         unsafe
         {
@@ -57,32 +62,32 @@ public sealed unsafe class GLFrameBuffer : GraphicsFrameBuffer
                     {
                         //InternalTextures[i].SetTextureFilters(TextureMinFilter.Linear, TextureMagFilter.Linear);
                         //InternalTextures[i].SetWrapModes(TextureWrapMode.ClampToEdge, TextureWrapMode.ClampToEdge);
-                        GLDevice.GL.FramebufferTexture2D(FramebufferTarget.Framebuffer, FramebufferAttachment.ColorAttachment0 + i, (attachments[i].Texture as GLTexture)!.Target, (attachments[i].Texture as GLTexture)!.Handle, 0);
+                        Graphics.GL.FramebufferTexture2D(FramebufferTarget.Framebuffer, FramebufferAttachment.ColorAttachment0 + i, attachments[i].Texture!.Target, attachments[i].Texture!.Handle, 0);
                     }
                     else
                     {
-                        GLDevice.GL.FramebufferTexture2D(FramebufferTarget.Framebuffer, FramebufferAttachment.DepthAttachment, TextureTarget.Texture2D, (attachments[i].Texture as GLTexture)!.Handle, 0);
+                        Graphics.GL.FramebufferTexture2D(FramebufferTarget.Framebuffer, FramebufferAttachment.DepthAttachment, TextureTarget.Texture2D, attachments[i].Texture!.Handle, 0);
                     }
                 }
-                GLDevice.GL.DrawBuffers((uint)numTextures, buffers);
+                Graphics.GL.DrawBuffers((uint)numTextures, buffers);
             }
 
-            if (GLDevice.GL.CheckFramebufferStatus(FramebufferTarget.Framebuffer) != GLEnum.FramebufferComplete)
+            if (Graphics.GL.CheckFramebufferStatus(FramebufferTarget.Framebuffer) != GLEnum.FramebufferComplete)
                 throw new Exception("RenderTexture: [ID {fboId}] RenderTexture object creation failed.");
 
             // Unbind FBO
-            GLDevice.GL.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
+            Graphics.GL.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
         }
     }
 
-    public override bool IsDisposed { get; protected set; }
+    public bool IsDisposed { get; protected set; }
 
-    public override void Dispose()
+    public void Dispose()
     {
         if (IsDisposed)
             return;
 
-        GLDevice.GL.DeleteFramebuffer(Handle);
+        Graphics.GL.DeleteFramebuffer(Handle);
         IsDisposed = true;
     }
     public override string ToString()

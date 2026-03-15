@@ -3,16 +3,14 @@
 
 using System;
 
-using Prowl.Runtime.GraphicsBackend.Primitives;
-
 using Silk.NET.OpenGL;
 
-namespace Prowl.Runtime.GraphicsBackend.OpenGL;
+namespace Prowl.Runtime;
 
-public sealed unsafe class GLTexture : GraphicsTexture
+public unsafe class GraphicsTexture : IDisposable
 {
     public uint Handle { get; private set; }
-    public override TextureType Type { get; protected set; }
+    public TextureType Type { get; protected set; }
 
     public readonly TextureTarget Target;
 
@@ -25,13 +23,14 @@ public sealed unsafe class GLTexture : GraphicsTexture
     /// <summary>The format of the pixel data.</summary>
     public readonly PixelFormat PixelFormat;
 
-    public GLTexture(TextureType type, TextureImageFormat format)
+    public GraphicsTexture(TextureType type, TextureImageFormat format)
     {
-        Handle = GLDevice.GL.GenTexture();
+        Handle = Graphics.GL.GenTexture();
         Type = type;
         Target = type switch
         {
             TextureType.Texture2D => TextureTarget.Texture2D,
+            TextureType.Texture3D => TextureTarget.Texture3D,
             _ => throw new ArgumentOutOfRangeException(nameof(type), type, null),
         };
         GetTextureFormatEnums(format, out PixelInternalFormat, out PixelType, out PixelFormat);
@@ -43,14 +42,14 @@ public sealed unsafe class GLTexture : GraphicsTexture
         if (!force && currentlyBound == Handle)
             return;
 
-        GLDevice.GL.BindTexture(Target, Handle);
+        Graphics.GL.BindTexture(Target, Handle);
         currentlyBound = Handle;
     }
 
     public void GenerateMipmap()
     {
         Bind(false);
-        GLDevice.GL.GenerateMipmap(Target);
+        Graphics.GL.GenerateMipmap(Target);
     }
 
     public void SetWrapS(TextureWrap wrap)
@@ -64,7 +63,7 @@ public sealed unsafe class GLTexture : GraphicsTexture
             TextureWrap.ClampToBorder => GLEnum.ClampToBorder,
             _ => throw new ArgumentException("Invalid texture wrap mode", nameof(wrap)),
         };
-        GLDevice.GL.TexParameter(Target, GLEnum.TextureWrapS, (int)wrapMode);
+        Graphics.GL.TexParameter(Target, GLEnum.TextureWrapS, (int)wrapMode);
     }
 
     public void SetWrapT(TextureWrap wrap)
@@ -78,7 +77,7 @@ public sealed unsafe class GLTexture : GraphicsTexture
             TextureWrap.ClampToBorder => GLEnum.ClampToBorder,
             _ => throw new ArgumentException("Invalid texture wrap mode", nameof(wrap)),
         };
-        GLDevice.GL.TexParameter(Target, GLEnum.TextureWrapT, (int)wrapMode);
+        Graphics.GL.TexParameter(Target, GLEnum.TextureWrapT, (int)wrapMode);
     }
 
     public void SetWrapR(TextureWrap wrap)
@@ -92,7 +91,7 @@ public sealed unsafe class GLTexture : GraphicsTexture
             TextureWrap.ClampToBorder => GLEnum.ClampToBorder,
             _ => throw new ArgumentException("Invalid texture wrap mode", nameof(wrap)),
         };
-        GLDevice.GL.TexParameter(Target, GLEnum.TextureWrapR, (int)wrapMode);
+        Graphics.GL.TexParameter(Target, GLEnum.TextureWrapR, (int)wrapMode);
     }
 
     public void SetTextureFilters(TextureMin min, TextureMag mag)
@@ -114,19 +113,19 @@ public sealed unsafe class GLTexture : GraphicsTexture
             TextureMag.Linear => GLEnum.Linear,
             _ => throw new ArgumentException("Invalid texture mag filter", nameof(mag)),
         };
-        GLDevice.GL.TexParameter(Target, GLEnum.TextureMinFilter, (int)minFilter);
-        GLDevice.GL.TexParameter(Target, GLEnum.TextureMagFilter, (int)magFilter);
+        Graphics.GL.TexParameter(Target, GLEnum.TextureMinFilter, (int)minFilter);
+        Graphics.GL.TexParameter(Target, GLEnum.TextureMagFilter, (int)magFilter);
     }
 
     public void GetTexImage(int level, void* ptr)
     {
         Bind(false);
-        GLDevice.GL.GetTexImage(Target, level, PixelFormat, PixelType, ptr);
+        Graphics.GL.GetTexImage(Target, level, PixelFormat, PixelType, ptr);
     }
 
-    public override bool IsDisposed { get; protected set; }
+    public bool IsDisposed { get; protected set; }
 
-    public override void Dispose()
+    public void Dispose()
     {
         if (IsDisposed)
             return;
@@ -134,11 +133,11 @@ public sealed unsafe class GLTexture : GraphicsTexture
         if (currentlyBound == Handle)
             currentlyBound = null;
 
-        GLDevice.GL.DeleteTexture(Handle);
+        Graphics.GL.DeleteTexture(Handle);
         IsDisposed = true;
     }
 
-    public override string ToString()
+    public string ToString()
     {
         return Handle.ToString();
     }
@@ -146,25 +145,25 @@ public sealed unsafe class GLTexture : GraphicsTexture
     public void TexImage2D(TextureTarget type, int mip, uint width, uint height, int v2, void* data)
     {
         Bind(false);
-        GLDevice.GL.TexImage2D(type, mip, PixelInternalFormat, width, height, v2, PixelFormat, PixelType, data);
+        Graphics.GL.TexImage2D(type, mip, PixelInternalFormat, width, height, v2, PixelFormat, PixelType, data);
     }
 
-    public void TexImage3D(TextureTarget type, int mip, uint width, uint height, uint depth, int v2, void* data)
+    public void TexImage3D(TextureTarget type, int level, uint width, uint height, uint depth, void* data)
     {
         Bind(false);
-        GLDevice.GL.TexImage3D(type, mip, PixelInternalFormat, width, height, depth, v2, PixelFormat, PixelType, data);
+        Graphics.GL.TexImage3D(type, level, PixelInternalFormat, width, height, depth, 0, PixelFormat, PixelType, data);
     }
 
     internal void TexSubImage2D(TextureTarget type, int mip, int x, int y, uint width, uint height, void* data)
     {
         Bind(false);
-        GLDevice.GL.TexSubImage2D(type, mip, x, y, width, height, PixelFormat, PixelType, data);
+        Graphics.GL.TexSubImage2D(type, mip, x, y, width, height, PixelFormat, PixelType, data);
     }
 
-    internal void TexSubImage3D(TextureTarget type, int mip, int x, int y, int z, uint width, uint height, uint depth, void* data)
+    internal void TexSubImage3D(TextureTarget type, int level, int x, int y, int z, uint width, uint height, uint depth, void* data)
     {
         Bind(false);
-        GLDevice.GL.TexSubImage3D(type, mip, x, y, z, width, height, depth, PixelFormat, PixelType, data);
+        Graphics.GL.TexSubImage3D(type, level, x, y, z, width, height, depth, PixelFormat, PixelType, data);
     }
 
     /// <summary>
@@ -181,6 +180,7 @@ public sealed unsafe class GLTexture : GraphicsTexture
         pixelType = imageFormat switch
         {
             TextureImageFormat.Color4b => PixelType.UnsignedByte,
+            TextureImageFormat.Byte => PixelType.UnsignedByte,
             TextureImageFormat.Float => PixelType.Float,
             TextureImageFormat.Float2 => PixelType.Float,
             TextureImageFormat.Float3 => PixelType.Float,
@@ -211,6 +211,7 @@ public sealed unsafe class GLTexture : GraphicsTexture
         pixelInternalFormat = imageFormat switch
         {
             TextureImageFormat.Color4b => InternalFormat.Rgba8,
+            TextureImageFormat.Byte => InternalFormat.R8ui,
             TextureImageFormat.Float => InternalFormat.R32f,
             TextureImageFormat.Float2 => InternalFormat.RG32f,
             TextureImageFormat.Float3 => InternalFormat.Rgb32f,
@@ -241,6 +242,7 @@ public sealed unsafe class GLTexture : GraphicsTexture
         pixelFormat = imageFormat switch
         {
             TextureImageFormat.Color4b => PixelFormat.Rgba,
+            TextureImageFormat.Byte => PixelFormat.RedInteger,
             TextureImageFormat.Short => PixelFormat.Red,
             TextureImageFormat.Short2 => PixelFormat.RG,
             TextureImageFormat.Short3 => PixelFormat.Rgb,
@@ -268,5 +270,4 @@ public sealed unsafe class GLTexture : GraphicsTexture
             _ => throw new ArgumentException("Image format is not a valid TextureImageFormat value", nameof(imageFormat)),
         };
     }
-
 }

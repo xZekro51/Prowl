@@ -713,7 +713,7 @@ public class GizmoBuilder
         {
             _wire ??= new()
             {
-                MeshTopology = GraphicsBackend.Primitives.Topology.Lines,
+                MeshTopology = Topology.Lines,
                 IndexFormat = IndexFormat.UInt32,
             };
 
@@ -729,7 +729,7 @@ public class GizmoBuilder
         {
             _solid ??= new()
             {
-                MeshTopology = GraphicsBackend.Primitives.Topology.Triangles,
+                MeshTopology = Topology.Triangles,
                 IndexFormat = IndexFormat.UInt32,
             };
 

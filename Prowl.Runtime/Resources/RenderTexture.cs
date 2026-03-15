@@ -6,8 +6,6 @@ using System.Collections.Generic;
 using System.Linq;
 
 using Prowl.Echo;
-using Prowl.Runtime.GraphicsBackend;
-using Prowl.Runtime.GraphicsBackend.Primitives;
 
 namespace Prowl.Runtime.Resources;
 
@@ -61,17 +59,17 @@ public sealed class RenderTexture : EngineObject, ISerializable
             attachments[numTextures] = new GraphicsFrameBuffer.Attachment { Texture = InternalDepth.Handle, IsDepth = true };
         }
 
-        frameBuffer = Graphics.Device.CreateFramebuffer(attachments, (uint)Width, (uint)Height);
+        frameBuffer = Graphics.CreateFramebuffer(attachments, (uint)Width, (uint)Height);
     }
 
     public void Begin()
     {
-        Graphics.Device.BindFramebuffer(frameBuffer);
+        Graphics.BindFramebuffer(frameBuffer);
     }
 
     public void End()
     {
-        Graphics.Device.UnbindFramebuffer();
+        Graphics.UnbindFramebuffer();
     }
 
     public override void OnDispose()

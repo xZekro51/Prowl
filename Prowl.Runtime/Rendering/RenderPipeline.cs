@@ -1,16 +1,12 @@
 ﻿// This file is part of the Prowl Game Engine
 // Licensed under the MIT License. See the LICENSE file in the project root for details.
 
-using System;
 using System.Collections.Generic;
 using System.Linq;
 
-using Prowl.Runtime.GraphicsBackend;
-using Prowl.Runtime.GraphicsBackend.Primitives;
 using Prowl.Runtime.Rendering.Shaders;
 using Prowl.Runtime.Resources;
 using Prowl.Vector;
-using Prowl.Vector.Geometry;
 
 namespace Prowl.Runtime.Rendering;
 
@@ -287,7 +283,7 @@ public abstract class RenderPipeline : EngineObject
         if (!pass.TryGetVariantProgram(mat._localKeywords, out GraphicsProgram? variant))
             throw new System.Exception($"Failed to set shader pass {pass.Name}. No variant found for the current keyword state.");
 
-        Graphics.Device.SetState(pass.State);
+        Graphics.SetState(pass.State);
 
         PropertyState.Apply(mat._properties, variant);
 
@@ -295,9 +291,9 @@ public abstract class RenderPipeline : EngineObject
 
         unsafe
         {
-            Graphics.Device.BindVertexArray(mesh.VertexArrayObject);
-            Graphics.Device.DrawIndexed(mesh.MeshTopology, (uint)mesh.IndexCount, mesh.IndexFormat == IndexFormat.UInt32, null);
-            Graphics.Device.BindVertexArray(null);
+            Graphics.BindVertexArray(mesh.VertexArrayObject);
+            Graphics.DrawIndexed(mesh.MeshTopology, (uint)mesh.IndexCount, mesh.IndexFormat == IndexFormat.UInt32, null);
+            Graphics.BindVertexArray(null);
         }
     }
 
@@ -343,19 +339,19 @@ public abstract class RenderPipeline : EngineObject
         mat ??= BlitMaterial;
         if (target.IsValid())
         {
-            Graphics.Device.BindFramebuffer(target.frameBuffer);
+            Graphics.BindFramebuffer(target.frameBuffer);
         }
         else
         {
-            Graphics.Device.UnbindFramebuffer();
-            Graphics.Device.Viewport(0, 0, (uint)Window.InternalWindow.FramebufferSize.X, (uint)Window.InternalWindow.FramebufferSize.Y);
+            Graphics.UnbindFramebuffer();
+            Graphics.Viewport(0, 0, (uint)Window.InternalWindow.FramebufferSize.X, (uint)Window.InternalWindow.FramebufferSize.Y);
         }
         if (clearDepth || clearColor)
         {
             ClearFlags clear = 0;
             if (clearDepth) clear |= ClearFlags.Depth;
             if (clearColor) clear |= ClearFlags.Color;
-            Graphics.Device.Clear((float)color.R, (float)color.G, (float)color.B, (float)color.A, clear | ClearFlags.Stencil);
+            Graphics.Clear((float)color.R, (float)color.G, (float)color.B, (float)color.A, clear | ClearFlags.Stencil);
         }
         Blit(mat, pass);
     }
@@ -549,7 +545,7 @@ public abstract class RenderPipeline : EngineObject
             if (pass.HasGrabTexture)
             {
                 // Get the currently bound framebuffer so we can restore it
-                GraphicsFrameBuffer? currentFB = Graphics.Device.GetCurrentFramebuffer(FBOTarget.Draw);
+                GraphicsFrameBuffer? currentFB = Graphics.GetCurrentFramebuffer(FBOTarget.Draw);
 
                 if (currentFB != null)
                 {
@@ -561,12 +557,12 @@ public abstract class RenderPipeline : EngineObject
                     grabRT = RenderTexture.GetTemporaryRT(fbWidth, fbHeight, false, [TextureImageFormat.Color4b]);
 
                     // Setup blit: currentFB (read) -> grabRT (draw)
-                    Graphics.Device.BindFramebuffer(currentFB, FBOTarget.Read);
-                    Graphics.Device.BindFramebuffer(grabRT.frameBuffer, FBOTarget.Draw);
-                    Graphics.Device.BlitFramebuffer(0, 0, fbWidth, fbHeight, 0, 0, fbWidth, fbHeight, ClearFlags.Color, BlitFilter.Nearest);
+                    Graphics.BindFramebuffer(currentFB, FBOTarget.Read);
+                    Graphics.BindFramebuffer(grabRT.frameBuffer, FBOTarget.Draw);
+                    Graphics.BlitFramebuffer(0, 0, fbWidth, fbHeight, 0, 0, fbWidth, fbHeight, ClearFlags.Color, BlitFilter.Nearest);
 
                     // Restore the original framebuffer (for both read and draw)
-                    Graphics.Device.BindFramebuffer(currentFB, FBOTarget.Framebuffer);
+                    Graphics.BindFramebuffer(currentFB, FBOTarget.Framebuffer);
 
                     // Set as global texture for this and subsequent passes
                     PropertyState.SetGlobalTexture(pass.GrabTextureName, grabRT.MainTexture);
@@ -583,7 +579,7 @@ public abstract class RenderPipeline : EngineObject
             GraphicsBuffer? globalBuffer = GlobalUniforms.GetBuffer();
             if (globalBuffer != null)
             {
-                Graphics.Device.BindUniformBuffer(variant, "GlobalUniforms", globalBuffer, 0);
+                Graphics.BindUniformBuffer(variant, "GlobalUniforms", globalBuffer, 0);
             }
 
             // Apply global properties (lighting, fog, shadow maps, etc.)
@@ -597,7 +593,7 @@ public abstract class RenderPipeline : EngineObject
             PropertyState.ApplyMaterialUniforms(material._properties, variant, ref texSlot);
 
             // Set render state (depth test, blend mode, cull mode, etc.) once per batch
-            Graphics.Device.SetState(pass.State);
+            Graphics.SetState(pass.State);
 
             // Upload mesh data to GPU once per batch (shared by all objects)
             mesh.Upload();
@@ -624,15 +620,15 @@ public abstract class RenderPipeline : EngineObject
 
                 // Directly bind per-object transform uniforms after all other uniforms to gaurantee they are set correctly
                 var fModel = (Float4x4)model;
-                Graphics.Device.SetUniformMatrix(variant, "prowl_ObjectToWorld", false, fModel);
-                Graphics.Device.SetUniformMatrix(variant, "prowl_WorldToObject", false, fModel.Invert());
+                Graphics.SetUniformMatrix(variant, "prowl_ObjectToWorld", false, fModel);
+                Graphics.SetUniformMatrix(variant, "prowl_WorldToObject", false, fModel.Invert());
 
                 // Execute draw call (mesh VAO already uploaded, just bind and draw)
                 unsafe
                 {
-                    Graphics.Device.BindVertexArray(mesh.VertexArrayObject);
-                    Graphics.Device.DrawIndexed(mesh.MeshTopology, (uint)mesh.IndexCount, mesh.IndexFormat == IndexFormat.UInt32, null);
-                    Graphics.Device.BindVertexArray(null);
+                    Graphics.BindVertexArray(mesh.VertexArrayObject);
+                    Graphics.DrawIndexed(mesh.MeshTopology, (uint)mesh.IndexCount, mesh.IndexFormat == IndexFormat.UInt32, null);
+                    Graphics.BindVertexArray(null);
                 }
             }
 
@@ -689,7 +685,7 @@ public abstract class RenderPipeline : EngineObject
         GraphicsBuffer? globalBuffer = GlobalUniforms.GetBuffer();
         if (globalBuffer != null)
         {
-            Graphics.Device.BindUniformBuffer(variant, "GlobalUniforms", globalBuffer, 0);
+            Graphics.BindUniformBuffer(variant, "GlobalUniforms", globalBuffer, 0);
         }
 
         // Apply global properties
@@ -705,19 +701,19 @@ public abstract class RenderPipeline : EngineObject
         PropertyState.ApplyInstanceUniforms(sharedProperties, variant, ref instanceTexSlot);
 
         // Set render state
-        Graphics.Device.SetState(pass.State);
+        Graphics.SetState(pass.State);
 
         // Draw with TRUE GPU instancing!
         unsafe
         {
-            Graphics.Device.BindVertexArray(vao);
-            Graphics.Device.DrawIndexedInstanced(
+            Graphics.BindVertexArray(vao);
+            Graphics.DrawIndexedInstanced(
                 Topology.Triangles,
                 (uint)indexCount,
                 (uint)instanceCount,
                 useIndex32
             );
-            Graphics.Device.BindVertexArray(null);
+            Graphics.BindVertexArray(null);
         }
 
         material.SetKeyword("GPU_INSTANCING", false);

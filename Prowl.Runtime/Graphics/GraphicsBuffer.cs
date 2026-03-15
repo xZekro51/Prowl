@@ -3,22 +3,20 @@
 
 using System;
 
-using Prowl.Runtime.GraphicsBackend.Primitives;
-
 using Silk.NET.OpenGL;
 
-namespace Prowl.Runtime.GraphicsBackend.OpenGL;
+namespace Prowl.Runtime;
 
-internal sealed class GLBuffer : GraphicsBuffer
+public class GraphicsBuffer : IDisposable
 {
-    public override bool IsDisposed { get; protected set; }
+    public bool IsDisposed { get; protected set; }
 
     public readonly uint Handle;
     public readonly BufferType OriginalType;
     public readonly BufferTargetARB Target;
     public readonly uint SizeInBytes;
 
-    public unsafe GLBuffer(BufferType type, uint sizeInBytes, void* data, bool dynamic)
+    public unsafe GraphicsBuffer(BufferType type, uint sizeInBytes, void* data, bool dynamic)
     {
         if (type == BufferType.Count)
             throw new ArgumentOutOfRangeException(nameof(type), type, null);
@@ -45,7 +43,7 @@ internal sealed class GLBuffer : GraphicsBuffer
         }
 
 
-        Handle = GLDevice.GL.GenBuffer();
+        Handle = Graphics.GL.GenBuffer();
         Bind();
         if (sizeInBytes != 0)
             Set(sizeInBytes, data, dynamic);
@@ -55,16 +53,16 @@ internal sealed class GLBuffer : GraphicsBuffer
     {
         Bind();
         BufferUsageARB usage = dynamic ? BufferUsageARB.DynamicDraw : BufferUsageARB.StaticDraw;
-        GLDevice.GL.BufferData(Target, sizeInBytes, data, usage);
+        Graphics.GL.BufferData(Target, sizeInBytes, data, usage);
     }
 
     public unsafe void Update(uint offsetInBytes, uint sizeInBytes, void* data)
     {
         Bind();
-        GLDevice.GL.BufferSubData(Target, (nint)offsetInBytes, sizeInBytes, data);
+        Graphics.GL.BufferSubData(Target, (nint)offsetInBytes, sizeInBytes, data);
     }
 
-    public override void Dispose()
+    public void Dispose()
     {
         if (IsDisposed)
             return;
@@ -73,7 +71,7 @@ internal sealed class GLBuffer : GraphicsBuffer
             boundBuffers[(int)OriginalType] = 0;
 
         IsDisposed = true;
-        GLDevice.GL.DeleteBuffer(Handle);
+        Graphics.GL.DeleteBuffer(Handle);
     }
 
     public override string ToString()
@@ -87,7 +85,7 @@ internal sealed class GLBuffer : GraphicsBuffer
     {
         if (boundBuffers[(int)OriginalType] == Handle)
             return;
-        GLDevice.GL.BindBuffer(Target, Handle);
+        Graphics.GL.BindBuffer(Target, Handle);
         boundBuffers[(int)OriginalType] = Handle;
     }
 }

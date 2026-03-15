@@ -5,8 +5,6 @@ using System;
 using System.Collections.Generic;
 
 using Prowl.Echo;
-using Prowl.Runtime.GraphicsBackend;
-using Prowl.Runtime.GraphicsBackend.Primitives;
 
 namespace Prowl.Runtime.Rendering.Shaders;
 
@@ -122,7 +120,7 @@ public sealed class ShaderPass
 
         try
         {
-            variant = Graphics.Device.CompileProgram(frag, vert, null);
+            variant = Graphics.CompileProgram(frag, vert, null);
         }
         catch (Exception e)
         {

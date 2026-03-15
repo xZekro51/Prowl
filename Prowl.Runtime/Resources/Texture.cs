@@ -3,9 +3,6 @@
 
 using System;
 
-using Prowl.Runtime.GraphicsBackend;
-using Prowl.Runtime.GraphicsBackend.Primitives;
-
 namespace Prowl.Runtime.Resources;
 
 /// <summary>
@@ -56,10 +53,10 @@ public abstract class Texture : EngineObject
         ImageFormat = imageFormat;
         IsMipmapped = false;
         isNotMipmappable = !IsTextureTypeMipmappable(type);
-        Handle = Graphics.Device.CreateTexture(type, imageFormat);
-        Graphics.Device.SetWrapS(Handle, TextureWrap.Repeat);
-        Graphics.Device.SetWrapT(Handle, TextureWrap.Repeat);
-        Graphics.Device.SetTextureFilters(Handle, DefaultMinFilter, DefaultMagFilter);
+        Handle = Graphics.CreateTexture(type, imageFormat);
+        Graphics.SetWrapS(Handle, TextureWrap.Repeat);
+        Graphics.SetWrapT(Handle, TextureWrap.Repeat);
+        Graphics.SetTextureFilters(Handle, DefaultMinFilter, DefaultMagFilter);
         MinFilter = DefaultMinFilter;
         MagFilter = DefaultMagFilter;
         WrapMode = TextureWrap.Repeat;
@@ -72,7 +69,7 @@ public abstract class Texture : EngineObject
     /// <param name="magFilter">The desired magnifying filter for the <see cref="Texture"/>.</param>
     public void SetTextureFilters(TextureMin minFilter, TextureMag magFilter)
     {
-        Graphics.Device.SetTextureFilters(Handle, minFilter, magFilter);
+        Graphics.SetTextureFilters(Handle, minFilter, magFilter);
         MinFilter = minFilter;
         MagFilter = magFilter;
     }
@@ -86,9 +83,9 @@ public abstract class Texture : EngineObject
         if (isNotMipmappable)
             throw new InvalidOperationException(string.Concat("This texture type is not mipmappable! Type: ", Type.ToString()));
 
-        Graphics.Device.GenerateMipmap(Handle);
+        Graphics.GenerateMipmap(Handle);
         IsMipmapped = true;
-        Graphics.Device.SetTextureFilters(Handle, IsMipmapped ? DefaultMipmapMinFilter : DefaultMinFilter, DefaultMagFilter);
+        Graphics.SetTextureFilters(Handle, IsMipmapped ? DefaultMipmapMinFilter : DefaultMinFilter, DefaultMagFilter);
     }
 
     public void Dispose()
@@ -101,7 +98,7 @@ public abstract class Texture : EngineObject
     /// </summary>
     public static bool IsTextureTypeMipmappable(TextureType textureType)
     {
-        return textureType == TextureType.Texture2D;
+        return textureType == TextureType.Texture2D || textureType == TextureType.Texture3D;
         //return textureType == TextureType.Texture1D || textureType == TextureType.Texture2D || textureType == TextureType.Texture3D
         //    || textureType == TextureType.Texture1DArray || textureType == TextureType.Texture2DArray
         //    || textureType == TextureType.TextureCubeMap || textureType == TextureType.TextureCubeMapArray;
