@@ -5,6 +5,7 @@ using System.Numerics;
 using ImGuiNET;
 using Prowl.Runtime;
 using Prowl.Editor.Docking;
+using Prowl.Editor.Icons;
 using Prowl.Editor.Services;
 using Prowl.Editor.Prefabs;
 using Prowl.Editor.Undo;
@@ -173,33 +174,18 @@ public sealed class HierarchyPanel : EditorPanel
         ImGui.PushID(go.InstanceID);
 
         // Determine the best icon for this game object
-        var iconType = EditorIcons.GetIconForGameObject(go);
+        string iconName = IconManager.GetIconNameForGameObject(go);
         string displayName = go.Name ?? "Unnamed";
 
-        // Draw tree node — icon is rendered via ImGui.Image after the tree node
+        // Draw tree node — icon is rendered via IconManager after the tree node
         bool open = ImGui.TreeNodeEx("##node", flags, $"     {displayName}");
 
-        // Draw the SVG icon over the label area
+        // Overlay the icon over the label area
         {
-            nint texId = EditorIcons.Get(iconType);
-            if (texId != 0)
-            {
-                Vector2 itemMin = ImGui.GetItemRectMin();
-                float indent = ImGui.GetTreeNodeToLabelSpacing();
-                float iconSize = ImGui.GetTextLineHeight();
-                float yOffset = (ImGui.GetItemRectSize().Y - iconSize) * 0.5f;
-                var drawList = ImGui.GetWindowDrawList();
-                var iconPos = new Vector2(itemMin.X + indent, itemMin.Y + yOffset);
-
-                // Dim the icon if the object is disabled
-                Vector4 tint = go.Enabled
-                    ? new Vector4(1f, 1f, 1f, 1f)
-                    : new Vector4(0.5f, 0.5f, 0.5f, 0.5f);
-                drawList.AddImage(texId, iconPos,
-                    new Vector2(iconPos.X + iconSize, iconPos.Y + iconSize),
-                    Vector2.Zero, Vector2.One,
-                    ImGui.GetColorU32(tint));
-            }
+            Vector4 tint = go.Enabled
+                ? new Vector4(1f, 1f, 1f, 1f)
+                : new Vector4(0.5f, 0.5f, 0.5f, 0.5f);
+            IconManager.DrawIconOverLastItem(iconName, tint);
         }
 
         // Selection on click

@@ -6,6 +6,7 @@ using ImGuiNET;
 using Prowl.Runtime;
 using Prowl.Runtime.Resources;
 using Prowl.Editor.Docking;
+using Prowl.Editor.Icons;
 using Prowl.Editor.Services;
 using Prowl.Editor.Prefabs;
 
@@ -148,27 +149,11 @@ public sealed class ProjectPanel : EditorPanel
         }
         if (!hasSubFolders) flags |= ImGuiTreeNodeFlags.Leaf;
 
-        string icon = isExpanded && hasSubFolders ? "\ud83d\udcc2" : "\ud83d\udcc1"; // 📂 or 📁
-        var folderIconType = isExpanded && hasSubFolders ? EditorIconType.FolderOpen : EditorIconType.Folder;
+        string folderIconName = isExpanded && hasSubFolders ? "FolderOpen" : "Folder";
         bool open = ImGui.TreeNodeEx($"##{relativeDir}", flags, $"     {displayName}");
 
-        // Overlay the folder SVG icon
-        {
-            nint texId = EditorIcons.Get(folderIconType);
-            if (texId != 0)
-            {
-                Vector2 itemMin = ImGui.GetItemRectMin();
-                float indent = ImGui.GetTreeNodeToLabelSpacing();
-                float iconSize = ImGui.GetTextLineHeight();
-                float yOffset = (ImGui.GetItemRectSize().Y - iconSize) * 0.5f;
-                var drawList = ImGui.GetWindowDrawList();
-                var iconPos = new Vector2(itemMin.X + indent, itemMin.Y + yOffset);
-                drawList.AddImage(texId, iconPos,
-                    new Vector2(iconPos.X + iconSize, iconPos.Y + iconSize),
-                    Vector2.Zero, Vector2.One,
-                    ImGui.GetColorU32(new Vector4(1, 1, 1, 1)));
-            }
-        }
+        // Overlay the folder icon via IconManager
+        IconManager.DrawIconOverLastItem(folderIconName);
 
         // Click to select folder
         if (ImGui.IsItemClicked(ImGuiMouseButton.Left))
@@ -271,22 +256,8 @@ public sealed class ProjectPanel : EditorPanel
         ImGui.TreeNodeEx(entry.RelativePath, flags, $"     {entry.Name}");
         ImGui.PopStyleColor();
 
-        // Overlay the folder SVG icon
-        {
-            nint texId = EditorIcons.Get(EditorIconType.Folder);
-            if (texId != 0)
-            {
-                Vector2 itemMin = ImGui.GetItemRectMin();
-                float iconSize = ImGui.GetTextLineHeight();
-                float yOffset = (ImGui.GetItemRectSize().Y - iconSize) * 0.5f;
-                var drawList = ImGui.GetWindowDrawList();
-                var iconPos = new Vector2(itemMin.X + 4, itemMin.Y + yOffset);
-                drawList.AddImage(texId, iconPos,
-                    new Vector2(iconPos.X + iconSize, iconPos.Y + iconSize),
-                    Vector2.Zero, Vector2.One,
-                    ImGui.GetColorU32(new Vector4(1, 1, 1, 1)));
-            }
-        }
+        // Overlay the folder icon via IconManager
+        IconManager.DrawIconOverLastItem("Folder", useTreeIndent: false);
 
         if (ImGui.IsItemClicked(ImGuiMouseButton.Left))
         {
@@ -311,22 +282,10 @@ public sealed class ProjectPanel : EditorPanel
         // Draw with spacing for icon, then overlay it
         ImGui.TreeNodeEx(entry.RelativePath, flags, $"     {entry.Name}");
 
-        // Overlay the SVG icon based on file extension
+        // Overlay the icon based on file extension via IconManager
         {
-            var iconType = EditorIcons.GetIconForExtension(entry.Extension);
-            nint texId = EditorIcons.Get(iconType);
-            if (texId != 0)
-            {
-                Vector2 itemMin = ImGui.GetItemRectMin();
-                float iconSize = ImGui.GetTextLineHeight();
-                float yOffset = (ImGui.GetItemRectSize().Y - iconSize) * 0.5f;
-                var drawList = ImGui.GetWindowDrawList();
-                var iconPos = new Vector2(itemMin.X + 4, itemMin.Y + yOffset);
-                drawList.AddImage(texId, iconPos,
-                    new Vector2(iconPos.X + iconSize, iconPos.Y + iconSize),
-                    Vector2.Zero, Vector2.One,
-                    ImGui.GetColorU32(new Vector4(1, 1, 1, 1)));
-            }
+            string fileIconName = IconManager.GetIconNameForExtension(entry.Extension);
+            IconManager.DrawIconOverLastItem(fileIconName, useTreeIndent: false);
         }
 
         if (ImGui.IsItemClicked(ImGuiMouseButton.Left))
@@ -411,29 +370,15 @@ public sealed class ProjectPanel : EditorPanel
             }
             else if (entry.Name.Contains(_searchFilter, StringComparison.OrdinalIgnoreCase))
             {
-                var searchIconType = EditorIcons.GetIconForExtension(entry.Extension);
+                string searchIconName = IconManager.GetIconNameForExtension(entry.Extension);
                 bool isSelected = _selectedEntry == entry.RelativePath;
                 var flags = ImGuiTreeNodeFlags.Leaf | ImGuiTreeNodeFlags.NoTreePushOnOpen | ImGuiTreeNodeFlags.SpanAvailWidth;
                 if (isSelected) flags |= ImGuiTreeNodeFlags.Selected;
 
                 ImGui.TreeNodeEx(entry.RelativePath, flags, $"     {entry.Name}");
 
-                // Overlay SVG icon
-                {
-                    nint texId = EditorIcons.Get(searchIconType);
-                    if (texId != 0)
-                    {
-                        Vector2 itemMin = ImGui.GetItemRectMin();
-                        float iconSize = ImGui.GetTextLineHeight();
-                        float yOffset = (ImGui.GetItemRectSize().Y - iconSize) * 0.5f;
-                        var drawList = ImGui.GetWindowDrawList();
-                        var iconPos = new Vector2(itemMin.X + 4, itemMin.Y + yOffset);
-                        drawList.AddImage(texId, iconPos,
-                            new Vector2(iconPos.X + iconSize, iconPos.Y + iconSize),
-                            Vector2.Zero, Vector2.One,
-                            ImGui.GetColorU32(new Vector4(1, 1, 1, 1)));
-                    }
-                }
+                // Overlay icon via IconManager
+                IconManager.DrawIconOverLastItem(searchIconName, useTreeIndent: false);
 
                 if (ImGui.IsItemHovered())
                 {

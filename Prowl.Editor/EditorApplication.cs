@@ -12,6 +12,7 @@ using Prowl.Editor.Docking;
 using Prowl.Editor.Panels;
 using Prowl.Editor.Rendering;
 using Prowl.Editor.Core;
+using Prowl.Editor.Icons;
 using Prowl.Editor.Toolbar;
 using Prowl.Editor.Undo;
 
@@ -157,6 +158,9 @@ public sealed class EditorApplication : Game
         _menuBar.OnToggleProjectBrowser = () => _projectPanel.IsOpen = !_projectPanel.IsOpen;
         _menuBar.OnToggleGameView = () => _gamePanel.IsOpen = !_gamePanel.IsOpen;
         _menuBar.OnTogglePreferences = () => _preferencesPanel.IsOpen = !_preferencesPanel.IsOpen;
+
+        // Initialise the icon system (registers all built-in icons)
+        IconManager.Load();
 
         Debug.LogSuccess("Editor initialized.");
     }
@@ -401,6 +405,7 @@ public sealed class EditorApplication : Game
         ImGui.SaveIniSettingsToDisk(_iniFilePath);
 
         // Dispose icon textures
+        IconManager.Dispose();
         EditorIcons.Dispose();
 
         if (EditorServices.TryGet<IEditorRendering>(out var rendering))

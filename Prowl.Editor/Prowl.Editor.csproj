@@ -21,4 +21,8 @@
     <ProjectReference Include="..\Prowl.Runtime\Prowl.Runtime.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <EmbeddedResource Include="Icons\Resources\*.png" />
+  </ItemGroup>
+
 </Project>

@@ -7,6 +7,7 @@ using ImGuiNET;
 using Prowl.Runtime;
 using Prowl.Runtime.Utils;
 using Prowl.Editor.Docking;
+using Prowl.Editor.Icons;
 using Prowl.Editor.Services;
 using Prowl.Editor.Undo;
 using Prowl.Editor.Undo.Commands;
@@ -59,6 +60,16 @@ public sealed class InspectorPanel : EditorPanel
         }
 
         // ── GameObject header ──────────────────────────────────
+        // Draw a header row with the GO icon + name
+        {
+            string goIconName = IconManager.GetIconNameForGameObject(go);
+            var icon = IconManager.GetIcon(goIconName);
+            var cursorPos = ImGui.GetCursorScreenPos();
+            float iconSz = ImGui.GetTextLineHeight();
+            ImGui.Dummy(new Vector2(iconSz, iconSz));
+            icon.Draw(cursorPos, iconSz);
+            ImGui.SameLine();
+        }
         DrawFieldRow("Name", () =>
         {
             ImGui.TextColored(new Vector4(0.90f, 0.90f, 0.90f, 1f), go.Name ?? "Unnamed");
@@ -71,9 +82,14 @@ public sealed class InspectorPanel : EditorPanel
         ImGui.Separator();
 
         // ── Transform section ──────────────────────────────────
-        if (ImGui.CollapsingHeader("Transform", ImGuiTreeNodeFlags.DefaultOpen))
+        if (ImGui.CollapsingHeader("     Transform", ImGuiTreeNodeFlags.DefaultOpen))
         {
+            IconManager.DrawIconOverLastItem("Transform");
             DrawTransform(go.Transform);
+        }
+        else
+        {
+            IconManager.DrawIconOverLastItem("Transform");
         }
 
         // ── Components ─────────────────────────────────────────
@@ -82,9 +98,13 @@ public sealed class InspectorPanel : EditorPanel
             if (comp == null) continue;
 
             string typeName = comp.GetType().Name;
+            string compIconName = IconManager.GetIconNameForComponent(comp);
             ImGui.PushID(comp.GetHashCode());
 
-            bool headerOpen = ImGui.CollapsingHeader(typeName, ImGuiTreeNodeFlags.DefaultOpen);
+            bool headerOpen = ImGui.CollapsingHeader($"     {typeName}", ImGuiTreeNodeFlags.DefaultOpen);
+
+            // Overlay component icon on the header
+            IconManager.DrawIconOverLastItem(compIconName);
 
             // Component context menu (right-click header)
             if (ImGui.BeginPopupContextItem())
@@ -699,7 +719,13 @@ public sealed class InspectorPanel : EditorPanel
                 !type.Name.Contains(_componentFilter, StringComparison.OrdinalIgnoreCase))
                 continue;
 
-            if (ImGui.Selectable(type.Name))
+            // Draw icon + name for each component type
+            string compIconName = IconManager.GetIconNameForComponent(type);
+            var icon = IconManager.GetIcon(compIconName);
+            var pos = ImGui.GetCursorScreenPos();
+            float iconSz = ImGui.GetTextLineHeight();
+
+            if (ImGui.Selectable($"     {type.Name}"))
             {
                 if (EditorServices.TryGet<UndoRedoService>(out var undo))
                     undo!.Execute(new AddComponentCommand(go, type));
@@ -708,6 +734,13 @@ public sealed class InspectorPanel : EditorPanel
 
                 _componentFilter = string.Empty;
                 ImGui.CloseCurrentPopup();
+            }
+
+            // Overlay the icon on the selectable
+            {
+                var itemMin = ImGui.GetItemRectMin();
+                float yOff = (ImGui.GetItemRectSize().Y - iconSz) * 0.5f;
+                icon.Draw(new Vector2(itemMin.X + 4f, itemMin.Y + yOff), iconSz);
             }
         }
 
@@ -737,17 +770,18 @@ public sealed class InspectorPanel : EditorPanel
     private static void DrawAssetInspector(AssetEntry asset)
     {
         // ── Asset header with icon ─────────────────────────────
-        var iconType = EditorIcons.GetIconForExtension(asset.Extension);
-        nint iconTex = EditorIcons.Get(iconType, 32);
-        if (iconTex != 0)
-        {
-            ImGui.Image(iconTex, new Vector2(32, 32));
-            ImGui.SameLine();
-        }
+        string iconName = IconManager.GetIconNameForExtension(asset.Extension);
+        var icon = IconManager.GetIcon(iconName);
+
+        // Reserve space for the icon and draw it
+        var cursorPos = ImGui.GetCursorScreenPos();
+        ImGui.Dummy(new Vector2(32, 32));
+        icon.Draw(cursorPos, 32f);
+        ImGui.SameLine();
 
         ImGui.BeginGroup();
         ImGui.TextColored(new Vector4(0.90f, 0.90f, 0.90f, 1f), asset.Name);
-        ImGui.TextColored(new Vector4(0.55f, 0.55f, 0.55f, 1f), iconType.ToString());
+        ImGui.TextColored(new Vector4(0.55f, 0.55f, 0.55f, 1f), iconName);
         ImGui.EndGroup();
 
         ImGui.Separator();
