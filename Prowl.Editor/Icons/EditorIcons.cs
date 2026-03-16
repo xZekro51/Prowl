@@ -175,7 +175,7 @@ public static class EditorIcons
     {
         nint texId = Get(type);
         if (texId == 0) return ImGui.Button(id, size);
-        return ImGui.ImageButton(id, texId, size);
+        return ImGui.ImageButton(id, texId, size, new Vector2(0, 1), new Vector2(1, 0));
     }
 
     /// <summary>
@@ -213,7 +213,8 @@ public static class EditorIcons
         float yOff = (size.Y - iconSz) * 0.5f;
         drawList.AddImage(texId,
             new Vector2(cursorPos.X + framePad.X, cursorPos.Y + yOff),
-            new Vector2(cursorPos.X + framePad.X + iconSz, cursorPos.Y + yOff + iconSz));
+            new Vector2(cursorPos.X + framePad.X + iconSz, cursorPos.Y + yOff + iconSz),
+            new Vector2(0, 1), new Vector2(1, 0));
 
         float textY = cursorPos.Y + (size.Y - textSize.Y) * 0.5f;
         drawList.AddText(new Vector2(cursorPos.X + framePad.X + iconSz + spacing, textY),
@@ -231,7 +232,7 @@ public static class EditorIcons
         float iconSz = ImGui.GetTextLineHeight();
         if (texId != 0)
         {
-            ImGui.Image(texId, new Vector2(iconSz, iconSz));
+            ImGui.Image(texId, new Vector2(iconSz, iconSz), new Vector2(0, 1), new Vector2(1, 0));
             ImGui.SameLine();
         }
         return ImGui.Selectable(label);
@@ -245,7 +246,7 @@ public static class EditorIcons
         nint texId = Get(type);
         if (texId == 0) return;
         float sz = ImGui.GetTextLineHeight();
-        ImGui.Image(texId, new Vector2(sz, sz), Vector2.Zero, Vector2.One,
+        ImGui.Image(texId, new Vector2(sz, sz), new Vector2(0, 1), new Vector2(1, 0),
             tint ?? new Vector4(1, 1, 1, 1));
     }
 

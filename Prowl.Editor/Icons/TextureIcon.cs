@@ -37,7 +37,7 @@ public sealed class TextureIcon : IIcon, IDisposable
             texId,
             position,
             new Vector2(position.X + size, position.Y + size),
-            Vector2.Zero, Vector2.One,
+            new Vector2(0, 1), new Vector2(1, 0),
             ImGui.GetColorU32(color));
     }
 
