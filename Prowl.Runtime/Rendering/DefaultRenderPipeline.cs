@@ -205,7 +205,8 @@ public class DefaultRenderPipeline : RenderPipeline
                     ClearFlags.Color | ClearFlags.Depth
                 );
 
-                RenderSkybox(css);
+                if (css.Scene.Skybox.Enabled)
+                    RenderSkybox(css);
                 break;
 
             case CameraClearFlags.SolidColor:
@@ -426,7 +427,10 @@ public class DefaultRenderPipeline : RenderPipeline
 
     private void RenderSkybox(CameraSnapshot css)
     {
-        // Set sun direction for skybox from scene's directional light
+        // Always set a safe default sun direction to avoid NaN from normalize(vec3(0)) in the shader
+        s_skybox.SetVector("_SunDir", new Float3(0, -1, 0));
+
+        // Override with the actual directional light direction if one exists
         var sun = css.Scene.Lights.FirstOrDefault(l => l is IRenderableLight rl && rl.GetLightType() == LightType.Directional);
         if (sun != null)
         {

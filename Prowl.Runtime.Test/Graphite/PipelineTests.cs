@@ -105,9 +105,9 @@ void main()
             Topology = PrimitiveTopology.TriangleList,
             VertexLayout = new VertexLayoutDescriptor(
                 new VertexBufferLayout(36, // 3 floats + 2 floats + 4 floats = 9 * 4 = 36
-                    new VertexAttribute(0, VertexFormat.Float3, 0),
-                    new VertexAttribute(1, VertexFormat.Float2, 12),
-                    new VertexAttribute(2, VertexFormat.Float4, 20))
+                    new VertexAttribute(0, Prowl.Runtime.Graphite.VertexFormat.Float3, 0),
+                    new VertexAttribute(1, Prowl.Runtime.Graphite.VertexFormat.Float2, 12),
+                    new VertexAttribute(2, Prowl.Runtime.Graphite.VertexFormat.Float4, 20))
             )
         };
 
@@ -129,10 +129,10 @@ void main()
             Topology = PrimitiveTopology.TriangleList,
             VertexLayout = new VertexLayoutDescriptor(
                 new VertexBufferLayout(20, VertexStepMode.Vertex,
-                    new VertexAttribute(0, VertexFormat.Float3, 0),
-                    new VertexAttribute(1, VertexFormat.Float2, 12)),
+                    new VertexAttribute(0, Prowl.Runtime.Graphite.VertexFormat.Float3, 0),
+                    new VertexAttribute(1, Prowl.Runtime.Graphite.VertexFormat.Float2, 12)),
                 new VertexBufferLayout(16, VertexStepMode.Instance,
-                    new VertexAttribute(2, VertexFormat.Float4, 0))
+                    new VertexAttribute(2, Prowl.Runtime.Graphite.VertexFormat.Float4, 0))
             )
         };
 

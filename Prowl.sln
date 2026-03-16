@@ -1,7 +1,7 @@
 ﻿
 Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 18
-VisualStudioVersion = 18.0.11121.172 d18.0
+VisualStudioVersion = 18.0.11121.172
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Prowl.Runtime", "Prowl.Runtime\Prowl.Runtime.csproj", "{863FF67B-9C3F-4E5E-9353-AD88CD9F77D2}"
 EndProject
@@ -28,6 +28,10 @@ EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PhysicsTesterDemo", "Samples\PhysicsTesterDemo\PhysicsTesterDemo.csproj", "{A2B3C4D5-E6F7-8901-2345-6789ABCDEF01}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BananaMan", "Samples\BananaMan\BananaMan.csproj", "{D2CC697D-D8B6-4F89-9D66-9DE9749D266E}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Prowl.Editor", "Prowl.Editor\Prowl.Editor.csproj", "{F0D9DED2-03F7-163E-EAFE-49B3224A6444}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Prowl.Launcher", "Prowl.Launcher\Prowl.Launcher.csproj", "{F77E2AB8-353B-49CF-932B-F26C6B0C1BD6}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -183,6 +187,30 @@ Global
 		{D2CC697D-D8B6-4F89-9D66-9DE9749D266E}.Release|x64.Build.0 = Release|Any CPU
 		{D2CC697D-D8B6-4F89-9D66-9DE9749D266E}.Release|x86.ActiveCfg = Release|Any CPU
 		{D2CC697D-D8B6-4F89-9D66-9DE9749D266E}.Release|x86.Build.0 = Release|Any CPU
+		{F0D9DED2-03F7-163E-EAFE-49B3224A6444}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{F0D9DED2-03F7-163E-EAFE-49B3224A6444}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{F0D9DED2-03F7-163E-EAFE-49B3224A6444}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{F0D9DED2-03F7-163E-EAFE-49B3224A6444}.Debug|x64.Build.0 = Debug|Any CPU
+		{F0D9DED2-03F7-163E-EAFE-49B3224A6444}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{F0D9DED2-03F7-163E-EAFE-49B3224A6444}.Debug|x86.Build.0 = Debug|Any CPU
+		{F0D9DED2-03F7-163E-EAFE-49B3224A6444}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{F0D9DED2-03F7-163E-EAFE-49B3224A6444}.Release|Any CPU.Build.0 = Release|Any CPU
+		{F0D9DED2-03F7-163E-EAFE-49B3224A6444}.Release|x64.ActiveCfg = Release|Any CPU
+		{F0D9DED2-03F7-163E-EAFE-49B3224A6444}.Release|x64.Build.0 = Release|Any CPU
+		{F0D9DED2-03F7-163E-EAFE-49B3224A6444}.Release|x86.ActiveCfg = Release|Any CPU
+		{F0D9DED2-03F7-163E-EAFE-49B3224A6444}.Release|x86.Build.0 = Release|Any CPU
+		{F77E2AB8-353B-49CF-932B-F26C6B0C1BD6}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{F77E2AB8-353B-49CF-932B-F26C6B0C1BD6}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{F77E2AB8-353B-49CF-932B-F26C6B0C1BD6}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{F77E2AB8-353B-49CF-932B-F26C6B0C1BD6}.Debug|x64.Build.0 = Debug|Any CPU
+		{F77E2AB8-353B-49CF-932B-F26C6B0C1BD6}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{F77E2AB8-353B-49CF-932B-F26C6B0C1BD6}.Debug|x86.Build.0 = Debug|Any CPU
+		{F77E2AB8-353B-49CF-932B-F26C6B0C1BD6}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{F77E2AB8-353B-49CF-932B-F26C6B0C1BD6}.Release|Any CPU.Build.0 = Release|Any CPU
+		{F77E2AB8-353B-49CF-932B-F26C6B0C1BD6}.Release|x64.ActiveCfg = Release|Any CPU
+		{F77E2AB8-353B-49CF-932B-F26C6B0C1BD6}.Release|x64.Build.0 = Release|Any CPU
+		{F77E2AB8-353B-49CF-932B-F26C6B0C1BD6}.Release|x86.ActiveCfg = Release|Any CPU
+		{F77E2AB8-353B-49CF-932B-F26C6B0C1BD6}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

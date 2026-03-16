@@ -18,7 +18,7 @@ public class GLGraphiteDevice : GraphiteDevice
     private const int GL_MAX_COMPUTE_WORK_GROUP_SIZE = 0x91BF;
     private const int GL_MAX_COMPUTE_WORK_GROUP_INVOCATIONS = 0x90EB;
 
-    internal GL GL => GraphicsBackend.OpenGL.GLDevice.GL;
+    internal GL GL => Graphics.GL;
 
     private DeviceCapabilities _capabilities;
     private bool _initialized;

@@ -992,7 +992,7 @@ void main()
             Topology = PrimitiveTopology.TriangleList,
             VertexLayout = new VertexLayoutDescriptor(
                 new VertexBufferLayout(12,
-                    new VertexAttribute(0, VertexFormat.Float3, 0))
+                    new VertexAttribute(0, Prowl.Runtime.Graphite.VertexFormat.Float3, 0))
             ),
             DepthStencilState = new DepthStencilStateDescriptor
             {
@@ -1355,7 +1355,7 @@ void main() { gl_Position = vec4(aPosition, 1.0); }
             Topology = PrimitiveTopology.TriangleList,
             VertexLayout = new VertexLayoutDescriptor(
                 new VertexBufferLayout(12,
-                    new VertexAttribute(0, VertexFormat.Float3, 0))
+                    new VertexAttribute(0, Prowl.Runtime.Graphite.VertexFormat.Float3, 0))
             )
         });
 
@@ -1372,8 +1372,8 @@ void main() { gl_Position = vec4(aPosition, 1.0); }
             Topology = PrimitiveTopology.TriangleList,
             VertexLayout = new VertexLayoutDescriptor(
                 new VertexBufferLayout(20,
-                    new VertexAttribute(0, VertexFormat.Float3, 0),
-                    new VertexAttribute(1, VertexFormat.Float2, 12))
+                    new VertexAttribute(0, Prowl.Runtime.Graphite.VertexFormat.Float3, 0),
+                    new VertexAttribute(1, Prowl.Runtime.Graphite.VertexFormat.Float2, 12))
             )
         });
 
@@ -2724,8 +2724,8 @@ void main()
             Topology = PrimitiveTopology.TriangleList,
             VertexLayout = new VertexLayoutDescriptor(
                 new VertexBufferLayout(12,
-                    new VertexAttribute(0, VertexFormat.Float2, 0),
-                    new VertexAttribute(1, VertexFormat.Int, 8)) // Integer attribute!
+                    new VertexAttribute(0, Prowl.Runtime.Graphite.VertexFormat.Float2, 0),
+                    new VertexAttribute(1, Prowl.Runtime.Graphite.VertexFormat.Int, 8))
             )
         });
 

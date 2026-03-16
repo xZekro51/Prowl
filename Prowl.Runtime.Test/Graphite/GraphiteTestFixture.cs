@@ -49,7 +49,7 @@ public class GraphiteTestFixture : IDisposable
         GL = GL.GetApi(_glfw.GetProcAddress);
 
         // Set static GL reference BEFORE initializing the Graphite device
-        Prowl.Runtime.GraphicsBackend.OpenGL.GLDevice.GL = GL;
+        Prowl.Runtime.Graphics.GL = GL;
 
         // Initialize the Graphite device
         Device = new GLGraphiteDevice();

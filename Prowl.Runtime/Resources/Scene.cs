@@ -138,6 +138,17 @@ public class Scene : EngineObject, ISerializationCallbackReceiver
 
     public AmbientLightParams Ambient = new();
 
+    public struct SkyboxParams
+    {
+        public bool Enabled = true;
+
+        public SkyboxParams()
+        {
+        }
+    }
+
+    public SkyboxParams Skybox = new();
+
     /// <summary> The number of registered objects. </summary>
     public int Count => _allObj.Count;
 
