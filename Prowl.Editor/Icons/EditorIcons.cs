@@ -1,7 +1,9 @@
 // This file is part of the Prowl Game Engine
 // Licensed under the MIT License. See the LICENSE file in the project root for details.
 
+using System.Numerics;
 using System.Reflection;
+using ImGuiNET;
 using Prowl.Runtime;
 using Prowl.Runtime.ParticleSystem;
 using Prowl.Runtime.Resources;
@@ -59,6 +61,14 @@ public enum EditorIconType
     Link,
     Star,
     Duplicate,
+    Close,
+    Dropdown,
+
+    // ── Playback ──
+    Play,
+    Stop,
+    Pause,
+    StepForward,
 
     // ── Status / log ──
     Info,
@@ -153,6 +163,90 @@ public static class EditorIcons
 
         _textures.Clear();
         _cache.Clear();
+    }
+
+    // ── ImGui helpers ──────────────────────────────────────────────
+
+    /// <summary>
+    /// Draws an <see cref="ImGui.ImageButton"/> with the given icon type.
+    /// Returns true if the button was clicked.
+    /// </summary>
+    public static bool ImageButton(string id, EditorIconType type, Vector2 size)
+    {
+        nint texId = Get(type);
+        if (texId == 0) return ImGui.Button(id, size);
+        return ImGui.ImageButton(id, texId, size);
+    }
+
+    /// <summary>
+    /// Draws an icon-only button sized to the current text line height.
+    /// Returns true if the button was clicked.
+    /// </summary>
+    public static bool ImageButton(string id, EditorIconType type)
+    {
+        float h = ImGui.GetTextLineHeight();
+        return ImageButton(id, type, new Vector2(h, h));
+    }
+
+    /// <summary>
+    /// Draws an icon + text button. The icon is rendered inside the button
+    /// area via the draw list, followed by the label text.
+    /// Returns true if the button was clicked.
+    /// </summary>
+    public static bool ImageButtonWithLabel(string id, EditorIconType type, string label, Vector2 size = default)
+    {
+        nint texId = Get(type);
+        if (texId == 0) return ImGui.Button($"{label}##{id}", size);
+
+        float iconSz = ImGui.GetTextLineHeight();
+        float spacing = ImGui.GetStyle().ItemInnerSpacing.X;
+        Vector2 textSize = ImGui.CalcTextSize(label);
+        if (size == default)
+            size = new Vector2(iconSz + spacing + textSize.X + ImGui.GetStyle().FramePadding.X * 2,
+                               iconSz + ImGui.GetStyle().FramePadding.Y * 2);
+
+        Vector2 cursorPos = ImGui.GetCursorScreenPos();
+        bool clicked = ImGui.Button($"##{id}", size);
+
+        var drawList = ImGui.GetWindowDrawList();
+        var framePad = ImGui.GetStyle().FramePadding;
+        float yOff = (size.Y - iconSz) * 0.5f;
+        drawList.AddImage(texId,
+            new Vector2(cursorPos.X + framePad.X, cursorPos.Y + yOff),
+            new Vector2(cursorPos.X + framePad.X + iconSz, cursorPos.Y + yOff + iconSz));
+
+        float textY = cursorPos.Y + (size.Y - textSize.Y) * 0.5f;
+        drawList.AddText(new Vector2(cursorPos.X + framePad.X + iconSz + spacing, textY),
+            ImGui.GetColorU32(ImGuiCol.Text), label);
+
+        return clicked;
+    }
+
+    /// <summary>
+    /// Draws a menu item with an icon prefix. Returns true if selected.
+    /// </summary>
+    public static bool IconMenuItem(EditorIconType type, string label)
+    {
+        nint texId = Get(type);
+        float iconSz = ImGui.GetTextLineHeight();
+        if (texId != 0)
+        {
+            ImGui.Image(texId, new Vector2(iconSz, iconSz));
+            ImGui.SameLine();
+        }
+        return ImGui.Selectable(label);
+    }
+
+    /// <summary>
+    /// Draws an inline icon image at the current cursor, sized to the text line height.
+    /// </summary>
+    public static void InlineIcon(EditorIconType type, Vector4? tint = null)
+    {
+        nint texId = Get(type);
+        if (texId == 0) return;
+        float sz = ImGui.GetTextLineHeight();
+        ImGui.Image(texId, new Vector2(sz, sz), Vector2.Zero, Vector2.One,
+            tint ?? new Vector4(1, 1, 1, 1));
     }
 
     // ── Icon creation ──────────────────────────────────────────────
@@ -260,6 +354,12 @@ public static class EditorIcons
             EditorIconType.Link               => ((byte)52, (byte)152, (byte)219),
             EditorIconType.Star               => ((byte)241, (byte)196, (byte)15),
             EditorIconType.Duplicate          => ((byte)127, (byte)140, (byte)141),
+            EditorIconType.Close              => ((byte)220, (byte)220, (byte)220),
+            EditorIconType.Dropdown           => ((byte)189, (byte)189, (byte)189),
+            EditorIconType.Play               => ((byte)76, (byte)175, (byte)80),
+            EditorIconType.Stop               => ((byte)229, (byte)57, (byte)53),
+            EditorIconType.Pause              => ((byte)255, (byte)183, (byte)77),
+            EditorIconType.StepForward        => ((byte)189, (byte)189, (byte)189),
             EditorIconType.Info               => ((byte)52, (byte)152, (byte)219),
             EditorIconType.Warning            => ((byte)243, (byte)156, (byte)18),
             EditorIconType.Error              => ((byte)231, (byte)76, (byte)60),

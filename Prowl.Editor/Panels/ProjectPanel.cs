@@ -71,14 +71,14 @@ public sealed class ProjectPanel : EditorPanel
     private void DrawToolbar(IAssetService assets)
     {
         // Create button with dropdown
-        if (ImGui.Button("+ Create"))
+        if (EditorIcons.ImageButtonWithLabel("ProjCreate", EditorIconType.Plus, "Create"))
             ImGui.OpenPopup("##CreateAssetPopup");
 
         if (ImGui.BeginPopup("##CreateAssetPopup"))
         {
             string contextDir = _selectedFolder ?? ".";
 
-            if (ImGui.MenuItem("New Folder"))
+            if (EditorIcons.IconMenuItem(EditorIconType.Folder, "New Folder"))
             {
                 var entry = assets.CreateFolder(contextDir, $"NewFolder_{DateTime.Now:HHmmss}");
                 _selectedFolder = entry.RelativePath;
@@ -87,19 +87,19 @@ public sealed class ProjectPanel : EditorPanel
 
             ImGui.Separator();
 
-            if (ImGui.MenuItem("C# Script"))
+            if (EditorIcons.IconMenuItem(EditorIconType.Script, "C# Script"))
             {
                 string name = $"NewScript_{DateTime.Now:HHmmss}.cs";
                 assets.CreateFile(contextDir, name, GenerateScriptTemplate(name.Replace(".cs", "")));
             }
 
-            if (ImGui.MenuItem("Material"))
+            if (EditorIcons.IconMenuItem(EditorIconType.Material, "Material"))
             {
                 assets.CreateFile(contextDir, $"NewMaterial_{DateTime.Now:HHmmss}.mat",
                     "{ \"shader\": \"Standard\", \"color\": [1,1,1,1] }");
             }
 
-            if (ImGui.MenuItem("Scene"))
+            if (EditorIcons.IconMenuItem(EditorIconType.Scene, "Scene"))
             {
                 string name = $"NewScene_{DateTime.Now:HHmmss}.scene";
                 if (EditorServices.TryGet<ISceneSerializer>(out var serializer))
@@ -119,12 +119,14 @@ public sealed class ProjectPanel : EditorPanel
 
         ImGui.SameLine();
 
-        if (ImGui.Button("Refresh"))
+        if (EditorIcons.ImageButtonWithLabel("ProjRefresh", EditorIconType.Refresh, "Refresh"))
             assets.Refresh();
 
         ImGui.SameLine();
 
         // Search bar
+        EditorIcons.InlineIcon(EditorIconType.Search);
+        ImGui.SameLine();
         ImGui.SetNextItemWidth(Math.Max(120 * Game.DpiScale, ImGui.GetContentRegionAvail().X - 10));
         ImGui.InputTextWithHint("##Search", "Search assets...", ref _searchFilter, 256);
     }
@@ -319,7 +321,7 @@ public sealed class ProjectPanel : EditorPanel
         {
             if (entry.Extension == ".scene")
             {
-                if (ImGui.MenuItem("Open Scene"))
+                if (EditorIcons.IconMenuItem(EditorIconType.Scene, "Open Scene"))
                 {
                     EditorMenuBar.LoadSceneFromFile(entry.FullPath);
                 }

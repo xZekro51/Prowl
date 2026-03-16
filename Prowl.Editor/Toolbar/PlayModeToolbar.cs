@@ -41,22 +41,22 @@ public sealed class PlayModeToolbar
         bool isPlaying = _playMode.State != PlayModeState.Stopped;
         bool isPaused  = _playMode.State == PlayModeState.Paused;
 
-        // ▶ Play / ■ Stop
+        // Play / Stop
         if (isPlaying)
             ImGui.PushStyleColor(ImGuiCol.Button, PlayActive);
-        if (ImGui.Button(isPlaying ? "[x] Stop" : "|> Play", Sz(64, 24)))
+        if (EditorIcons.ImageButtonWithLabel("PlayStop", isPlaying ? EditorIconType.Stop : EditorIconType.Play, isPlaying ? "Stop" : "Play", Sz(64, 24)))
             _playMode.TogglePlay();
         if (isPlaying)
             ImGui.PopStyleColor();
 
         ImGui.SameLine();
 
-        // ❚❚ Pause
+        // Pause
         bool pauseEnabled = isPlaying;
         if (!pauseEnabled) ImGui.BeginDisabled();
         if (isPaused)
             ImGui.PushStyleColor(ImGuiCol.Button, PauseActive);
-        if (ImGui.Button("|| Pause", Sz(64, 24)))
+        if (EditorIcons.ImageButtonWithLabel("PauseBtn", EditorIconType.Pause, "Pause", Sz(64, 24)))
             _playMode.TogglePause();
         if (isPaused)
             ImGui.PopStyleColor();
@@ -64,10 +64,10 @@ public sealed class PlayModeToolbar
 
         ImGui.SameLine();
 
-        // ⏭ Step
+        // Step
         bool stepEnabled = isPaused;
         if (!stepEnabled) ImGui.BeginDisabled();
-        if (ImGui.Button(">| Step", Sz(56, 24)))
+        if (EditorIcons.ImageButtonWithLabel("StepBtn", EditorIconType.StepForward, "Step", Sz(56, 24)))
             _playMode.StepFrame();
         if (!stepEnabled) ImGui.EndDisabled();
 

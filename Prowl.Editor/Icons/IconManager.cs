@@ -137,24 +137,8 @@ public static class IconManager
             _icons[name] = new LazyTextureIcon(type);
         }
 
-        // ── Font-based icons ────────────────────────────────────
-        // These use Unicode characters available in most system/default fonts.
-        // If the glyph is not present in the atlas, the character renders as a
-        // box — acceptable until a proper icon font is embedded.
-        RegisterFontIcon("Play",  "\u25B6");  // ▶
-        RegisterFontIcon("Pause", "\u2016");  // ‖
-        RegisterFontIcon("Stop",  "\u25A0");  // ■
-        RegisterFontIcon("Step",  "\u23ED");  // ⏭
-
-        // Extra font glyphs for common UI actions
-        RegisterFontIcon("FontPlus",    "\uFF0B");  // ＋
-        RegisterFontIcon("FontMinus",   "\u2212");  // −
-        RegisterFontIcon("FontCheck",   "\u2714");  // ✔
-        RegisterFontIcon("FontCross",   "\u2716");  // ✖
-        RegisterFontIcon("FontArrowUp", "\u25B2");  // ▲
-        RegisterFontIcon("FontArrowDn", "\u25BC");  // ▼
-        RegisterFontIcon("FontDot",     "\u25CF");  // ●
-        RegisterFontIcon("FontGear",    "\u2699");  // ⚙
+        // All icons (including Play, Stop, Pause, StepForward, Close, Dropdown)
+        // are now registered as texture icons via the EditorIconType enum above.
     }
 
     // ── Registration ─────────────────────────────────────────────

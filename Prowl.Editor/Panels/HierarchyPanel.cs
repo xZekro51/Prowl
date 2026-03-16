@@ -34,7 +34,7 @@ public sealed class HierarchyPanel : EditorPanel
         var selService = EditorServices.Get<ISelectionService>();
 
         // ── Toolbar ────────────────────────────────────────────
-        if (ImGui.Button("+ Create"))
+        if (EditorIcons.ImageButtonWithLabel("HierCreate", EditorIconType.Plus, "Create"))
             ImGui.OpenPopup("##HierCreate");
 
         if (ImGui.BeginPopup("##HierCreate"))
@@ -54,7 +54,7 @@ public sealed class HierarchyPanel : EditorPanel
         }
 
         ImGui.SameLine();
-        ImGui.TextColored(new Vector4(0.50f, 0.50f, 0.50f, 1f), "|");
+        ImGui.TextDisabled("|");
         ImGui.SameLine();
 
         // Scene name label
@@ -104,7 +104,9 @@ public sealed class HierarchyPanel : EditorPanel
             drawList.AddRectFilled(rectMin, rectMax, ImGui.GetColorU32(new Vector4(0.28f, 0.56f, 1.0f, 0.10f)));
             drawList.AddRect(rectMin, rectMax, ImGui.GetColorU32(new Vector4(0.28f, 0.56f, 1.0f, 0.50f)), 3f, ImDrawFlags.None, 1.5f);
 
-            ImGui.TextColored(new Vector4(0.55f, 0.70f, 1.0f, 0.80f), "> Drop here to move to root");
+            EditorIcons.InlineIcon(EditorIconType.Dropdown, new Vector4(0.55f, 0.70f, 1.0f, 0.80f));
+            ImGui.SameLine();
+            ImGui.TextColored(new Vector4(0.55f, 0.70f, 1.0f, 0.80f), "Drop here to move to root");
             if (ImGui.IsItemHovered() && ImGui.IsMouseReleased(ImGuiMouseButton.Left))
             {
                 var dragged = FindGameObjectById(_draggedInstanceId, sceneService);
@@ -132,7 +134,9 @@ public sealed class HierarchyPanel : EditorPanel
             drawList.AddRectFilled(rectMin, rectMax, ImGui.GetColorU32(new Vector4(0.30f, 0.70f, 0.30f, 0.10f)));
             drawList.AddRect(rectMin, rectMax, ImGui.GetColorU32(new Vector4(0.30f, 0.70f, 0.30f, 0.50f)), 3f, ImDrawFlags.None, 1.5f);
 
-            ImGui.TextColored(new Vector4(0.60f, 0.80f, 0.60f, 1f), "> Drop asset here to instantiate");
+            EditorIcons.InlineIcon(EditorIconType.Dropdown, new Vector4(0.60f, 0.80f, 0.60f, 1f));
+            ImGui.SameLine();
+            ImGui.TextColored(new Vector4(0.60f, 0.80f, 0.60f, 1f), "Drop asset here to instantiate");
             if (ImGui.IsItemHovered())
             {
                 if (EditorDragDrop.Payload is AssetEntry dragEntry)
@@ -148,7 +152,7 @@ public sealed class HierarchyPanel : EditorPanel
         {
             var draggedGo = FindGameObjectById(_draggedInstanceId, sceneService);
             if (draggedGo != null)
-                ImGui.SetTooltip($"= {draggedGo.Name}");
+                ImGui.SetTooltip(draggedGo.Name);
         }
 
         // Clear drag state if mouse released with no drop
@@ -233,7 +237,7 @@ public sealed class HierarchyPanel : EditorPanel
         // ── Context menu ───────────────────────────────────────
         if (ImGui.BeginPopupContextItem())
         {
-            if (ImGui.MenuItem("+ Create Empty Child"))
+            if (EditorIcons.IconMenuItem(EditorIconType.Plus, "Create Empty Child"))
             {
                 if (EditorServices.TryGet<UndoRedoService>(out var undo))
                 {
@@ -254,7 +258,7 @@ public sealed class HierarchyPanel : EditorPanel
                 if (go.Parent != null) clone.SetParent(go.Parent);
             }
             ImGui.Separator();
-            if (ImGui.MenuItem("X Delete"))
+            if (EditorIcons.IconMenuItem(EditorIconType.Delete, "Delete"))
             {
                 sceneService.DestroyGameObject(go);
             }
