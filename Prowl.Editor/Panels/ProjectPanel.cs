@@ -71,14 +71,14 @@ public sealed class ProjectPanel : EditorPanel
     private void DrawToolbar(IAssetService assets)
     {
         // Create button with dropdown
-        if (ImGui.Button("\u2795 Create"))
+        if (ImGui.Button("+ Create"))
             ImGui.OpenPopup("##CreateAssetPopup");
 
         if (ImGui.BeginPopup("##CreateAssetPopup"))
         {
             string contextDir = _selectedFolder ?? ".";
 
-            if (ImGui.MenuItem("\ud83d\udcc1 New Folder"))
+            if (ImGui.MenuItem("New Folder"))
             {
                 var entry = assets.CreateFolder(contextDir, $"NewFolder_{DateTime.Now:HHmmss}");
                 _selectedFolder = entry.RelativePath;
@@ -87,19 +87,19 @@ public sealed class ProjectPanel : EditorPanel
 
             ImGui.Separator();
 
-            if (ImGui.MenuItem("\u2699 C# Script"))
+            if (ImGui.MenuItem("C# Script"))
             {
                 string name = $"NewScript_{DateTime.Now:HHmmss}.cs";
                 assets.CreateFile(contextDir, name, GenerateScriptTemplate(name.Replace(".cs", "")));
             }
 
-            if (ImGui.MenuItem("\ud83c\udfa8 Material"))
+            if (ImGui.MenuItem("Material"))
             {
                 assets.CreateFile(contextDir, $"NewMaterial_{DateTime.Now:HHmmss}.mat",
                     "{ \"shader\": \"Standard\", \"color\": [1,1,1,1] }");
             }
 
-            if (ImGui.MenuItem("\ud83c\udfac Scene"))
+            if (ImGui.MenuItem("Scene"))
             {
                 string name = $"NewScene_{DateTime.Now:HHmmss}.scene";
                 if (EditorServices.TryGet<ISceneSerializer>(out var serializer))
@@ -119,14 +119,14 @@ public sealed class ProjectPanel : EditorPanel
 
         ImGui.SameLine();
 
-        if (ImGui.Button("\u21bb Refresh"))
+        if (ImGui.Button("Refresh"))
             assets.Refresh();
 
         ImGui.SameLine();
 
         // Search bar
         ImGui.SetNextItemWidth(Math.Max(120 * Game.DpiScale, ImGui.GetContentRegionAvail().X - 10));
-        ImGui.InputTextWithHint("##Search", "\ud83d\udd0d Search assets...", ref _searchFilter, 256);
+        ImGui.InputTextWithHint("##Search", "Search assets...", ref _searchFilter, 256);
     }
 
     // ── Folder Tree (Left Panel) ──────────────────────────────
@@ -319,7 +319,7 @@ public sealed class ProjectPanel : EditorPanel
         {
             if (entry.Extension == ".scene")
             {
-                if (ImGui.MenuItem("\ud83c\udfac Open Scene"))
+                if (ImGui.MenuItem("Open Scene"))
                 {
                     EditorMenuBar.LoadSceneFromFile(entry.FullPath);
                 }
@@ -461,16 +461,6 @@ public sealed class ProjectPanel : EditorPanel
             }
         }
     }
-
-    private static string GetFileIcon(string ext) => ext switch
-    {
-        ".cs" => "\u2699",     // ⚙
-        ".scene" => "\ud83c\udfac", // 🎬
-        ".mat" => "\ud83c\udfa8",   // 🎨
-        ".png" or ".jpg" or ".bmp" => "\ud83d\uddbc", // 🖼
-        ".fbx" or ".obj" or ".gltf" => "\ud83d\udcce", // 📎
-        _ => "\ud83d\udcc4",  // 📄
-    };
 
     private static string GenerateScriptTemplate(string className) =>
 $@"using Prowl.Runtime;

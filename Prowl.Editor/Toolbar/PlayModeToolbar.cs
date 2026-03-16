@@ -44,7 +44,7 @@ public sealed class PlayModeToolbar
         // ▶ Play / ■ Stop
         if (isPlaying)
             ImGui.PushStyleColor(ImGuiCol.Button, PlayActive);
-        if (ImGui.Button(isPlaying ? "\u25A0 Stop" : "\u25B6 Play", Sz(64, 24)))
+        if (ImGui.Button(isPlaying ? "[x] Stop" : "|> Play", Sz(64, 24)))
             _playMode.TogglePlay();
         if (isPlaying)
             ImGui.PopStyleColor();
@@ -56,7 +56,7 @@ public sealed class PlayModeToolbar
         if (!pauseEnabled) ImGui.BeginDisabled();
         if (isPaused)
             ImGui.PushStyleColor(ImGuiCol.Button, PauseActive);
-        if (ImGui.Button("\u2016 Pause", Sz(64, 24)))
+        if (ImGui.Button("|| Pause", Sz(64, 24)))
             _playMode.TogglePause();
         if (isPaused)
             ImGui.PopStyleColor();
@@ -67,7 +67,7 @@ public sealed class PlayModeToolbar
         // ⏭ Step
         bool stepEnabled = isPaused;
         if (!stepEnabled) ImGui.BeginDisabled();
-        if (ImGui.Button("\u23ED Step", Sz(56, 24)))
+        if (ImGui.Button(">| Step", Sz(56, 24)))
             _playMode.StepFrame();
         if (!stepEnabled) ImGui.EndDisabled();
 

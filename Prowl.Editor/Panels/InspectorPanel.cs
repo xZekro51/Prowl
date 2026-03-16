@@ -593,12 +593,12 @@ public sealed class InspectorPanel : EditorPanel
 
             // Clear (X) button
             ImGui.SameLine();
-            if (ImGui.Button("\u00D7", new Vector2(clearBtnW, 0)))
+            if (ImGui.Button("x", new Vector2(clearBtnW, 0)))
                 SetFieldWithUndo(target, field, current, null);
 
             // Picker (▼) button — opens searchable asset popup
             ImGui.SameLine();
-            if (ImGui.Button("\u25BC", new Vector2(pickerBtnW, 0)))
+            if (ImGui.Button("v", new Vector2(pickerBtnW, 0)))
             {
                 _activePickerFieldId = fieldId;
                 _assetPickerFilter = string.Empty;
