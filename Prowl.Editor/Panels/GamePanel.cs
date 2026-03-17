@@ -68,7 +68,7 @@ public sealed class GamePanel : EditorPanel
         if (!isPlaying)
         {
             // Stopped overlay — centered hint text
-            string stopped = "Press \u25B6 Play to start the game";
+            string stopped = "Press Play to start the game";
             Vector2 textSize = ImGui.CalcTextSize(stopped);
             float cx = cursorScreen.X + (regionAvail.X - textSize.X) * 0.5f;
             float cy = cursorScreen.Y + (regionAvail.Y - textSize.Y) * 0.5f;
@@ -79,8 +79,8 @@ public sealed class GamePanel : EditorPanel
         {
             // Playing overlay — top-left status
             string status = time!.IsPaused
-                ? $"PAUSED \u2014 Frame {time.FrameCount}"
-                : $"Playing \u2014 T:{time.SimulationTime:F1}s  Frame:{time.FrameCount}";
+                ? $"PAUSED - Frame {time.FrameCount}"
+                : $"Playing - T:{time.SimulationTime:F1}s  Frame:{time.FrameCount}";
 
             drawList.AddText(new Vector2(cursorScreen.X + 6 * Game.DpiScale, cursorScreen.Y + 4 * Game.DpiScale),
                 ImGui.GetColorU32(new Vector4(0.70f, 0.86f, 0.70f, 0.78f)), status);

@@ -198,16 +198,16 @@ public sealed class TransformGizmo
     /// </summary>
     public void DrawToolbar()
     {
-        DrawModeButton("\uf0b2 T", GizmoMode.Translate);
+        DrawModeButton("Translate", EditorIconType.Translate, GizmoMode.Translate);
         ImGui.SameLine();
-        DrawModeButton("\uf2f1 R", GizmoMode.Rotate);
+        DrawModeButton("Rotate", EditorIconType.Rotate, GizmoMode.Rotate);
         ImGui.SameLine();
-        DrawModeButton("\uf065 S", GizmoMode.Scale);
+        DrawModeButton("Scale", EditorIconType.Scale, GizmoMode.Scale);
         ImGui.SameLine();
         ImGui.TextColored(new Vector4(0.5f, 0.5f, 0.5f, 1f), $"  [{Mode}]");
     }
 
-    private void DrawModeButton(string label, GizmoMode mode)
+    private void DrawModeButton(string label, EditorIconType icon, GizmoMode mode)
     {
         bool active = Mode == mode;
 
@@ -217,7 +217,7 @@ public sealed class TransformGizmo
             ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.36f, 0.52f, 0.85f, 1f));
         }
 
-        if (ImGui.Button(label, new Vector2(42 * Game.DpiScale, 22 * Game.DpiScale)))
+        if (EditorIcons.ImageButtonWithLabel(label, icon, label))
             Mode = mode;
 
         if (active)

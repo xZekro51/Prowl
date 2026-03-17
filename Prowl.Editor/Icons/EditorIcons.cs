@@ -63,6 +63,9 @@ public enum EditorIconType
     Duplicate,
     Close,
     Dropdown,
+    Translate,
+    Rotate,
+    Scale,
 
     // ── Playback ──
     Play,
@@ -357,6 +360,9 @@ public static class EditorIcons
             EditorIconType.Duplicate          => ((byte)127, (byte)140, (byte)141),
             EditorIconType.Close              => ((byte)220, (byte)220, (byte)220),
             EditorIconType.Dropdown           => ((byte)189, (byte)189, (byte)189),
+            EditorIconType.Translate          => ((byte)220, (byte)220, (byte)220),
+            EditorIconType.Rotate             => ((byte)220, (byte)220, (byte)220),
+            EditorIconType.Scale              => ((byte)220, (byte)220, (byte)220),
             EditorIconType.Play               => ((byte)76, (byte)175, (byte)80),
             EditorIconType.Stop               => ((byte)229, (byte)57, (byte)53),
             EditorIconType.Pause              => ((byte)255, (byte)183, (byte)77),
