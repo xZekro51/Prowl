@@ -12,9 +12,11 @@ namespace Prowl.Editor.Services;
 public sealed class FileSystemAssetDatabase : IAssetService
 {
     private string _root = string.Empty;
+    private readonly AssetMetaManager _metaManager = new();
 
     public string AssetRootPath => _root;
     public bool HasProject => !string.IsNullOrEmpty(_root) && Directory.Exists(_root);
+    public AssetMetaManager MetaManager => _metaManager;
 
     public void SetAssetRoot(string path)
     {
@@ -22,13 +24,13 @@ public sealed class FileSystemAssetDatabase : IAssetService
         if (!Directory.Exists(_root))
             Directory.CreateDirectory(_root);
 
+        _metaManager.Initialize(_root);
         Debug.Log($"[Assets] Root set to: {_root}");
     }
 
     public void Refresh()
     {
-        // No-op for now — entries are read on demand.
-        // A real implementation would track a FileSystemWatcher here.
+        _metaManager.Refresh();
     }
 
     public IReadOnlyList<AssetEntry> GetEntries(string relativeDir)
@@ -53,9 +55,12 @@ public sealed class FileSystemAssetDatabase : IAssetService
             });
         }
 
-        // Then files
+        // Then files (exclude .meta files from the listing)
         foreach (var file in Directory.GetFiles(absDir).OrderBy(Path.GetFileName))
         {
+            if (file.EndsWith(".meta", StringComparison.OrdinalIgnoreCase))
+                continue;
+
             string name = Path.GetFileName(file);
             entries.Add(new AssetEntry
             {
@@ -88,6 +93,7 @@ public sealed class FileSystemAssetDatabase : IAssetService
     {
         string absPath = Path.Combine(GetAbsolutePath(relativeDir), fileName);
         File.WriteAllText(absPath, content);
+        _metaManager.EnsureMeta(absPath);
         Debug.Log($"[Assets] Created file: {absPath}");
         return new AssetEntry
         {
@@ -108,6 +114,7 @@ public sealed class FileSystemAssetDatabase : IAssetService
         }
         else if (!entry.IsDirectory && File.Exists(entry.FullPath))
         {
+            _metaManager.RemoveMeta(entry.FullPath);
             File.Delete(entry.FullPath);
             Debug.Log($"[Assets] Deleted file: {entry.FullPath}");
         }
@@ -128,6 +135,10 @@ public sealed class FileSystemAssetDatabase : IAssetService
         var entries = new List<AssetEntry>();
         foreach (var file in Directory.EnumerateFiles(_root, "*", SearchOption.AllDirectories))
         {
+            // Skip .meta files
+            if (file.EndsWith(".meta", StringComparison.OrdinalIgnoreCase))
+                continue;
+
             if (extensionFilter != null &&
                 !Path.GetExtension(file).Equals(extensionFilter, StringComparison.OrdinalIgnoreCase))
                 continue;
@@ -145,4 +156,10 @@ public sealed class FileSystemAssetDatabase : IAssetService
 
         return entries;
     }
+
+    // ── GUID / .meta support ──────────────────────────────────
+
+    public string? GetGuidByPath(string relativePath) => _metaManager.GetGuid(relativePath);
+    public string? GetAssetPathByGuid(string guid) => _metaManager.GetAssetPath(guid);
+    public MetaFile? GetMeta(string guid) => _metaManager.GetMeta(guid);
 }

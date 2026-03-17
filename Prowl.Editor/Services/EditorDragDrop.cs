@@ -1,11 +1,14 @@
 // This file is part of the Prowl Game Engine
 // Licensed under the MIT License. See the LICENSE file in the project root for details.
 
+using ImGuiNET;
+
 namespace Prowl.Editor.Services;
 
 /// <summary>
 /// Simple static carrier for drag-drop data between editor panels.
 /// Only one payload can be active at a time.
+/// Automatically clears when the left mouse button is released.
 /// </summary>
 public static class EditorDragDrop
 {
@@ -41,5 +44,15 @@ public static class EditorDragDrop
     {
         PayloadType = null;
         Payload = null;
+    }
+
+    /// <summary>
+    /// Call once per frame (early in the ImGui pass) to automatically end
+    /// any active drag when the left mouse button is released.
+    /// </summary>
+    public static void Update()
+    {
+        if (IsDragging && ImGui.IsMouseReleased(ImGuiMouseButton.Left))
+            Clear();
     }
 }

@@ -5,6 +5,8 @@ using System.Numerics;
 using ImGuiNET;
 using Prowl.Editor.Rendering;
 using Prowl.Editor.Services;
+using Prowl.Editor.Undo;
+using Prowl.Editor.Undo.Commands;
 using Prowl.Runtime;
 using Prowl.Vector;
 
@@ -19,7 +21,7 @@ namespace Prowl.Editor.Gizmos;
 /// </summary>
 public sealed class TransformGizmo
 {
-    private static float HandleLength => 70f * Game.DpiScale;
+    private static float DesiredScreenLength => 100f * Game.DpiScale;
     private static float HandleThick  => 3f * Game.DpiScale;
     private static float HandleHitSize => 16f * Game.DpiScale;
 
@@ -38,11 +40,26 @@ public sealed class TransformGizmo
     private static Vector4 DimAlpha(Vector4 c, float a) => new(c.X, c.Y, c.Z, a);
 
     public GizmoMode Mode { get; set; } = GizmoMode.Translate;
+    public GizmoOrientation Orientation { get; set; } = GizmoOrientation.World;
+
+    /// <summary> True while the user is dragging a gizmo handle. </summary>
+    public bool IsActive => _activeAxis >= 0;
 
     // Drag state
     private int _activeAxis = -1;        // -1 = none, 0=X, 1=Y, 2=Z
     private Float2 _dragStart;
     private Float3 _dragStartValue;
+
+    // Undo state: captured at drag start, committed at drag end
+    private Float3 _undoLocalPos;
+    private Float3 _undoLocalEuler;
+    private Float3 _undoLocalScale;
+
+    // Start rotation (world quaternion) for rotation gizmo
+    private Prowl.Vector.Quaternion _dragStartRotation;
+
+    // Camera distance at drag start (for translate sensitivity scaling)
+    private float _dragCameraDistance;
 
     /// <summary>
     /// Processes keyboard shortcuts for mode switching.
@@ -81,29 +98,64 @@ public sealed class TransformGizmo
         float cx = ox + screenPos.X;
         float cy = oy + screenPos.Y;
 
-        Float3[] worldDirs = [Float3.UnitX, Float3.UnitY, Float3.UnitZ];
+        // Gizmo axis directions (world or local)
+        Float3[] axisDirs;
+        if (Orientation == GizmoOrientation.Local)
+        {
+            var rot = selected.Transform.Rotation;
+            axisDirs = [
+                QuatMulVec(rot, Float3.UnitX),
+                QuatMulVec(rot, Float3.UnitY),
+                QuatMulVec(rot, Float3.UnitZ)
+            ];
+        }
+        else
+        {
+            axisDirs = [Float3.UnitX, Float3.UnitY, Float3.UnitZ];
+        }
+
+        // Perspective-correct handle size: compute a world-space length that
+        // projects to a consistent screen-space size regardless of zoom.
+        Float3 toCamera = camera.GetPosition() - worldPos;
+        float camDist = MathF.Sqrt(Float3.Dot(toCamera, toCamera));
+        float fovRad = camera.FieldOfView * (MathF.PI / 180f);
+        float worldHandleLen = (DesiredScreenLength / vpH) * camDist * MathF.Tan(fovRad / 2f) * 2f;
+
         Vector4[] colors   = [XColorVec, YColorVec, ZColorVec];
         Vector4[] hiColors = [XColorHiVec, YColorHiVec, ZColorHiVec];
 
-        Float2 mouseLocal = input.MousePosition - vpRect.Min;
+        // Pre-compute projected axis tips
+        Float2[] tipVp = new Float2[3];
+        Float2[] screenDirs = new Float2[3];
+        float[] screenLens = new float[3];
+        for (int i = 0; i < 3; i++)
+        {
+            Float3 tipWorld = worldPos + axisDirs[i] * worldHandleLen;
+            Float3 tipScreen = camera.WorldToViewport(tipWorld, vpW, vpH);
+            Float2 d = new(tipScreen.X - screenPos.X, tipScreen.Y - screenPos.Y);
+            float l = Float2.Length(d);
+            tipVp[i] = new Float2(tipScreen.X, tipScreen.Y);
+            screenLens[i] = l;
+            screenDirs[i] = l < 1f ? Float2.Zero : d / l;
+        }
 
+        Float2 mouseLocal = input.MousePosition - vpRect.Min;
         var drawList = ImGui.GetWindowDrawList();
+
+        // Pre-compute rotation arc parameters (center in viewport-local coords, radius)
+        Float2 center = new(screenPos.X, screenPos.Y);
+        float[] arcRadii = new float[3];
+        for (int i = 0; i < 3; i++)
+            arcRadii[i] = screenLens[i] * 0.8f;
 
         // Determine which axis is hovered (for dimming others)
         int hoveredAxis = -1;
         for (int i = 0; i < 3; i++)
         {
-            Float3 tipWorld = worldPos + worldDirs[i] * 1.0f;
-            Float3 tipScreen = camera.WorldToViewport(tipWorld, vpW, vpH);
-            Float2 dir2d = new Float2(tipScreen.X - screenPos.X, tipScreen.Y - screenPos.Y);
-            float len = Float2.Length(dir2d);
-            if (len < 1f) continue;
-            dir2d = dir2d / len;
-
-            bool hovered = IsNearSegment(mouseLocal,
-                new Float2(screenPos.X, screenPos.Y),
-                new Float2(screenPos.X + dir2d.X * HandleLength, screenPos.Y + dir2d.Y * HandleLength),
-                HandleHitSize);
+            if (screenLens[i] < 1f) continue;
+            bool hovered = Mode == GizmoMode.Rotate
+                ? IsNearArc(mouseLocal, center, screenDirs[i], arcRadii[i], HandleHitSize)
+                : IsNearSegment(mouseLocal, center, tipVp[i], HandleHitSize);
             if (hovered) { hoveredAxis = i; break; }
         }
 
@@ -113,22 +165,15 @@ public sealed class TransformGizmo
 
         for (int i = 0; i < 3; i++)
         {
-            Float3 tipWorld = worldPos + worldDirs[i] * 1.0f;
-            Float3 tipScreen = camera.WorldToViewport(tipWorld, vpW, vpH);
+            if (screenLens[i] < 1f) continue;
 
-            Float2 dir2d = new Float2(tipScreen.X - screenPos.X, tipScreen.Y - screenPos.Y);
-            float len = Float2.Length(dir2d);
-            if (len < 1f) continue;
-            dir2d = dir2d / len;
+            float endX = ox + tipVp[i].X;
+            float endY = oy + tipVp[i].Y;
 
-            float endX = cx + dir2d.X * HandleLength;
-            float endY = cy + dir2d.Y * HandleLength;
-
-            // Hit test
-            bool hovered = IsNearSegment(mouseLocal,
-                new Float2(screenPos.X, screenPos.Y),
-                new Float2(screenPos.X + dir2d.X * HandleLength, screenPos.Y + dir2d.Y * HandleLength),
-                HandleHitSize);
+            // Hit test — use arc proximity for Rotate mode, segment for others
+            bool hovered = Mode == GizmoMode.Rotate
+                ? IsNearArc(mouseLocal, center, screenDirs[i], arcRadii[i], HandleHitSize)
+                : IsNearSegment(mouseLocal, center, tipVp[i], HandleHitSize);
             bool active = _activeAxis == i;
 
             // Color selection with transparency for non-hovered axes
@@ -153,7 +198,7 @@ public sealed class TransformGizmo
             if (Mode == GizmoMode.Rotate)
             {
                 // Draw rotation arcs instead of straight lines
-                DrawRotationArc(drawList, cx, cy, dir2d, HandleLength * 0.8f, col, thick);
+                DrawRotationArc(drawList, cx, cy, screenDirs[i], screenLens[i] * 0.8f, col, thick);
             }
             else
             {
@@ -166,7 +211,7 @@ public sealed class TransformGizmo
             if (Mode == GizmoMode.Translate)
             {
                 // Arrow head (triangle)
-                DrawArrowHead(drawList, new Vector2(endX, endY), dir2d, tipR * 2f, col);
+                DrawArrowHead(drawList, new Vector2(endX, endY), screenDirs[i], tipR * 2f, col);
             }
             else if (Mode == GizmoMode.Scale)
             {
@@ -178,15 +223,15 @@ public sealed class TransformGizmo
             else // Rotate
             {
                 // Small circle at arc end
-                float arcEndAngle = MathF.Atan2(dir2d.Y, dir2d.X) + MathF.PI * 0.3f;
-                float radius = HandleLength * 0.8f;
+                float arcEndAngle = MathF.Atan2(screenDirs[i].Y, screenDirs[i].X) + MathF.PI * 0.3f;
+                float radius = screenLens[i] * 0.8f;
                 float arcEndX = cx + MathF.Cos(arcEndAngle) * radius;
                 float arcEndY = cy + MathF.Sin(arcEndAngle) * radius;
                 drawList.AddCircleFilled(new Vector2(arcEndX, arcEndY), tipR * 0.8f, col);
             }
 
             // Handle interaction
-            HandleDrag(input, selected, i, hovered, dir2d, mouseLocal);
+            HandleDrag(input, selected, i, hovered, screenDirs[i], mouseLocal, camDist, axisDirs[i]);
         }
 
         // Draw the axis indicator in the corner
@@ -203,6 +248,26 @@ public sealed class TransformGizmo
         DrawModeButton("Rotate", EditorIconType.Rotate, GizmoMode.Rotate);
         ImGui.SameLine();
         DrawModeButton("Scale", EditorIconType.Scale, GizmoMode.Scale);
+        ImGui.SameLine(0, 16 * Game.DpiScale);
+
+        // World / Local orientation toggle
+        bool isWorld = Orientation == GizmoOrientation.World;
+        if (isWorld)
+        {
+            ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.25f, 0.45f, 0.65f, 1f));
+            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.30f, 0.50f, 0.72f, 1f));
+        }
+        else
+        {
+            ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.55f, 0.35f, 0.25f, 1f));
+            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.62f, 0.40f, 0.30f, 1f));
+        }
+
+        if (ImGui.Button(isWorld ? "World" : "Local", new Vector2(52 * Game.DpiScale, 22 * Game.DpiScale)))
+            Orientation = isWorld ? GizmoOrientation.Local : GizmoOrientation.World;
+
+        ImGui.PopStyleColor(2);
+
         ImGui.SameLine();
         ImGui.TextColored(new Vector4(0.5f, 0.5f, 0.5f, 1f), $"  [{Mode}]");
     }
@@ -340,7 +405,7 @@ public sealed class TransformGizmo
     }
 
     private void HandleDrag(IEditorInput input, GameObject selected, int axis,
-        bool hovered, Float2 screenDir, Float2 mouseLocal)
+        bool hovered, Float2 screenDir, Float2 mouseLocal, float cameraDistance, Float3 axisWorldDir)
     {
         if (_activeAxis == -1 && hovered && input.IsMouseButtonDown(0))
         {
@@ -348,11 +413,18 @@ public sealed class TransformGizmo
             _dragStart = mouseLocal;
             _dragStartValue = Mode switch
             {
-                GizmoMode.Translate => selected.Transform.LocalPosition,
+                GizmoMode.Translate => selected.Transform.Position,
                 GizmoMode.Rotate => selected.Transform.LocalEulerAngles,
                 GizmoMode.Scale => selected.Transform.LocalScale,
                 _ => Float3.Zero
             };
+            _dragStartRotation = selected.Transform.Rotation;
+
+            // Capture pre-drag transform for undo
+            _undoLocalPos   = selected.Transform.LocalPosition;
+            _undoLocalEuler = selected.Transform.LocalEulerAngles;
+            _undoLocalScale = selected.Transform.LocalScale;
+            _dragCameraDistance = cameraDistance;
         }
 
         if (_activeAxis == axis && input.IsMouseButton(0))
@@ -360,38 +432,86 @@ public sealed class TransformGizmo
             Float2 diff = mouseLocal - _dragStart;
             float projection = Float2.Dot(diff, screenDir);
 
+            // Scale translate sensitivity by camera distance so distant objects
+            // are just as easy to move as nearby ones.
             float sensitivity = Mode switch
             {
-                GizmoMode.Translate => 0.02f,
+                GizmoMode.Translate => 0.02f * Math.Max(_dragCameraDistance * 0.1f, 0.1f),
                 GizmoMode.Rotate => 0.5f,
                 GizmoMode.Scale => 0.01f,
                 _ => 0.01f
             };
 
-            Float3 delta = Float3.Zero;
-            switch (axis)
-            {
-                case 0: delta = new Float3(projection * sensitivity, 0, 0); break;
-                case 1: delta = new Float3(0, projection * sensitivity, 0); break;
-                case 2: delta = new Float3(0, 0, projection * sensitivity); break;
-            }
+            float amount = projection * sensitivity;
 
             switch (Mode)
             {
                 case GizmoMode.Translate:
-                    selected.Transform.LocalPosition = _dragStartValue + delta;
+                    // Move along the gizmo axis direction (respects world/local orientation)
+                    selected.Transform.Position = _dragStartValue + axisWorldDir * amount;
                     break;
                 case GizmoMode.Rotate:
-                    selected.Transform.LocalEulerAngles = _dragStartValue + delta;
+                {
+                    // Compute rotation angle from mouse movement perpendicular to the
+                    // projected axis direction — gives intuitive drag-to-rotate.
+                    Float2 perp = new(-screenDir.Y, screenDir.X);
+                    float angle = Float2.Dot(diff, perp) * sensitivity;
+
+                    // Build a delta quaternion around the world-space axis
+                    Prowl.Vector.Quaternion deltaRot = Prowl.Vector.Quaternion.AxisAngle(
+                        axisWorldDir, angle * (MathF.PI / 180f));
+
+                    // Apply to the start rotation (captured as a quaternion)
+                    Prowl.Vector.Quaternion startRot = _dragStartRotation;
+                    selected.Transform.Rotation = deltaRot * startRot;
                     break;
+                }
                 case GizmoMode.Scale:
+                {
+                    Float3 delta = Float3.Zero;
+                    switch (axis)
+                    {
+                        case 0: delta = new Float3(amount, 0, 0); break;
+                        case 1: delta = new Float3(0, amount, 0); break;
+                        case 2: delta = new Float3(0, 0, amount); break;
+                    }
                     selected.Transform.LocalScale = _dragStartValue + delta;
                     break;
+                }
             }
         }
 
         if (_activeAxis == axis && input.IsMouseButtonUp(0))
         {
+            // Push an undo command if the transform actually changed
+            Float3 newLocalPos   = selected.Transform.LocalPosition;
+            Float3 newLocalEuler = selected.Transform.LocalEulerAngles;
+            Float3 newLocalScale = selected.Transform.LocalScale;
+
+            bool changed = _undoLocalPos != newLocalPos ||
+                           _undoLocalEuler != newLocalEuler ||
+                           _undoLocalScale != newLocalScale;
+
+            if (changed && EditorServices.TryGet<UndoRedoService>(out var undoSvc))
+            {
+                string desc = Mode switch
+                {
+                    GizmoMode.Translate => "Move",
+                    GizmoMode.Rotate => "Rotate",
+                    GizmoMode.Scale => "Scale",
+                    _ => "Transform"
+                };
+
+                // Push without Execute — the transform is already at the new value.
+                var cmd = new TransformChangeCommand(
+                    selected.Transform,
+                    _undoLocalPos, _undoLocalEuler, _undoLocalScale,
+                    newLocalPos, newLocalEuler, newLocalScale,
+                    $"{desc} {selected.Name}");
+
+                undoSvc!.Push(cmd);
+            }
+
             _activeAxis = -1;
         }
     }
@@ -404,5 +524,31 @@ public sealed class TransformGizmo
         t = Math.Clamp(t, 0f, 1f);
         Float2 closest = a + ab * t;
         return Float2.Length(point - closest) <= threshold;
+    }
+
+    /// <summary>
+    /// Hit-tests a point against a rotation arc (partial circle) centered at
+    /// <paramref name="center"/> with the given <paramref name="radius"/>.
+    /// The arc spans 108° (0.6π) centered on the direction <paramref name="dir"/>.
+    /// </summary>
+    private static bool IsNearArc(Float2 point, Float2 center, Float2 dir, float radius, float threshold)
+    {
+        Float2 d = point - center;
+        float dist = Float2.Length(d);
+
+        // Check radial distance to the arc circle
+        if (MathF.Abs(dist - radius) > threshold) return false;
+
+        // Check angular range — the arc spans ±54° from the base direction
+        float baseAngle = MathF.Atan2(dir.Y, dir.X);
+        float pointAngle = MathF.Atan2(d.Y, d.X);
+        float diff = pointAngle - baseAngle;
+
+        // Normalize to [-π, π]
+        while (diff > MathF.PI) diff -= 2f * MathF.PI;
+        while (diff < -MathF.PI) diff += 2f * MathF.PI;
+
+        float halfSpan = MathF.PI * 0.3f; // half of 0.6π
+        return MathF.Abs(diff) <= halfSpan + 0.15f; // small angular tolerance
     }
 }

@@ -52,4 +52,18 @@ public interface IAssetService
 
     /// <summary> Recursively returns all file entries under the asset root, optionally filtered by extension. </summary>
     IReadOnlyList<AssetEntry> GetAllEntriesRecursive(string? extensionFilter = null);
+
+    // ── GUID / .meta support ──────────────────────────────────
+
+    /// <summary> Returns the GUID for a relative asset path, or null if unknown. </summary>
+    string? GetGuidByPath(string relativePath);
+
+    /// <summary> Returns the relative asset path for a GUID, or null if unknown. </summary>
+    string? GetAssetPathByGuid(string guid);
+
+    /// <summary> Returns the <see cref="MetaFile"/> for the given GUID, or null. </summary>
+    MetaFile? GetMeta(string guid);
+
+    /// <summary> Returns the <see cref="AssetMetaManager"/> that backs the GUID system. </summary>
+    AssetMetaManager MetaManager { get; }
 }

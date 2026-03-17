@@ -1,6 +1,7 @@
 // This file is part of the Prowl Game Engine
 // Licensed under the MIT License. See the LICENSE file in the project root for details.
 
+using Prowl.Runtime;
 using Prowl.Runtime.Resources;
 using Prowl.Vector;
 
@@ -30,4 +31,17 @@ public interface IEditorRendering : IDisposable
 
     /// <summary> The current game-view render texture (null until first render). </summary>
     RenderTexture? GameViewRT { get; }
+
+    /// <summary>
+    /// Renders a screen-space outline for the selected objects as a post-process
+    /// effect on the scene-view render texture. Uses stencil/object-ID buffer to
+    /// detect selected object fragments, then applies an edge-detection filter.
+    /// <para>
+    /// Implementations that do not support post-processing should fall back to a
+    /// no-op; the <see cref="ScenePanel"/> already draws a wireframe bounding-box
+    /// outline via ImGui's DrawList as a temporary measure.
+    /// </para>
+    /// </summary>
+    /// <param name="selectedObjects">The GameObjects that should be outlined.</param>
+    void RenderSelectionOutline(IReadOnlyList<GameObject> selectedObjects) { }
 }

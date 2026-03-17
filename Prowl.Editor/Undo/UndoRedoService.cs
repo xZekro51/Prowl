@@ -48,6 +48,21 @@ public sealed class UndoRedoService
         Debug.Log($"[Undo] Executed: {command.Description}");
     }
 
+    /// <summary>
+    /// Pushes a command onto the undo stack without executing it.
+    /// Use when the action has already been applied (e.g. gizmo drag).
+    /// </summary>
+    public void Push(IUndoableCommand command)
+    {
+        _undoStack.Push(command);
+        _redoStack.Clear();
+
+        if (_undoStack.Count > MaxHistorySize)
+            TrimStack(_undoStack, MaxHistorySize);
+
+        MarkSceneDirty();
+    }
+
     /// <summary> Undoes the most recent action. </summary>
     public void Undo()
     {

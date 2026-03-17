@@ -6,8 +6,10 @@ using System.Reflection;
 using ImGuiNET;
 using Prowl.Runtime;
 using Prowl.Runtime.Utils;
+using Prowl.Runtime.Resources;
 using Prowl.Editor.Docking;
 using Prowl.Editor.Icons;
+using Prowl.Editor.Inspector;
 using Prowl.Editor.Services;
 using Prowl.Editor.Undo;
 using Prowl.Editor.Undo.Commands;
@@ -29,6 +31,10 @@ public sealed class InspectorPanel : EditorPanel
     // Asset picker state
     private string _assetPickerFilter = string.Empty;
     private string? _activePickerFieldId;
+
+    // Inspector name editing state
+    private string _nameEditBuffer = string.Empty;
+    private int _nameEditGoId;
 
     // Internal field names that should never appear in the inspector
     private static readonly HashSet<string> InternalFields = new(StringComparer.Ordinal)
@@ -72,7 +78,49 @@ public sealed class InspectorPanel : EditorPanel
         }
         DrawFieldRow("Name", () =>
         {
-            ImGui.TextColored(new Vector4(0.90f, 0.90f, 0.90f, 1f), go.Name ?? "Unnamed");
+            // Keep the edit buffer in sync with the currently selected GO
+            if (_nameEditGoId != go.InstanceID)
+            {
+                _nameEditBuffer = go.Name ?? "Unnamed";
+                _nameEditGoId = go.InstanceID;
+            }
+
+            if (ImGui.InputText("##GOName", ref _nameEditBuffer, 256,
+                ImGuiInputTextFlags.EnterReturnsTrue))
+            {
+                string newName = _nameEditBuffer.Trim();
+                if (string.IsNullOrEmpty(newName))
+                {
+                    // Revert to previous name if empty
+                    _nameEditBuffer = go.Name ?? "Unnamed";
+                }
+                else if (newName != go.Name)
+                {
+                    string oldName = go.Name ?? "Unnamed";
+                    if (EditorServices.TryGet<UndoRedoService>(out var undo))
+                        undo!.Execute(new RenameCommand(go, oldName, newName));
+                    else
+                        go.Name = newName;
+                }
+            }
+
+            // Also apply on deactivation (focus lost) to match typical UX
+            if (ImGui.IsItemDeactivatedAfterEdit())
+            {
+                string newName = _nameEditBuffer.Trim();
+                if (string.IsNullOrEmpty(newName))
+                {
+                    _nameEditBuffer = go.Name ?? "Unnamed";
+                }
+                else if (newName != go.Name)
+                {
+                    string oldName = go.Name ?? "Unnamed";
+                    if (EditorServices.TryGet<UndoRedoService>(out var undo))
+                        undo!.Execute(new RenameCommand(go, oldName, newName));
+                    else
+                        go.Name = newName;
+                }
+            }
         });
 
         bool enabled = go.Enabled;
@@ -92,14 +140,23 @@ public sealed class InspectorPanel : EditorPanel
             IconManager.DrawIconOverLastItem("Transform");
         }
 
+        var compArray = go.GetComponents().ToArray();
+
         // ── Components ─────────────────────────────────────────
-        foreach (var comp in go.GetComponents())
+        foreach (var comp in compArray)
         {
             if (comp == null) continue;
 
             string typeName = comp.GetType().Name;
             string compIconName = IconManager.GetIconNameForComponent(comp);
             ImGui.PushID(comp.GetHashCode());
+
+            // Enabled checkbox on the left, before the foldout header
+            bool compEnabled = comp.Enabled;
+            if (ImGui.Checkbox($"##enabled", ref compEnabled))
+                comp.Enabled = compEnabled;
+
+            ImGui.SameLine();
 
             bool headerOpen = ImGui.CollapsingHeader($"     {typeName}", ImGuiTreeNodeFlags.DefaultOpen);
 
@@ -121,13 +178,19 @@ public sealed class InspectorPanel : EditorPanel
 
             if (headerOpen)
             {
-                // Enabled checkbox
-                bool compEnabled = comp.Enabled;
-                if (ImGui.Checkbox("Enabled", ref compEnabled))
-                    comp.Enabled = compEnabled;
-
                 // Serializable fields via reflection
                 DrawObjectFields(comp);
+
+                // Material sub-inspector for renderers with materials
+                if (comp is MeshRenderer meshRenderer && meshRenderer.Material != null)
+                {
+                    ImGui.Spacing();
+                    if (ImGui.TreeNodeEx("Material", ImGuiTreeNodeFlags.DefaultOpen))
+                    {
+                        MaterialInspector.DrawMaterial(meshRenderer.Material);
+                        ImGui.TreePop();
+                    }
+                }
             }
 
             ImGui.PopID();
@@ -568,8 +631,9 @@ public sealed class InspectorPanel : EditorPanel
                 {
                     if (EditorDragDrop.PayloadType == "AssetEntry" && EditorDragDrop.Payload is AssetEntry entry)
                     {
-                        // For now, store the asset path on the EngineObject — actual loading
-                        // would go through a real asset loader. Set to null if incompatible.
+                        EngineObject? loaded = TryLoadAssetForField(entry, field.FieldType);
+                        if (loaded != null)
+                            SetFieldWithUndo(target, field, current, loaded);
                         EditorDragDrop.Clear();
                     }
                     else if (EditorDragDrop.PayloadType == "GameObject" && EditorDragDrop.Payload is GameObject droppedGo)
@@ -581,6 +645,41 @@ public sealed class InspectorPanel : EditorPanel
                         }
                     }
                 }
+            }
+
+            // ImGui native drag-drop target for cross-panel drops
+            if (ImGui.BeginDragDropTarget())
+            {
+                var payload = ImGui.AcceptDragDropPayload("ASSET_ENTRY");
+                unsafe
+                {
+                    if (payload.NativePtr != null && payload.DataSize > 0)
+                    {
+                        string data = System.Text.Encoding.UTF8.GetString(
+                            (byte*)payload.Data, payload.DataSize).TrimEnd('\0');
+
+                        if (EditorServices.TryGet<IAssetService>(out var assetSvc))
+                        {
+                            // Resolve GUID to path if needed
+                            string? resolvedPath = assetSvc!.GetAssetPathByGuid(data);
+                            string relativePath = resolvedPath ?? data;
+                            string absPath = assetSvc.GetAbsolutePath(relativePath);
+
+                            var fakeEntry = new AssetEntry
+                            {
+                                Name = Path.GetFileName(absPath),
+                                FullPath = absPath,
+                                RelativePath = relativePath,
+                                Extension = Path.GetExtension(absPath),
+                            };
+
+                            EngineObject? loaded = TryLoadAssetForField(fakeEntry, field.FieldType);
+                            if (loaded != null)
+                                SetFieldWithUndo(target, field, current, loaded);
+                        }
+                    }
+                }
+                ImGui.EndDragDropTarget();
             }
 
             // Context menu: clear reference
@@ -643,10 +742,15 @@ public sealed class InspectorPanel : EditorPanel
                             !entry.Name.Contains(_assetPickerFilter, StringComparison.OrdinalIgnoreCase))
                             continue;
 
+                        // Filter by compatible extension for the field type
+                        if (!IsAssetCompatible(entry, field.FieldType))
+                            continue;
+
                         if (ImGui.Selectable(entry.Name))
                         {
-                            // In a real implementation this would load the asset via an asset loader.
-                            // For now we signal intent — the reference can be resolved later.
+                            EngineObject? loaded = TryLoadAssetForField(entry, field.FieldType);
+                            if (loaded != null)
+                                SetFieldWithUndo(target, field, current, loaded);
                             _activePickerFieldId = null;
                             ImGui.CloseCurrentPopup();
                         }
@@ -682,6 +786,97 @@ public sealed class InspectorPanel : EditorPanel
 
         foreach (var child in go.Children)
             DrawGameObjectPickerItem(child, target, field, current);
+    }
+
+    // ────────────────────────────────────────────────────────────
+    // Asset loading helpers for drag-drop & picker
+    // ────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Mesh-compatible model file extensions.
+    /// </summary>
+    private static readonly HashSet<string> MeshExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".obj", ".fbx", ".gltf", ".glb", ".dae", ".blend", ".3ds", ".ply", ".stl"
+    };
+
+    private static readonly HashSet<string> MaterialExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".mat"
+    };
+
+    /// <summary>
+    /// Returns true if the given asset entry is compatible with the target field type.
+    /// </summary>
+    private static bool IsAssetCompatible(AssetEntry entry, Type fieldType)
+    {
+        if (fieldType == typeof(Prowl.Runtime.Resources.Mesh) || fieldType.IsSubclassOf(typeof(Prowl.Runtime.Resources.Mesh)))
+            return MeshExtensions.Contains(entry.Extension);
+        if (fieldType == typeof(Prowl.Runtime.Resources.Material) || fieldType.IsSubclassOf(typeof(Prowl.Runtime.Resources.Material)))
+            return MaterialExtensions.Contains(entry.Extension);
+        if (fieldType == typeof(Prowl.Runtime.Resources.Model) || fieldType.IsSubclassOf(typeof(Prowl.Runtime.Resources.Model)))
+            return MeshExtensions.Contains(entry.Extension);
+        // Fallback: show all assets
+        return true;
+    }
+
+    /// <summary>
+    /// Attempts to load an asset from disk and return an EngineObject of the appropriate type.
+    /// </summary>
+    private static EngineObject? TryLoadAssetForField(AssetEntry entry, Type fieldType)
+    {
+        try
+        {
+            string path = entry.FullPath;
+            string ext = entry.Extension.ToLowerInvariant();
+
+            // Mesh field: load via ModelImporter, return the first mesh
+            if (fieldType == typeof(Prowl.Runtime.Resources.Mesh))
+            {
+                if (MeshExtensions.Contains(ext) && File.Exists(path))
+                {
+                    var model = Prowl.Runtime.Resources.Model.LoadFromFile(path);
+                    if (model.Meshes.Count > 0)
+                    {
+                        var mesh = model.Meshes[0].Mesh;
+                        mesh.AssetPath = path;
+                        mesh.Name = Path.GetFileNameWithoutExtension(path);
+                        return mesh;
+                    }
+                }
+            }
+
+            // Model field: load the full model
+            if (fieldType == typeof(Prowl.Runtime.Resources.Model))
+            {
+                if (MeshExtensions.Contains(ext) && File.Exists(path))
+                {
+                    return Prowl.Runtime.Resources.Model.LoadFromFile(path);
+                }
+            }
+
+            // Material field: currently .mat files are JSON; a full implementation
+            // would deserialize them. For now, create a default material with the
+            // asset path set so it can be resolved later.
+            if (fieldType == typeof(Prowl.Runtime.Resources.Material))
+            {
+                if (ext == ".mat" && File.Exists(path))
+                {
+                    var mat = new Prowl.Runtime.Resources.Material(
+                        Prowl.Runtime.Resources.Shader.LoadDefault(
+                            Prowl.Runtime.Resources.DefaultShader.Standard));
+                    mat.AssetPath = path;
+                    mat.Name = Path.GetFileNameWithoutExtension(path);
+                    return mat;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Debug.LogWarning($"[Inspector] Failed to load asset: {ex.Message}");
+        }
+
+        return null;
     }
 
     // ────────────────────────────────────────────────────────────
@@ -844,9 +1039,14 @@ public sealed class InspectorPanel : EditorPanel
         if (!ImGui.CollapsingHeader("Material", ImGuiTreeNodeFlags.DefaultOpen))
             return;
 
-        // Show raw JSON content (read-only for now)
+        // Try to load and display material properties
+        // For now, show raw JSON with a note about the material inspector
         if (File.Exists(asset.FullPath))
         {
+            ImGui.TextColored(new Vector4(0.6f, 0.7f, 0.8f, 1f),
+                "Material properties are editable when the material is assigned to a MeshRenderer on a selected GameObject.");
+            ImGui.Spacing();
+
             try
             {
                 string content = File.ReadAllText(asset.FullPath);

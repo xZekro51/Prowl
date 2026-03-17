@@ -22,6 +22,7 @@ public sealed class EditorMenuBar
     public Action? OnToggleSceneView { get; set; }
     public Action? OnToggleProjectBrowser { get; set; }
     public Action? OnToggleGameView { get; set; }
+    public Action? OnToggleConsole { get; set; }
     public Action? OnTogglePreferences { get; set; }
 
     // Cached scene file list for the "Load Scene" popup
@@ -67,6 +68,7 @@ public sealed class EditorMenuBar
             if (ImGui.MenuItem("Scene View"))      OnToggleSceneView?.Invoke();
             if (ImGui.MenuItem("Project Browser")) OnToggleProjectBrowser?.Invoke();
             if (ImGui.MenuItem("Game View"))       OnToggleGameView?.Invoke();
+            if (ImGui.MenuItem("Console"))         OnToggleConsole?.Invoke();
             ImGui.EndMenu();
         }
 

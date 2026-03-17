@@ -214,11 +214,11 @@ public sealed class ProjectManager
         string scenesDir = Path.Combine(assetsPath, "Scenes");
         Directory.CreateDirectory(scenesDir);
 
-        string defaultScene = Path.Combine(scenesDir, "DefaultScene.scene");
+        string defaultScene = Path.Combine(scenesDir, "Default Scene.scene");
         File.WriteAllText(defaultScene, GenerateDefaultScene());
 
         // Also place a copy at root for backward compat
-        string rootScene = Path.Combine(assetsPath, "DefaultScene.scene");
+        string rootScene = Path.Combine(assetsPath, "Default Scene.scene");
         if (!File.Exists(rootScene))
             File.WriteAllText(rootScene, GenerateDefaultScene());
 
@@ -312,6 +312,7 @@ public class PlayerController : MonoBehaviour
     private static string GenerateDefaultScene()
     {
         Scene scene = new Scene();
+        scene.Name = "Default Scene";
 
         // Create directional light
         GameObject lightGO = new("Directional Light");

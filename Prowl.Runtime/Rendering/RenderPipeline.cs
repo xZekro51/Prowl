@@ -505,6 +505,8 @@ public abstract class RenderPipeline : EngineObject
             batches.Sort((a, b) => a.SortKey.CompareTo(b.SortKey));
         }
 
+        RenderStats.Instance.SetRenderableCount(renderables.Count);
+
         // ========== PHASE 2: Draw Batches ==========
         // For each batch, bind state once then draw all objects in that batch
         foreach (RenderBatch batch in batches)
@@ -630,7 +632,10 @@ public abstract class RenderPipeline : EngineObject
                     Graphics.DrawIndexed(mesh.MeshTopology, (uint)mesh.IndexCount, mesh.IndexFormat == IndexFormat.UInt32, null);
                     Graphics.BindVertexArray(null);
                 }
+                RenderStats.Instance.AddDrawCall(mesh.VertexCount, mesh.IndexCount);
             }
+
+            RenderStats.Instance.AddBatch();
 
             // Release grab texture RT if used
             if (grabRT != null)
@@ -715,6 +720,8 @@ public abstract class RenderPipeline : EngineObject
             );
             Graphics.BindVertexArray(null);
         }
+        RenderStats.Instance.AddDrawCall(mesh.VertexCount * instanceCount, indexCount * instanceCount);
+        RenderStats.Instance.AddBatch();
 
         material.SetKeyword("GPU_INSTANCING", false);
     }

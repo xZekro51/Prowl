@@ -89,6 +89,9 @@ public class DefaultRenderPipeline : RenderPipeline
 
         PropertyState.ClearGlobals();
 
+        // Publish per-frame render stats
+        RenderStats.Instance.SwapFrames();
+
         base.Render(camera, in data);
     }
 

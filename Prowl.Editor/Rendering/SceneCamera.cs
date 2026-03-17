@@ -95,7 +95,7 @@ public sealed class SceneCamera
         if (rmb)
         {
             // Mouse look
-            Yaw -= delta.X * LookSpeed;
+            Yaw += delta.X * LookSpeed;
             Pitch += delta.Y * LookSpeed;
             Pitch = Math.Clamp(Pitch, -89f, 89f);
 
@@ -113,8 +113,8 @@ public sealed class SceneCamera
             Float3 move = Float3.Zero;
             if (input.IsKey(KeyCode.W)) move += forward;
             if (input.IsKey(KeyCode.S)) move -= forward;
-            if (input.IsKey(KeyCode.D)) move += right;
-            if (input.IsKey(KeyCode.A)) move -= right;
+            if (input.IsKey(KeyCode.D)) move -= right;
+            if (input.IsKey(KeyCode.A)) move += right;
             if (input.IsKey(KeyCode.E)) move += up;
             if (input.IsKey(KeyCode.Q)) move -= up;
 
@@ -176,7 +176,7 @@ public sealed class SceneCamera
     public Float3 WorldToViewport(Float3 worldPos, float vpWidth, float vpHeight)
     {
         float aspect = vpWidth / Math.Max(vpHeight, 1f);
-        Float4x4 vp = GetViewMatrix() * GetProjectionMatrix(aspect);
+        Float4x4 vp = GetProjectionMatrix(aspect) * GetViewMatrix();
         Float4 clip = Float4x4.TransformPoint(new Float4(worldPos, 1f), vp);
 
         if (clip.W == 0f) return new Float3(-1, -1, -1);
@@ -187,6 +187,37 @@ public sealed class SceneCamera
         float screenY = (1f - (ndc.Y * 0.5f + 0.5f)) * vpHeight; // flip Y for top-left origin
 
         return new Float3(screenX, screenY, ndc.Z);
+    }
+
+    /// <summary>
+    /// Converts a viewport-local pixel position to a world-space ray
+    /// (origin + direction). Used for mouse picking in the scene view.
+    /// </summary>
+    public (Float3 origin, Float3 direction) ViewportToRay(Float2 viewportPos, float vpWidth, float vpHeight)
+    {
+        float aspect = vpWidth / Math.Max(vpHeight, 1f);
+
+        // Normalise to [-1, 1] NDC
+        float ndcX = (viewportPos.X / vpWidth) * 2f - 1f;
+        float ndcY = 1f - (viewportPos.Y / vpHeight) * 2f; // flip Y
+
+        Float4 nearNDC = new(ndcX, ndcY, 0f, 1f);
+        Float4 farNDC  = new(ndcX, ndcY, 1f, 1f);
+
+        Float4x4 vpMat = GetProjectionMatrix(aspect) * GetViewMatrix();
+        Float4x4 inv   = vpMat.Invert();
+
+        Float4 nearW = Float4x4.TransformPoint(nearNDC, inv);
+        Float4 farW  = Float4x4.TransformPoint(farNDC, inv);
+
+        if (nearW.W != 0f) nearW /= nearW.W;
+        if (farW.W != 0f) farW /= farW.W;
+
+        Float3 origin = new(nearW.X, nearW.Y, nearW.Z);
+        Float3 far3   = new(farW.X, farW.Y, farW.Z);
+        Float3 dir    = Float3.Normalize(far3 - origin);
+
+        return (origin, dir);
     }
 
     // Builds a quaternion that looks along 'forward' with the given 'up' hint.

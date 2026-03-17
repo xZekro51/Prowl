@@ -4,6 +4,7 @@
 using System.Numerics;
 using ImGuiNET;
 using Prowl.Runtime;
+using Prowl.Runtime.Resources;
 using Prowl.Editor.Docking;
 using Prowl.Editor.Icons;
 using Prowl.Editor.Services;
@@ -26,6 +27,10 @@ public sealed class HierarchyPanel : EditorPanel
     // The InstanceID of the GO currently being dragged (0 = none)
     private int _draggedInstanceId;
 
+    // Inline rename state
+    private int _renamingInstanceId;
+    private string _renameBuffer = string.Empty;
+
     public HierarchyPanel() : base("Hierarchy") { }
 
     protected override void DrawContent()
@@ -39,17 +44,7 @@ public sealed class HierarchyPanel : EditorPanel
 
         if (ImGui.BeginPopup("##HierCreate"))
         {
-            if (ImGui.MenuItem("Empty GameObject"))
-            {
-                if (EditorServices.TryGet<UndoRedoService>(out var undo))
-                    undo!.Execute(new CreateGameObjectCommand("New GameObject"));
-                else
-                    sceneService.CreateGameObject("New GameObject");
-            }
-            if (ImGui.MenuItem("Empty Child (of selection)"))
-            {
-                CreateChildOfSelection(sceneService, selService);
-            }
+            DrawCreateMenu(sceneService, selService);
             ImGui.EndPopup();
         }
 
@@ -86,6 +81,13 @@ public sealed class HierarchyPanel : EditorPanel
         {
             Debug.LogError($"[Hierarchy] Error displaying scene objects: {ex.Message}");
             Debug.LogException(ex);
+        }
+
+        // ── Context menu on empty area ─────────────────────────
+        if (ImGui.BeginPopupContextWindow("##HierEmptyCtx", ImGuiPopupFlags.MouseButtonRight | ImGuiPopupFlags.NoOpenOverItems))
+        {
+            DrawCreateMenu(sceneService, selService);
+            ImGui.EndPopup();
         }
 
         // Drop zone at the bottom — for un-parenting (drop to root) or project drag
@@ -237,6 +239,11 @@ public sealed class HierarchyPanel : EditorPanel
         // ── Context menu ───────────────────────────────────────
         if (ImGui.BeginPopupContextItem())
         {
+            if (ImGui.MenuItem("Rename"))
+            {
+                _renamingInstanceId = go.InstanceID;
+                _renameBuffer = go.Name ?? "Unnamed";
+            }
             if (EditorIcons.IconMenuItem(EditorIconType.Plus, "Create Empty Child"))
             {
                 if (EditorServices.TryGet<UndoRedoService>(out var undo))
@@ -263,6 +270,39 @@ public sealed class HierarchyPanel : EditorPanel
                 sceneService.DestroyGameObject(go);
             }
             ImGui.EndPopup();
+        }
+
+        // ── Inline rename input ────────────────────────────────
+        if (_renamingInstanceId == go.InstanceID)
+        {
+            ImGui.OpenPopup("##RenamePopup");
+            if (ImGui.BeginPopup("##RenamePopup"))
+            {
+                ImGui.Text("Rename:");
+                bool submit = ImGui.InputText("##rename", ref _renameBuffer, 256,
+                    ImGuiInputTextFlags.EnterReturnsTrue | ImGuiInputTextFlags.AutoSelectAll);
+
+                if (submit)
+                {
+                    string newName = _renameBuffer.Trim();
+                    if (!string.IsNullOrEmpty(newName) && newName != go.Name)
+                    {
+                        string oldName = go.Name ?? "Unnamed";
+                        if (EditorServices.TryGet<UndoRedoService>(out var undoSvc))
+                            undoSvc!.Execute(new RenameCommand(go, oldName, newName));
+                        else
+                            go.Name = newName;
+                    }
+                    _renamingInstanceId = 0;
+                    ImGui.CloseCurrentPopup();
+                }
+                ImGui.EndPopup();
+            }
+            else
+            {
+                // Popup was closed without submitting
+                _renamingInstanceId = 0;
+            }
         }
 
         // ── Draw tree indentation lines for clarity ────────────
@@ -358,6 +398,91 @@ public sealed class HierarchyPanel : EditorPanel
                     sceneService.CreateGameObject(goName);
                 Debug.Log($"[DragDrop] Instantiated '{goName}' from asset: {entry.RelativePath}");
             }
+        }
+    }
+
+    /// <summary>
+    /// Draws the shared "Create" menu used by both the toolbar popup and the
+    /// right-click context menu on empty space.
+    /// </summary>
+    private static void DrawCreateMenu(ISceneService sceneService, ISelectionService selService)
+    {
+        if (EditorIcons.IconMenuItem(EditorIconType.Plus, "Empty GameObject"))
+        {
+            CreateAndSelect(sceneService, selService, "New GameObject");
+        }
+        if (EditorIcons.IconMenuItem(EditorIconType.Plus, "Empty Child (of selection)"))
+        {
+            CreateChildOfSelection(sceneService, selService);
+        }
+
+        ImGui.Separator();
+
+        if (ImGui.BeginMenu("3D Object"))
+        {
+            if (ImGui.MenuItem("Cube"))
+                CreatePrimitive(sceneService, selService, "Cube",
+                    Mesh.CreateCube(new Prowl.Vector.Float3(1, 1, 1)));
+            if (ImGui.MenuItem("Sphere"))
+                CreatePrimitive(sceneService, selService, "Sphere",
+                    Mesh.CreateSphere(0.5f, 24, 24));
+            if (ImGui.MenuItem("Cylinder"))
+                CreatePrimitive(sceneService, selService, "Cylinder",
+                    Mesh.CreateCylinder(0.5f, 2f, 24));
+            if (ImGui.MenuItem("Plane"))
+                CreatePrimitive(sceneService, selService, "Plane",
+                    Mesh.CreateCube(new Prowl.Vector.Float3(10, 0.01f, 10)));
+            ImGui.EndMenu();
+        }
+
+        if (ImGui.BeginMenu("Light"))
+        {
+            if (ImGui.MenuItem("Directional Light"))
+            {
+                var go = CreateAndSelect(sceneService, selService, "Directional Light");
+                go?.AddComponent<DirectionalLight>();
+            }
+            if (ImGui.MenuItem("Point Light"))
+            {
+                var go = CreateAndSelect(sceneService, selService, "Point Light");
+                go?.AddComponent<PointLight>();
+            }
+            ImGui.EndMenu();
+        }
+
+        if (ImGui.MenuItem("Camera"))
+        {
+            var go = CreateAndSelect(sceneService, selService, "Camera");
+            go?.AddComponent<Camera>();
+        }
+    }
+
+    private static GameObject? CreateAndSelect(ISceneService sceneService, ISelectionService selService, string name)
+    {
+        GameObject? go;
+        if (EditorServices.TryGet<UndoRedoService>(out var undo))
+        {
+            var cmd = new CreateGameObjectCommand(name);
+            undo!.Execute(cmd);
+            go = cmd.CreatedObject;
+        }
+        else
+        {
+            go = sceneService.CreateGameObject(name);
+        }
+        if (go != null)
+            selService.ActiveObject = go;
+        return go;
+    }
+
+    private static void CreatePrimitive(ISceneService sceneService, ISelectionService selService, string name, Mesh mesh)
+    {
+        var go = CreateAndSelect(sceneService, selService, name);
+        if (go != null)
+        {
+            var renderer = go.AddComponent<MeshRenderer>();
+            if (renderer != null)
+                renderer.Mesh = mesh;
         }
     }
 }

@@ -11,7 +11,8 @@ using Prowl.Runtime;
 namespace Prowl.Editor.Toolbar;
 
 /// <summary>
-/// Draws the Play / Pause / Step toolbar as a small dockable ImGui window.
+/// Draws the Play / Pause / Step toolbar inline within the main menu bar
+/// or at the top of the editor. Not a dockable window — it's always visible.
 /// Communicates with <see cref="EditorPlayMode"/> for state transitions.
 /// </summary>
 public sealed class PlayModeToolbar
@@ -29,17 +30,31 @@ public sealed class PlayModeToolbar
         _playMode = playMode;
     }
 
+    /// <summary>
+    /// Draws the toolbar as a fixed bar above the dockspace.
+    /// Call this from the host window, after the menu bar and before the dockspace.
+    /// </summary>
     public void Draw()
     {
-        ImGui.SetNextWindowSize(Sz(320, 46), ImGuiCond.FirstUseEver);
-        if (!ImGui.Begin("Toolbar", ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse))
-        {
-            ImGui.End();
-            return;
-        }
+        float barHeight = 32 * Game.DpiScale;
+        ImGui.PushStyleVar(ImGuiStyleVar.ChildRounding, 0f);
+        ImGui.PushStyleColor(ImGuiCol.ChildBg, new Vector4(0.16f, 0.16f, 0.16f, 1f));
+
+        ImGui.BeginChild("##ToolbarBar", new Vector2(0, barHeight), ImGuiChildFlags.None,
+            ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse);
 
         bool isPlaying = _playMode.State != PlayModeState.Stopped;
         bool isPaused  = _playMode.State == PlayModeState.Paused;
+
+        // Center the buttons horizontally
+        float totalBtnWidth = Sz(64, 0).X * 2 + Sz(56, 0).X + ImGui.GetStyle().ItemSpacing.X * 2;
+        float availW = ImGui.GetContentRegionAvail().X;
+        float startX = (availW - totalBtnWidth) * 0.5f;
+        if (startX < 0) startX = 0;
+        ImGui.SetCursorPosX(startX);
+
+        float yPad = (barHeight - Sz(0, 22).Y) * 0.5f;
+        ImGui.SetCursorPosY(yPad);
 
         // Play / Stop
         if (isPlaying)
@@ -81,6 +96,8 @@ public sealed class PlayModeToolbar
             ImGui.TextColored(InfoCol, status);
         }
 
-        ImGui.End();
+        ImGui.EndChild();
+        ImGui.PopStyleColor();
+        ImGui.PopStyleVar();
     }
 }

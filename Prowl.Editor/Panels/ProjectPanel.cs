@@ -1,6 +1,7 @@
 // This file is part of the Prowl Game Engine
 // Licensed under the MIT License. See the LICENSE file in the project root for details.
 
+using System.Diagnostics;
 using System.Numerics;
 using ImGuiNET;
 using Prowl.Runtime;
@@ -25,6 +26,14 @@ public sealed class ProjectPanel : EditorPanel
     private string _searchFilter = string.Empty;
     private string _renameBuffer = string.Empty;
     private string? _renamingPath;
+
+    // Deferred selection: wait for mouse release so drags don't trigger inspector switch
+    private string? _pendingSelectPath;
+    private bool _dragOccurred;
+
+    // Clipboard for copy / paste / duplicate
+    private static readonly List<string> s_clipboardPaths = new();
+    private static bool s_clipboardIsCut;
 
     // Relative folder tree width fraction
     private const float TreeWidthFraction = 0.25f;
@@ -189,7 +198,7 @@ public sealed class ProjectPanel : EditorPanel
                     IsDirectory = true,
                 };
                 try { assets.Delete(dirEntry); }
-                catch (Exception ex) { Debug.LogWarning($"Cannot delete: {ex.Message}"); }
+                catch (Exception ex) { Runtime.Debug.LogWarning($"Cannot delete: {ex.Message}"); }
                 if (_selectedFolder == relativeDir) _selectedFolder = ".";
             }
             ImGui.EndPopup();
@@ -290,15 +299,50 @@ public sealed class ProjectPanel : EditorPanel
             IconManager.DrawIconOverLastItem(fileIconName, useTreeIndent: false);
         }
 
+        // On mouse press: highlight the item but defer inspector selection until release
         if (ImGui.IsItemClicked(ImGuiMouseButton.Left))
         {
             _selectedEntry = entry.RelativePath;
+            _pendingSelectPath = entry.RelativePath;
+            _dragOccurred = false;
+        }
 
-            // Notify the selection service so the inspector can display asset info
-            if (EditorServices.TryGet<ISelectionService>(out var sel))
-                sel!.SelectedAsset = entry;
-
+        // ImGui drag-drop source for cross-panel drag (project → scene / hierarchy)
+        if (ImGui.BeginDragDropSource(ImGuiDragDropFlags.SourceAllowNullID))
+        {
+            _dragOccurred = true;
             EditorDragDrop.BeginDrag("AssetEntry", entry);
+
+            // Store the GUID as the payload if available, otherwise the path
+            string payloadText = entry.RelativePath;
+            if (EditorServices.TryGet<IAssetService>(out var assetSvc))
+            {
+                string? guid = assetSvc!.GetGuidByPath(entry.RelativePath);
+                if (guid != null) payloadText = guid;
+            }
+
+            unsafe
+            {
+                byte[] bytes = System.Text.Encoding.UTF8.GetBytes(payloadText + '\0');
+                fixed (byte* ptr = bytes)
+                {
+                    ImGui.SetDragDropPayload("ASSET_ENTRY", (nint)ptr, (uint)bytes.Length);
+                }
+            }
+
+            ImGui.Text($"\ud83d\udcc4 {entry.Name}");
+            ImGui.EndDragDropSource();
+        }
+
+        // On mouse release: if this was the pressed item and no drag occurred, select in inspector
+        if (_pendingSelectPath == entry.RelativePath && ImGui.IsMouseReleased(ImGuiMouseButton.Left))
+        {
+            if (!_dragOccurred && ImGui.IsItemHovered())
+            {
+                if (EditorServices.TryGet<ISelectionService>(out var sel))
+                    sel!.SelectedAsset = entry;
+            }
+            _pendingSelectPath = null;
         }
 
         // Double-click to open scene files
@@ -327,10 +371,72 @@ public sealed class ProjectPanel : EditorPanel
                 }
                 ImGui.Separator();
             }
+
+            bool isScript = entry.Extension is ".cs" or ".csx";
+            if (isScript && ImGui.MenuItem("\u270e Open in Editor"))
+            {
+                try { Process.Start(new ProcessStartInfo(entry.FullPath) { UseShellExecute = true }); }
+                catch (Exception ex) { Runtime.Debug.LogWarning($"Cannot open file: {ex.Message}"); }
+            }
+
+            if (ImGui.MenuItem("\ud83d\udcc2 Show in Explorer"))
+            {
+                try
+                {
+                    if (OperatingSystem.IsWindows())
+                        Process.Start("explorer.exe", $"/select,\"{entry.FullPath}\"");
+                    else if (OperatingSystem.IsMacOS())
+                        Process.Start("open", $"-R \"{entry.FullPath}\"");
+                    else
+                        Process.Start("xdg-open", Path.GetDirectoryName(entry.FullPath) ?? ".");
+                }
+                catch (Exception ex) { Runtime.Debug.LogWarning($"Show in explorer failed: {ex.Message}"); }
+            }
+
+            ImGui.Separator();
+
+            if (ImGui.MenuItem("Rename"))
+            {
+                _renamingPath = entry.RelativePath;
+                _renameBuffer = Path.GetFileNameWithoutExtension(entry.Name);
+            }
+
+            if (ImGui.MenuItem("Copy"))
+            {
+                s_clipboardPaths.Clear();
+                s_clipboardPaths.Add(entry.FullPath);
+                s_clipboardIsCut = false;
+            }
+
+            if (ImGui.MenuItem("Paste", s_clipboardPaths.Count > 0))
+            {
+                PasteClipboard(assets, _selectedFolder ?? ".");
+            }
+
+            if (ImGui.MenuItem("Duplicate"))
+            {
+                DuplicateFile(assets, entry);
+            }
+
+            if (ImGui.MenuItem("Copy Path"))
+            {
+                ImGui.SetClipboardText(entry.FullPath);
+            }
+
+            if (ImGui.MenuItem("Copy Relative Path"))
+            {
+                ImGui.SetClipboardText(entry.RelativePath);
+            }
+
+            ImGui.Separator();
+
             if (ImGui.MenuItem("Delete"))
             {
                 assets.Delete(entry);
             }
+
+            ImGui.Separator();
+
             if (ImGui.MenuItem("Create Prefab (from selected)"))
             {
                 var sel = EditorServices.Get<ISelectionService>();
@@ -345,10 +451,46 @@ public sealed class ProjectPanel : EditorPanel
                 }
                 else
                 {
-                    Debug.LogWarning("[Project] Select a GameObject first to create a prefab.");
+                    Runtime.Debug.LogWarning("[Project] Select a GameObject first to create a prefab.");
                 }
             }
             ImGui.EndPopup();
+        }
+
+        // Inline rename mode
+        if (_renamingPath == entry.RelativePath)
+        {
+            ImGui.SetNextItemWidth(ImGui.GetContentRegionAvail().X);
+            bool committed = ImGui.InputText("##Rename", ref _renameBuffer, 256,
+                ImGuiInputTextFlags.EnterReturnsTrue | ImGuiInputTextFlags.AutoSelectAll);
+            if (!ImGui.IsItemActive() && !ImGui.IsItemFocused())
+                committed = true; // lost focus = commit
+
+            if (committed)
+            {
+                string newName = _renameBuffer.Trim();
+                if (!string.IsNullOrEmpty(newName))
+                {
+                    string dir = Path.GetDirectoryName(entry.FullPath) ?? "";
+                    string ext = entry.Extension;
+                    string newFullPath = Path.Combine(dir, newName + ext);
+                    if (!File.Exists(newFullPath))
+                    {
+                        try
+                        {
+                            File.Move(entry.FullPath, newFullPath);
+                            // Move .meta file if it exists
+                            string metaOld = entry.FullPath + ".meta";
+                            string metaNew = newFullPath + ".meta";
+                            if (File.Exists(metaOld))
+                                File.Move(metaOld, metaNew);
+                            assets.Refresh();
+                        }
+                        catch (Exception ex) { Runtime.Debug.LogWarning($"Rename failed: {ex.Message}"); }
+                    }
+                }
+                _renamingPath = null;
+            }
         }
     }
 
@@ -444,6 +586,28 @@ public sealed class ProjectPanel : EditorPanel
 
         ImGui.Separator();
 
+        if (ImGui.MenuItem("Paste", s_clipboardPaths.Count > 0))
+        {
+            PasteClipboard(assets, contextDir);
+        }
+
+        if (ImGui.MenuItem("\ud83d\udcc2 Show in Explorer"))
+        {
+            string absDir = assets.GetAbsolutePath(contextDir);
+            try
+            {
+                if (OperatingSystem.IsWindows())
+                    Process.Start("explorer.exe", $"\"{absDir}\"");
+                else if (OperatingSystem.IsMacOS())
+                    Process.Start("open", $"\"{absDir}\"");
+                else
+                    Process.Start("xdg-open", absDir);
+            }
+            catch (Exception ex) { Runtime.Debug.LogWarning($"Show in explorer failed: {ex.Message}"); }
+        }
+
+        ImGui.Separator();
+
         if (ImGui.MenuItem("Create Prefab (from selected)"))
         {
             var sel = EditorServices.Get<ISelectionService>();
@@ -459,7 +623,7 @@ public sealed class ProjectPanel : EditorPanel
             }
             else
             {
-                Debug.LogWarning("[Project] Select a GameObject first to create a prefab.");
+                Runtime.Debug.LogWarning("[Project] Select a GameObject first to create a prefab.");
             }
         }
     }
@@ -477,4 +641,96 @@ public class {className} : MonoBehaviour
     }}
 }}
 ";
+
+    // ── File helpers ───────────────────────────────────────────
+
+    private static void PasteClipboard(IAssetService assets, string targetDir)
+    {
+        string absDir = assets.GetAbsolutePath(targetDir);
+        foreach (string srcPath in s_clipboardPaths)
+        {
+            if (!File.Exists(srcPath) && !Directory.Exists(srcPath)) continue;
+
+            string name = Path.GetFileName(srcPath);
+            string destPath = Path.Combine(absDir, name);
+
+            // Handle duplicates
+            destPath = GetUniqueFilePath(destPath);
+
+            try
+            {
+                if (File.Exists(srcPath))
+                {
+                    File.Copy(srcPath, destPath);
+                    string metaSrc = srcPath + ".meta";
+                    if (File.Exists(metaSrc))
+                        File.Copy(metaSrc, destPath + ".meta");
+                }
+                else if (Directory.Exists(srcPath))
+                {
+                    CopyDirectoryRecursive(srcPath, destPath);
+                }
+            }
+            catch (Exception ex) { Runtime.Debug.LogWarning($"Paste failed: {ex.Message}"); }
+        }
+
+        if (s_clipboardIsCut)
+        {
+            foreach (string srcPath in s_clipboardPaths)
+            {
+                try
+                {
+                    if (File.Exists(srcPath)) File.Delete(srcPath);
+                    else if (Directory.Exists(srcPath)) Directory.Delete(srcPath, true);
+
+                    string meta = srcPath + ".meta";
+                    if (File.Exists(meta)) File.Delete(meta);
+                }
+                catch { /* best effort */ }
+            }
+            s_clipboardPaths.Clear();
+            s_clipboardIsCut = false;
+        }
+
+        assets.Refresh();
+    }
+
+    private static void DuplicateFile(IAssetService assets, AssetEntry entry)
+    {
+        if (!File.Exists(entry.FullPath)) return;
+
+        string destPath = GetUniqueFilePath(entry.FullPath);
+        try
+        {
+            File.Copy(entry.FullPath, destPath);
+            assets.Refresh();
+        }
+        catch (Exception ex) { Runtime.Debug.LogWarning($"Duplicate failed: {ex.Message}"); }
+    }
+
+    private static string GetUniqueFilePath(string path)
+    {
+        if (!File.Exists(path) && !Directory.Exists(path))
+            return path;
+
+        string dir = Path.GetDirectoryName(path) ?? ".";
+        string nameNoExt = Path.GetFileNameWithoutExtension(path);
+        string ext = Path.GetExtension(path);
+
+        for (int i = 1; ; i++)
+        {
+            string candidate = Path.Combine(dir, $"{nameNoExt} ({i}){ext}");
+            if (!File.Exists(candidate) && !Directory.Exists(candidate))
+                return candidate;
+        }
+    }
+
+    private static void CopyDirectoryRecursive(string sourceDir, string destDir)
+    {
+        Directory.CreateDirectory(destDir);
+        foreach (string file in Directory.GetFiles(sourceDir))
+            File.Copy(file, Path.Combine(destDir, Path.GetFileName(file)));
+        foreach (string subDir in Directory.GetDirectories(sourceDir))
+            CopyDirectoryRecursive(subDir, Path.Combine(destDir, Path.GetFileName(subDir)));
+    }
 }

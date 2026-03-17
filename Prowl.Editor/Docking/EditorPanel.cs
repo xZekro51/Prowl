@@ -1,6 +1,8 @@
 // This file is part of the Prowl Game Engine
 // Licensed under the MIT License. See the LICENSE file in the project root for details.
 
+using System.Numerics;
+
 using ImGuiNET;
 
 namespace Prowl.Editor.Docking;
@@ -21,6 +23,11 @@ public abstract class EditorPanel
 
     protected EditorPanel(string title) => Title = title;
 
+    public virtual Vector2 GetPanelPadding()
+    {
+        return ImGui.GetStyle().WindowPadding;
+    }
+
     /// <summary>
     /// Draws the panel as an ImGui window. Handles Begin/End and the close
     /// button. Subclasses implement <see cref="DrawContent"/> for the body.
@@ -30,11 +37,18 @@ public abstract class EditorPanel
         if (!IsOpen) return;
 
         bool open = IsOpen;
+
+        // Setting manual padding for each panel
+        ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, GetPanelPadding());
+
         if (ImGui.Begin(Title, ref open))
         {
             DrawContent();
         }
         ImGui.End();
+
+        ImGui.PopStyleVar((int)ImGuiStyleVar.WindowPadding);
+
         IsOpen = open;
     }
 

@@ -288,9 +288,9 @@ public abstract class Game
         var io = ImGui.GetIO();
         io.FontGlobalScale = newScale / DpiManager.BaseFontScale;
 
-        // Resize the window to maintain the same logical size.
-        int newW = (int)MathF.Round(_logicalWidth * newScale);
-        int newH = (int)MathF.Round(_logicalHeight * newScale);
+        // Resize the window to maintain the same logical size (based on monitor DPI only).
+        int newW = (int)MathF.Round(_logicalWidth * DpiManager.MonitorScale);
+        int newH = (int)MathF.Round(_logicalHeight * DpiManager.MonitorScale);
         Window.InternalWindow.Size = new Silk.NET.Maths.Vector2D<int>(newW, newH);
 
         Debug.Log($"DPI changed: {oldScale:F2} → {newScale:F2} (FontGlobalScale={io.FontGlobalScale:F2})");

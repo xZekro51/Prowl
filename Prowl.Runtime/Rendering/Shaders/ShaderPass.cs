@@ -90,6 +90,9 @@ public sealed class ShaderPass
             }
         }
 
+        if (_variants == null)
+            _variants = [];
+
         if (_variants.TryGetValue(keywords, out variant))
             return true;
 

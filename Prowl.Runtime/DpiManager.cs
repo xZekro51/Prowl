@@ -26,7 +26,19 @@ public static class DpiManager
     /// Current DPI scale factor.
     /// 1.0 = 96 DPI (100%), 1.25 = 120 DPI (125%), 1.5 = 144 DPI (150%), 2.0 = 192 DPI (200%).
     /// </summary>
-    public static float Scale { get; private set; } = 1.0f;
+    public static float MonitorScale { get; private set; } = 1.0f;
+
+    /// <summary>
+    /// Additional user-controlled UI scale multiplier (default 1.0).
+    /// Set via the editor Preferences panel; persisted between sessions.
+    /// </summary>
+    public static float UserScale { get; set; } = 1.0f;
+
+    /// <summary>
+    /// Combined scale: <see cref="MonitorScale"/> × <see cref="UserScale"/>.
+    /// This is the value UI code should use for all sizing calculations.
+    /// </summary>
+    public static float Scale => MonitorScale * UserScale;
 
     /// <summary>
     /// The DPI scale that was active when ImGui fonts were rasterised into the font atlas.
@@ -165,7 +177,7 @@ public static class DpiManager
     /// </summary>
     internal static void Initialize(float scale)
     {
-        Scale = scale;
+        MonitorScale = scale;
         BaseFontScale = scale;
     }
 
@@ -177,11 +189,11 @@ public static class DpiManager
     internal static void CheckForChange()
     {
         float newScale = GetWindowScale();
-        if (MathF.Abs(newScale - Scale) < 0.01f) return;
+        if (MathF.Abs(newScale - MonitorScale) < 0.01f) return;
 
-        float oldScale = Scale;
-        Scale = newScale;
-        DpiChanged?.Invoke(oldScale, newScale);
+        float oldCombined = Scale;
+        MonitorScale = newScale;
+        DpiChanged?.Invoke(oldCombined, Scale);
     }
 
     // ── Win32 P/Invoke ───────────────────────────────────────────────

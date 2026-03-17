@@ -38,11 +38,17 @@ public sealed class EditorApplication : Game
     private ProjectPanel? _projectPanel;
     private GamePanel? _gamePanel;
     private PreferencesPanel? _preferencesPanel;
+    private ConsolePanel? _consolePanel;
+
+    // Maximize state for scene panel
+    private bool _sceneMaximized;
+    private bool[] _savedOpenStates = new bool[6]; // hierarchy, inspector, project, game, prefs, console
 
     /// <summary> The project folder path passed via --project, or null. </summary>
     public static string? ProjectPath { get; private set; }
 
     private bool _themeApplied;
+    private float _lastAppliedUserScale = 1.0f;
     private bool _firstFrame = true;
 
     /// <summary>
@@ -90,6 +96,9 @@ public sealed class EditorApplication : Game
         // If a saved layout exists, load it now
         if (_layoutInitialised)
             ImGui.LoadIniSettingsFromDisk(_iniFilePath);
+
+        // Initialize the editor console logger (hooks into Debug.OnLog)
+        EditorConsoleLogger.Initialize();
 
         // Register core services
         EditorServices.Register<ISceneService>(new DefaultSceneService());
@@ -150,6 +159,7 @@ public sealed class EditorApplication : Game
         _projectPanel = new ProjectPanel();
         _gamePanel = new GamePanel();
         _preferencesPanel = new PreferencesPanel();
+        _consolePanel = new ConsolePanel();
 
         // Menu bar panel toggles
         _menuBar.OnToggleHierarchy = () => _hierarchyPanel.IsOpen = !_hierarchyPanel.IsOpen;
@@ -158,6 +168,7 @@ public sealed class EditorApplication : Game
         _menuBar.OnToggleProjectBrowser = () => _projectPanel.IsOpen = !_projectPanel.IsOpen;
         _menuBar.OnToggleGameView = () => _gamePanel.IsOpen = !_gamePanel.IsOpen;
         _menuBar.OnTogglePreferences = () => _preferencesPanel.IsOpen = !_preferencesPanel.IsOpen;
+        _menuBar.OnToggleConsole = () => _consolePanel.IsOpen = !_consolePanel.IsOpen;
 
         // Initialise the icon system (registers all built-in icons)
         IconManager.Load();
@@ -222,11 +233,13 @@ public sealed class EditorApplication : Game
             }
         }
 
+        // Render game view whenever in play or paused state (keeps the last frame visible)
         if (_gamePanel != null && _gamePanel.IsOpen && _playMode.State != PlayModeState.Stopped)
         {
             Rect gvp = _gamePanel.ViewportRect;
-            int gw = (int)gvp.Size.X;
-            int gh = (int)gvp.Size.Y;
+            var (rw, rh) = _gamePanel.RenderResolution;
+            int gw = rw > 0 ? rw : (int)gvp.Size.X;
+            int gh = rh > 0 ? rh : (int)gvp.Size.Y;
 
             if (gw > 0 && gh > 0)
                 rendering.RenderGameView(gw, gh);
@@ -235,7 +248,15 @@ public sealed class EditorApplication : Game
 
     public override void BeginImGui(IUIRenderer ui)
     {
-        if (!_themeApplied) { ApplyEditorTheme(); _themeApplied = true; }
+        if (!_themeApplied || MathF.Abs(DpiManager.UserScale - _lastAppliedUserScale) > 0.001f)
+        {
+            ApplyEditorTheme();
+            _themeApplied = true;
+            _lastAppliedUserScale = DpiManager.UserScale;
+        }
+
+        // Auto-clear drag-drop state when the mouse button is released
+        EditorDragDrop.Update();
 
         // ── Full-screen host window for dockspace ──
         var viewport = ImGui.GetMainViewport();
@@ -251,12 +272,26 @@ public sealed class EditorApplication : Game
             ImGuiWindowFlags.NoTitleBar | ImGuiWindowFlags.NoCollapse |
             ImGuiWindowFlags.NoResize | ImGuiWindowFlags.NoMove |
             ImGuiWindowFlags.NoBringToFrontOnFocus | ImGuiWindowFlags.NoNavFocus |
-            ImGuiWindowFlags.NoDocking | ImGuiWindowFlags.MenuBar);
+            ImGuiWindowFlags.NoDocking | ImGuiWindowFlags.MenuBar |
+            ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse);
         ImGui.PopStyleVar(3);
 
-        // ── Dockspace ──
+        // ── Main menu bar (inside the host window) ──
+        _menuBar.Draw();
+
+        // ── Fixed toolbar (above dockspace, not dockable) ──
+        _playToolbar?.Draw();
+
+        // ── Dockspace (leave room at the bottom for the status bar) ──
+        float statusBarHeight = 24 * Game.DpiScale;
+        Vector2 avail = ImGui.GetContentRegionAvail();
+        Vector2 dockSize = new(avail.X, avail.Y - statusBarHeight);
+
+        // Remove item spacing so dockspace + status bar fit exactly in the available region
+        ImGui.PushStyleVar(ImGuiStyleVar.ItemSpacing, Vector2.Zero);
+
         uint dockspaceId = ImGui.GetID("EditorDockSpace");
-        ImGui.DockSpace(dockspaceId, Vector2.Zero, ImGuiDockNodeFlags.None);
+        ImGui.DockSpace(dockspaceId, dockSize, ImGuiDockNodeFlags.None);
 
         // On the first frame, if no saved layout was loaded, build the default layout
         if (_firstFrame)
@@ -266,21 +301,56 @@ public sealed class EditorApplication : Game
                 BuildDefaultLayout(dockspaceId, viewport.WorkSize);
         }
 
-        // ── Main menu bar (inside the host window) ──
-        _menuBar.Draw();
+        // ── Status bar (fixed at the bottom, outside the dockspace) ──
+        DrawStatusBar(statusBarHeight);
+
+        ImGui.PopStyleVar(); // ItemSpacing
 
         ImGui.End();
 
-        // ── Toolbar (small standalone window) ──
-        _playToolbar?.Draw();
-
         // ── All dockable panel windows ──
+        // Handle scene maximize: hide/show other panels
+        if (_scenePanel != null)
+        {
+            bool wantMax = _scenePanel.IsMaximized;
+            if (wantMax && !_sceneMaximized)
+            {
+                // Entering maximized mode — save panel states and hide others
+                _sceneMaximized = true;
+                _savedOpenStates[0] = _hierarchyPanel?.IsOpen ?? false;
+                _savedOpenStates[1] = _inspectorPanel?.IsOpen ?? false;
+                _savedOpenStates[2] = _projectPanel?.IsOpen ?? false;
+                _savedOpenStates[3] = _gamePanel?.IsOpen ?? false;
+                _savedOpenStates[4] = _preferencesPanel?.IsOpen ?? false;
+                _savedOpenStates[5] = _consolePanel?.IsOpen ?? false;
+
+                if (_hierarchyPanel != null) _hierarchyPanel.IsOpen = false;
+                if (_inspectorPanel != null) _inspectorPanel.IsOpen = false;
+                if (_projectPanel != null) _projectPanel.IsOpen = false;
+                if (_gamePanel != null) _gamePanel.IsOpen = false;
+                if (_preferencesPanel != null) _preferencesPanel.IsOpen = false;
+                if (_consolePanel != null) _consolePanel.IsOpen = false;
+            }
+            else if (!wantMax && _sceneMaximized)
+            {
+                // Exiting maximized mode — restore saved panel states
+                _sceneMaximized = false;
+                if (_hierarchyPanel != null) _hierarchyPanel.IsOpen = _savedOpenStates[0];
+                if (_inspectorPanel != null) _inspectorPanel.IsOpen = _savedOpenStates[1];
+                if (_projectPanel != null) _projectPanel.IsOpen = _savedOpenStates[2];
+                if (_gamePanel != null) _gamePanel.IsOpen = _savedOpenStates[3];
+                if (_preferencesPanel != null) _preferencesPanel.IsOpen = _savedOpenStates[4];
+                if (_consolePanel != null) _consolePanel.IsOpen = _savedOpenStates[5];
+            }
+        }
+
         _hierarchyPanel?.Draw();
         _inspectorPanel?.Draw();
         _scenePanel?.Draw();
         _projectPanel?.Draw();
         _gamePanel?.Draw();
         _preferencesPanel?.Draw();
+        _consolePanel?.Draw();
 
         // Persist layout whenever ImGui marks it dirty
         if (ImGui.GetIO().WantSaveIniSettings)
@@ -288,6 +358,68 @@ public sealed class EditorApplication : Game
             ImGui.SaveIniSettingsToDisk(_iniFilePath);
             ImGui.GetIO().WantSaveIniSettings = false;
         }
+    }
+
+    /// <summary>
+    /// Draws a thin status bar at the bottom of the host window showing
+    /// the most recent log message. Clicking it opens the Console panel.
+    /// </summary>
+    private void DrawStatusBar(float height)
+    {
+        ImGui.PushStyleColor(ImGuiCol.ChildBg, new Vector4(0.11f, 0.11f, 0.11f, 1f));
+        ImGui.PushStyleVar(ImGuiStyleVar.ChildRounding, 0f);
+
+        ImGui.BeginChild("##StatusBar", new Vector2(0, height), ImGuiChildFlags.None,
+            ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse);
+
+        float yPad = (height - ImGui.GetFontSize()) * 0.5f;
+        ImGui.SetCursorPosY(yPad);
+        ImGui.SetCursorPosX(6 * Game.DpiScale);
+
+        var lastEntry = EditorConsoleLogger.GetLastEntry();
+        if (lastEntry != null)
+        {
+            Vector4 color = lastEntry.Severity switch
+            {
+                LogSeverity.Success => new Vector4(0.40f, 0.85f, 0.40f, 1f),
+                LogSeverity.Warning => new Vector4(0.95f, 0.80f, 0.25f, 1f),
+                LogSeverity.Error or LogSeverity.Exception => new Vector4(0.95f, 0.30f, 0.30f, 1f),
+                _ => new Vector4(0.65f, 0.65f, 0.65f, 1f),
+            };
+
+            string prefix = lastEntry.Severity switch
+            {
+                LogSeverity.Success => "\u2714 ",
+                LogSeverity.Warning => "\u26A0 ",
+                LogSeverity.Error => "\u2716 ",
+                LogSeverity.Exception => "\u2716 ",
+                _ => "\u25CF ",
+            };
+
+            // Truncate long messages
+            string msg = lastEntry.Message.Replace('\n', ' ').Replace('\r', ' ');
+            float maxWidth = ImGui.GetContentRegionAvail().X - 12 * Game.DpiScale;
+            if (ImGui.CalcTextSize(prefix + msg).X > maxWidth && msg.Length > 120)
+                msg = msg[..120] + "...";
+
+            ImGui.TextColored(color, prefix + msg);
+        }
+        else
+        {
+            ImGui.TextColored(new Vector4(0.45f, 0.45f, 0.45f, 1f), "Ready.");
+        }
+
+        // Click anywhere on the status bar to open/focus the Console
+        if (ImGui.IsWindowHovered() && ImGui.IsMouseClicked(ImGuiMouseButton.Left))
+        {
+            if (_consolePanel != null)
+                _consolePanel.IsOpen = true;
+            ImGui.SetWindowFocus("Console");
+        }
+
+        ImGui.EndChild();
+        ImGui.PopStyleVar();
+        ImGui.PopStyleColor();
     }
 
     /// <summary>
@@ -330,6 +462,7 @@ public sealed class EditorApplication : Game
         ImGuiDockBuilder.DockWindow("Game", topId);       // tabbed with Scene
         ImGuiDockBuilder.DockWindow("Inspector", rightId);
         ImGuiDockBuilder.DockWindow("Project", bottomId);
+        ImGuiDockBuilder.DockWindow("Console", bottomId); // tabbed with Project
 
         ImGuiDockBuilder.Finish(dockspaceId);
     }
@@ -395,8 +528,12 @@ public sealed class EditorApplication : Game
         c[(int)ImGuiCol.DockingPreview]       = new Vector4(0.28f, 0.56f, 1.00f, 0.70f);
         c[(int)ImGuiCol.DockingEmptyBg]       = new Vector4(0.13f, 0.13f, 0.13f, 1.00f);
 
-        // Scale all style dimensions by the monitor's DPI factor
+        // Scale all style dimensions by the combined DPI × user scale factor
         s.ScaleAllSizes(Game.DpiScale);
+
+        // Keep ImGui font rendering in sync with the combined scale
+        var io = ImGui.GetIO();
+        io.FontGlobalScale = Game.DpiScale / DpiManager.BaseFontScale;
     }
 
     public override void Closing()
@@ -411,6 +548,7 @@ public sealed class EditorApplication : Game
         if (EditorServices.TryGet<IEditorRendering>(out var rendering))
             rendering!.Dispose();
 
+        EditorConsoleLogger.Shutdown();
         EditorServices.Clear();
         Debug.Log("Editor shutting down.");
     }

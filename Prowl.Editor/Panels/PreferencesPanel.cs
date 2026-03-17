@@ -24,6 +24,7 @@ public sealed class PreferencesPanel : EditorPanel
     private int _selectedTheme; // 0 = Dark, 1 = Light
     private string _externalScriptEditor = string.Empty;
     private int _undoHistorySize = 256;
+    private float _uiScale = 1.0f;
 
     // Internal
     private float _autoSaveTimer;
@@ -49,6 +50,25 @@ public sealed class PreferencesPanel : EditorPanel
         ImGui.Text("Color Theme");
         if (ImGui.Combo("##Theme", ref _selectedTheme, ThemeNames, ThemeNames.Length))
             Save();
+        ImGui.Spacing();
+
+        // ── UI Scale ───────────────────────────────────
+        ImGui.Text("UI Scale");
+        ImGui.SetNextItemWidth(200 * Game.DpiScale);
+        if (ImGui.SliderFloat("##UIScale", ref _uiScale, 0.5f, 3.0f, "%.2f"))
+        {
+            DpiManager.UserScale = _uiScale;
+            Save();
+        }
+        ImGui.SameLine();
+        if (ImGui.SmallButton("Reset##UIScale"))
+        {
+            _uiScale = 1.0f;
+            DpiManager.UserScale = 1.0f;
+            Save();
+        }
+        ImGui.TextColored(new Vector4(0.5f, 0.5f, 0.5f, 1f),
+            $"Effective scale: {Game.DpiScale:F2}x  (Monitor: {DpiManager.MonitorScale:F2}x \u00d7 User: {_uiScale:F2}x)");
         ImGui.Spacing();
 
         // ── Auto-save ──────────────────────────────────
@@ -144,6 +164,7 @@ public sealed class PreferencesPanel : EditorPanel
                 ["theme"] = _selectedTheme,
                 ["externalScriptEditor"] = _externalScriptEditor,
                 ["undoHistorySize"] = _undoHistorySize,
+                ["uiScale"] = _uiScale,
             };
             var options = new JsonSerializerOptions { WriteIndented = true };
             File.WriteAllText(GetFilePath(), obj.ToJsonString(options));
@@ -169,6 +190,9 @@ public sealed class PreferencesPanel : EditorPanel
             _selectedTheme = root["theme"]?.GetValue<int>() ?? 0;
             _externalScriptEditor = root["externalScriptEditor"]?.GetValue<string>() ?? string.Empty;
             _undoHistorySize = root["undoHistorySize"]?.GetValue<int>() ?? 256;
+            _uiScale = root["uiScale"]?.GetValue<float>() ?? 1.0f;
+
+            DpiManager.UserScale = _uiScale;
 
             if (EditorServices.TryGet<Undo.UndoRedoService>(out var undoSvc))
                 undoSvc!.MaxHistorySize = _undoHistorySize;
@@ -186,5 +210,7 @@ public sealed class PreferencesPanel : EditorPanel
         _selectedTheme = 0;
         _externalScriptEditor = string.Empty;
         _undoHistorySize = 256;
+        _uiScale = 1.0f;
+        DpiManager.UserScale = 1.0f;
     }
 }

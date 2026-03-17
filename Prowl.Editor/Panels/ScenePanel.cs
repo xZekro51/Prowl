@@ -10,6 +10,11 @@ using Prowl.Editor.Docking;
 using Prowl.Editor.Gizmos;
 using Prowl.Editor.Rendering;
 using Prowl.Editor.Services;
+using Prowl.Editor.Undo;
+using Prowl.Editor.Undo.Commands;
+using Prowl.Editor.Utilities;
+
+using Silk.NET.Assimp;
 
 namespace Prowl.Editor.Panels;
 
@@ -29,19 +34,30 @@ public sealed class ScenePanel : EditorPanel
     public SceneCamera Camera { get; } = new();
     public TransformGizmo Gizmo { get; } = new();
 
+    // Click-to-select: track mouse-down position to distinguish click vs drag
+    private bool _lmbPressedOnViewport;
+    private Float2 _lmbDownPos;
+    private const float ClickDragThreshold = 4f; // pixels
+
+    // Fullscreen toggle
+    private bool _isMaximized;
+
+    // Selection outline effect
+    private readonly OutlineEffect _outlineEffect = new();
+
+    /// <summary> True when the scene view is maximized (other panels should be hidden). </summary>
+    public bool IsMaximized => _isMaximized;
+
     public ScenePanel() : base("Scene") { }
+
+    public override Vector2 GetPanelPadding() => Vector2.Zero;
 
     protected override void DrawContent()
     {
         var input = EditorServices.Get<IEditorInput>();
         var selService = EditorServices.Get<ISelectionService>();
 
-        // ── Gizmo mode toolbar ─────────────────────────────────
-        Gizmo.DrawToolbar();
-
-        ImGui.Separator();
-
-        // ── Viewport area ──────────────────────────────────────
+        // ── Viewport area (scene fills the entire content region) ──
         Vector2 regionAvail = ImGui.GetContentRegionAvail();
         if (regionAvail.X < 1 || regionAvail.Y < 1)
         {
@@ -49,46 +65,74 @@ public sealed class ScenePanel : EditorPanel
             return;
         }
 
-        // Draw the scene render texture inside the window via ImGui.Image().
-        // This keeps the image within ImGui's clipping so it does not overlap
-        // menus, popups, or other panels (fixes the Z-order issue).
-        Vector2 cursorScreen = ImGui.GetCursorScreenPos();
+        Vector2 contentScreenPos = ImGui.GetCursorScreenPos();
+        Vector2 contentLocalPos = ImGui.GetCursorPos();
 
+        // ── Scene render texture fills the entire content area (background) ──
+        var windowDrawList = ImGui.GetWindowDrawList();
         if (EditorServices.TryGet<IEditorRendering>(out var rendering))
         {
             var rt = rendering!.SceneViewRT;
             if (rt != null && rt.MainTexture != null)
             {
                 nint texId = (nint)rt.MainTexture.Handle.Handle;
+                Vector2 imgMax = new(contentScreenPos.X + regionAvail.X, contentScreenPos.Y + regionAvail.Y);
                 // UV flipped vertically because OpenGL framebuffer is bottom-up
-                ImGui.Image(texId, regionAvail, new Vector2(0, 1), new Vector2(1, 0));
-            }
-            else
-            {
-                // No RT yet — reserve the space with an invisible button
-                ImGui.InvisibleButton("##SceneViewport", regionAvail,
-                    ImGuiButtonFlags.MouseButtonLeft | ImGuiButtonFlags.MouseButtonRight | ImGuiButtonFlags.MouseButtonMiddle);
+                windowDrawList.AddImage(texId, contentScreenPos, imgMax, new Vector2(0, 1), new Vector2(1, 0));
             }
         }
-        else
-        {
-            ImGui.InvisibleButton("##SceneViewport", regionAvail,
-                ImGuiButtonFlags.MouseButtonLeft | ImGuiButtonFlags.MouseButtonRight | ImGuiButtonFlags.MouseButtonMiddle);
-        }
 
-        IsHovered = ImGui.IsItemHovered();
-
-        // Compute viewport rect in screen pixels (used for gizmo drawing & rendering)
+        // ViewportRect covers the full content area (used for rendering, gizmos, outline)
         ViewportRect = new Rect(
-            cursorScreen.X, cursorScreen.Y,
-            cursorScreen.X + regionAvail.X,
-            cursorScreen.Y + regionAvail.Y);
+            contentScreenPos.X, contentScreenPos.Y,
+            contentScreenPos.X + regionAvail.X,
+            contentScreenPos.Y + regionAvail.Y);
+
+        // ── Overlay toolbar (semi-transparent, drawn on top of the scene) ──
+        float tbPad = 4 * Game.DpiScale;
+        float tbBtnH = 22 * Game.DpiScale;
+        float tbTotalH = tbBtnH + tbPad * 2;
+
+        uint tbBgCol = ImGui.GetColorU32(new Vector4(0.10f, 0.10f, 0.10f, 0.70f));
+        windowDrawList.AddRectFilled(
+            contentScreenPos,
+            new Vector2(contentScreenPos.X + regionAvail.X, contentScreenPos.Y + tbTotalH),
+            tbBgCol);
+
+        ImGui.SetCursorPos(new Vector2(contentLocalPos.X + tbPad, contentLocalPos.Y + tbPad));
+        Gizmo.DrawToolbar();
+        ImGui.SameLine(0, 16 * Game.DpiScale);
+        DrawMaximizeButton();
+
+        // ── Viewport interaction area (below toolbar) ──────────
+        ImGui.SetCursorPos(new Vector2(contentLocalPos.X, contentLocalPos.Y + tbTotalH));
+        Vector2 vpInteractionSize = new(regionAvail.X, Math.Max(1, regionAvail.Y - tbTotalH));
+
+        // Transparent styles so the invisible button shows no hover/active glow
+        ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0, 0, 0, 0));
+        ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0, 0, 0, 0));
+        ImGui.PushStyleColor(ImGuiCol.Border, new Vector4(0, 0, 0, 0));
+        ImGui.PushStyleColor(ImGuiCol.NavHighlight, new Vector4(0, 0, 0, 0));
+        ImGui.PushStyleVar(ImGuiStyleVar.FrameBorderSize, 0f);
+
+        ImGui.InvisibleButton("##SceneViewport", vpInteractionSize,
+            ImGuiButtonFlags.MouseButtonLeft | ImGuiButtonFlags.MouseButtonRight | ImGuiButtonFlags.MouseButtonMiddle);
+
+        ImGui.PopStyleVar();
+        ImGui.PopStyleColor(4);
+
+        // Track active state: once mouse is pressed over the viewport, keep it active
+        // even as mouse moves (important for orbit/fly camera).
+        bool isActive = ImGui.IsItemActive();
+        IsHovered = ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenBlockedByActiveItem) || isActive;
 
         // Keyboard shortcuts for gizmo mode
         Gizmo.ProcessShortcuts(input);
 
-        // Camera navigation (orbit / pan / zoom)
-        Camera.ProcessInput(input, IsHovered);
+        // Camera navigation — skip when the gizmo is being dragged
+        // so that gizmo movement doesn't also orbit/pan the camera.
+        bool gizmoActive = Gizmo.IsActive;
+        Camera.ProcessInput(input, IsHovered && !gizmoActive);
 
         // Focus on selected object with F key
         if (IsHovered && input.IsKeyDown(KeyCode.F))
@@ -97,12 +141,72 @@ public sealed class ScenePanel : EditorPanel
                 Camera.FocusOn(go.Transform.Position);
         }
 
+        // ── Click-to-select (raycast picking) ──────────────────
+        HandleClickToSelect(input, selService);
+
         // Draw gizmo handles over the viewport using ImGui DrawList
         var selectedGo = selService.ActiveObject as GameObject;
         Gizmo.Draw(selectedGo, Camera, ViewportRect, input);
 
+        // ── Selected object outline ────────────────────────────
+        DrawSelectionOutline(selectedGo);
+
+        // ── Drag-drop target: accept assets from the Project panel ──
+        AcceptAssetDrop();
+
         // Camera info overlay (drawn on top of the viewport via DrawList)
         DrawOverlay();
+    }
+
+    private void AcceptAssetDrop()
+    {
+        if (ImGui.BeginDragDropTarget())
+        {
+            var payload = ImGui.AcceptDragDropPayload("ASSET_ENTRY");
+            unsafe
+            {
+                if (payload.NativePtr != null && payload.DataSize > 0)
+                {
+                    string data = System.Text.Encoding.UTF8.GetString(
+                        (byte*)payload.Data, payload.DataSize).TrimEnd('\0');
+
+                    // Resolve path: data may be a GUID or a relative path
+                    string? relativePath = data;
+                    if (EditorServices.TryGet<IAssetService>(out var assets))
+                    {
+                        string? resolved = assets!.GetAssetPathByGuid(data);
+                        if (resolved != null)
+                            relativePath = resolved;
+
+                        string absPath = assets.GetAbsolutePath(relativePath);
+                        string name = Path.GetFileNameWithoutExtension(absPath);
+
+                        // Compute a drop position: raycast from mouse, fall back to
+                        // a point 5 units in front of the camera.
+                        Float3 dropPos = ComputeDropPosition();
+
+                        if (EditorServices.TryGet<UndoRedoService>(out var undo))
+                            undo!.Execute(new InstantiateAssetCommand(absPath, name, dropPos));
+                        else
+                            new InstantiateAssetCommand(absPath, name, dropPos).Execute();
+
+                        Debug.Log($"[Scene] Dropped asset: {name}");
+                    }
+                }
+            }
+            ImGui.EndDragDropTarget();
+        }
+
+        // Visual feedback: highlight the viewport border when a valid drag is hovering
+        if (IsHovered && EditorDragDrop.IsDragging && EditorDragDrop.PayloadType == "AssetEntry")
+        {
+            var drawList = ImGui.GetWindowDrawList();
+            uint highlightCol = ImGui.GetColorU32(new System.Numerics.Vector4(0.28f, 0.56f, 1.0f, 0.35f));
+            drawList.AddRectFilled(
+                new System.Numerics.Vector2(ViewportRect.Min.X, ViewportRect.Min.Y),
+                new System.Numerics.Vector2(ViewportRect.Max.X, ViewportRect.Max.Y),
+                highlightCol);
+        }
     }
 
     private void DrawOverlay()
@@ -114,5 +218,110 @@ public sealed class ScenePanel : EditorPanel
         float x = ViewportRect.Min.X + 6 * Game.DpiScale;
         float y = ViewportRect.Max.Y - 20 * Game.DpiScale;
         drawList.AddText(new Vector2(x, y), ImGui.GetColorU32(new Vector4(0.63f, 0.63f, 0.63f, 0.70f)), info);
+    }
+
+    // ── Click-to-select via raycast ────────────────────────────
+
+    private void HandleClickToSelect(IEditorInput input, ISelectionService selService)
+    {
+        if (!IsHovered) return;
+
+        // Don't pick while Alt is held (orbit) or RMB (fly) or gizmo is active
+        bool alt = input.IsKey(KeyCode.AltLeft) || input.IsKey(KeyCode.AltRight);
+        if (alt || input.IsMouseButton(1) || Gizmo.IsActive) return;
+
+        // Track LMB press start
+        if (input.IsMouseButtonDown(0) && IsHovered)
+        {
+            _lmbPressedOnViewport = true;
+            _lmbDownPos = input.MousePosition;
+        }
+
+        // On LMB release, if we didn't drag far, treat it as a click → pick
+        if (_lmbPressedOnViewport && input.IsMouseButtonUp(0))
+        {
+            _lmbPressedOnViewport = false;
+
+            float dragDist = Float2.Length(input.MousePosition - _lmbDownPos);
+            if (dragDist <= ClickDragThreshold * Game.DpiScale)
+            {
+                Float2 vpLocal = input.MousePosition - ViewportRect.Min;
+                float vpW = ViewportRect.Size.X;
+                float vpH = ViewportRect.Size.Y;
+
+                var result = SceneRaycaster.Pick(vpLocal, vpW, vpH, Camera);
+                selService.ActiveObject = result.Hit;
+            }
+        }
+    }
+
+    // ── Selection outline (projected bounding-box wireframe) ───
+    //
+    // Uses the OutlineEffect class for robust near-plane clipping and
+    // consistent outline thickness regardless of distance.
+
+    private void DrawSelectionOutline(GameObject? selected)
+    {
+        if (selected == null) return;
+
+        float vpW = ViewportRect.Size.X;
+        float vpH = ViewportRect.Size.Y;
+        if (vpW <= 0 || vpH <= 0) return;
+
+        float aspect = vpW / Math.Max(vpH, 1f);
+        Float4x4 vpMatrix = Camera.GetProjectionMatrix(aspect) * Camera.GetViewMatrix();
+
+        var drawList = ImGui.GetWindowDrawList();
+
+        _outlineEffect.Render(
+            [selected],
+            vpMatrix,
+            ViewportRect,
+            Camera.NearClip,
+            drawList,
+            Game.DpiScale);
+    }
+
+    // ── Maximize / restore toggle button ───────────────────────
+
+    private void DrawMaximizeButton()
+    {
+        string label = _isMaximized ? "\u25a3 Restore" : "\u25a1 Maximize";
+        if (ImGui.Button(label, new Vector2(80 * Game.DpiScale, 22 * Game.DpiScale)))
+        {
+            _isMaximized = !_isMaximized;
+        }
+
+        if (_isMaximized)
+        {
+            ImGui.SetWindowFocus();
+        }
+    }
+
+    // ── Drop position for asset drag-drop ──────────────────────
+
+    private Float3 ComputeDropPosition()
+    {
+        var input = EditorServices.Get<IEditorInput>();
+        float vpW = ViewportRect.Size.X;
+        float vpH = ViewportRect.Size.Y;
+
+        if (vpW > 0 && vpH > 0)
+        {
+            Float2 vpLocal = input.MousePosition - ViewportRect.Min;
+
+            // Try to hit an existing object and place near it
+            var result = SceneRaycaster.Pick(vpLocal, vpW, vpH, Camera);
+            if (result.Hit != null && result.Distance < float.MaxValue)
+            {
+                var (origin, direction) = Camera.ViewportToRay(vpLocal, vpW, vpH);
+                return origin + direction * result.Distance;
+            }
+        }
+
+        // Fallback: place 5 units in front of the camera
+        Float3 camPos = Camera.GetPosition();
+        Float3 camFwd = Float3.Normalize(Camera.Pivot - camPos);
+        return camPos + camFwd * 5f;
     }
 }

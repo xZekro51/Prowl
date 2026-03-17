@@ -292,4 +292,28 @@ public sealed class JsonSceneSerializer : ISceneSerializer
                 return new EchoObject();
         }
     }
+
+    // ── GUID-based asset reference helpers ────────────────────
+
+    /// <summary>
+    /// Resolves an asset GUID to its current path using the asset service.
+    /// Returns null if the GUID is unknown.
+    /// </summary>
+    public static string? ResolveGuid(string guid)
+    {
+        if (EditorServices.TryGet<IAssetService>(out var assets))
+            return assets!.GetAssetPathByGuid(guid);
+        return null;
+    }
+
+    /// <summary>
+    /// Converts an asset path to its GUID using the asset service.
+    /// Returns null if the path has no registered .meta.
+    /// </summary>
+    public static string? PathToGuid(string relativePath)
+    {
+        if (EditorServices.TryGet<IAssetService>(out var assets))
+            return assets!.GetGuidByPath(relativePath);
+        return null;
+    }
 }
