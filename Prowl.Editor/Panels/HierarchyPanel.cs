@@ -2,15 +2,18 @@
 // Licensed under the MIT License. See the LICENSE file in the project root for details.
 
 using System.Numerics;
+using System.Reflection.Metadata;
+
 using ImGuiNET;
-using Prowl.Runtime;
-using Prowl.Runtime.Resources;
+
 using Prowl.Editor.Docking;
 using Prowl.Editor.Icons;
-using Prowl.Editor.Services;
 using Prowl.Editor.Prefabs;
+using Prowl.Editor.Services;
 using Prowl.Editor.Undo;
 using Prowl.Editor.Undo.Commands;
+using Prowl.Runtime;
+using Prowl.Runtime.Resources;
 
 namespace Prowl.Editor.Panels;
 
@@ -48,13 +51,13 @@ public sealed class HierarchyPanel : EditorPanel
             ImGui.EndPopup();
         }
 
-        ImGui.SameLine();
+        /*ImGui.SameLine();
         ImGui.TextDisabled("|");
         ImGui.SameLine();
 
         // Scene name label
         string sceneName = sceneService.CurrentScene?.Name ?? "No Scene";
-        ImGui.TextColored(new Vector4(0.45f, 0.45f, 0.45f, 0.80f), sceneName);
+        ImGui.TextColored(new Vector4(0.45f, 0.45f, 0.45f, 0.80f), sceneName);*/
 
         ImGui.Separator();
 
@@ -63,18 +66,24 @@ public sealed class HierarchyPanel : EditorPanel
 
         try
         {
-            var roots = sceneService.GetRootGameObjects();
-            bool any = false;
-            foreach (var go in roots)
+            bool headerOpen = true;
+            if (sceneService.CurrentScene != null)
+                headerOpen = ImGui.CollapsingHeader($"     {sceneService.CurrentScene.Name}", ImGuiTreeNodeFlags.DefaultOpen);
+            if (headerOpen)
             {
-                any = true;
-                DrawGameObject(go, selService, sceneService, 0);
-            }
+                var roots = sceneService.GetRootGameObjects();
+                bool any = false;
+                foreach (var go in roots)
+                {
+                    any = true;
+                    DrawGameObject(go, selService, sceneService, 0);
+                }
 
-            if (!any)
-            {
-                ImGui.TextColored(new Vector4(0.5f, 0.5f, 0.5f, 0.6f),
-                    "Scene is empty. Use \"+ Create\" to add objects.");
+                if (!any)
+                {
+                    ImGui.TextColored(new Vector4(0.5f, 0.5f, 0.5f, 0.6f),
+                        "Scene is empty. Use \"+ Create\" to add objects.");
+                }
             }
         }
         catch (System.Exception ex)

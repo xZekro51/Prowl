@@ -169,6 +169,8 @@ public abstract class Game
 
         Window.Render += (delta) =>
         {
+            if (!Window.IsVisible)
+                return;
             try
             {
                 Scene? currentScene = Scene.Current;

@@ -67,6 +67,7 @@ public sealed class DefaultSceneService : ISceneService
         Scene.Load(scene);
         ClearDirty();
         SceneLoaded?.Invoke(scene);
+        Debug.Log($"Loaded Scene: {scene.Name}");
     }
 
     public IEnumerable<GameObject> GetRootGameObjects()

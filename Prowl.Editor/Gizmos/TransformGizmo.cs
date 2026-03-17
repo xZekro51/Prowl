@@ -126,15 +126,19 @@ public sealed class TransformGizmo
 
         // Pre-compute projected axis tips
         Float2[] tipVp = new Float2[3];
+        Float2[] tipVp2 = new Float2[3];
         Float2[] screenDirs = new Float2[3];
         float[] screenLens = new float[3];
         for (int i = 0; i < 3; i++)
         {
             Float3 tipWorld = worldPos + axisDirs[i] * worldHandleLen;
             Float3 tipScreen = camera.WorldToViewport(tipWorld, vpW, vpH);
+            Float3 tipWorld2 = worldPos + axisDirs[i] * worldHandleLen * 1.07f;
+            Float3 tipScreen2 = camera.WorldToViewport(tipWorld2, vpW, vpH);
             Float2 d = new(tipScreen.X - screenPos.X, tipScreen.Y - screenPos.Y);
             float l = Float2.Length(d);
             tipVp[i] = new Float2(tipScreen.X, tipScreen.Y);
+            tipVp2[i] = new Float2(tipScreen2.X, tipScreen2.Y);
             screenLens[i] = l;
             screenDirs[i] = l < 1f ? Float2.Zero : d / l;
         }
@@ -169,6 +173,9 @@ public sealed class TransformGizmo
 
             float endX = ox + tipVp[i].X;
             float endY = oy + tipVp[i].Y;
+
+            float tipX = ox + tipVp2[i].X;
+            float tipY = oy + tipVp2[i].Y;
 
             // Hit test — use arc proximity for Rotate mode, segment for others
             bool hovered = Mode == GizmoMode.Rotate
@@ -211,7 +218,7 @@ public sealed class TransformGizmo
             if (Mode == GizmoMode.Translate)
             {
                 // Arrow head (triangle)
-                DrawArrowHead(drawList, new Vector2(endX, endY), screenDirs[i], tipR * 2f, col);
+                DrawArrowHead(drawList, new Vector2(tipX, tipY), screenDirs[i], tipR * 2f, col);
             }
             else if (Mode == GizmoMode.Scale)
             {

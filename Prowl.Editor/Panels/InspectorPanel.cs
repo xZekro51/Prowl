@@ -44,7 +44,7 @@ public sealed class InspectorPanel : EditorPanel
     };
 
     /// <summary> Label column width ratio (0–1). </summary>
-    private const float LabelRatio = 0.35f;
+    private const float LabelRatio = 0.3f;
 
     public InspectorPanel() : base("Inspector") { }
 
@@ -594,7 +594,7 @@ public sealed class InspectorPanel : EditorPanel
         {
             float totalW = ImGui.GetContentRegionAvail().X;
             ImGui.TableSetupColumn("lbl", ImGuiTableColumnFlags.WidthFixed, totalW * LabelRatio);
-            ImGui.TableSetupColumn("val", ImGuiTableColumnFlags.WidthStretch);
+            ImGui.TableSetupColumn("val", ImGuiTableColumnFlags.WidthFixed, totalW * (1-LabelRatio));
             ImGui.TableNextRow();
 
             // Label
@@ -606,10 +606,10 @@ public sealed class InspectorPanel : EditorPanel
             ImGui.TableSetColumnIndex(1);
 
             float availW = ImGui.GetContentRegionAvail().X;
-            float clearBtnW = 20 * Game.DpiScale;
-            float pickerBtnW = 20 * Game.DpiScale;
-            float refBtnW = availW - clearBtnW - pickerBtnW - ImGui.GetStyle().ItemSpacing.X * 2;
-            if (refBtnW < 40 * Game.DpiScale) refBtnW = 40 * Game.DpiScale;
+            float clearBtnW = 15 * Game.DpiScale;
+            float pickerBtnW = 15 * Game.DpiScale;
+            float refBtnW = availW - clearBtnW - pickerBtnW - ImGui.GetStyle().ItemSpacing.X * 2 - 20;
+            if (refBtnW < 30 * Game.DpiScale) refBtnW = 30 * Game.DpiScale;
 
             // Reference button — shows current asset name
             string displayName = current != null ? $"{current.Name} ({field.FieldType.Name})" : $"None ({field.FieldType.Name})";

@@ -50,10 +50,10 @@ public class DirectionalLight : Light
         Debug.DrawArrow(Transform.Position, -Transform.Forward, Color.Yellow);
         Debug.DrawWireCircle(Transform.Position, Transform.Forward, 0.5f, Color.Yellow);
 
-        // Create and Draw each Frustum
-        foreach (var cascade in _cascadeShadowMatrices)
+        // Create and Draw each active Frustum only
+        for (int i = 0; i < _activeCascades; i++)
         {
-            Frustum frustum = Frustum.FromMatrix(cascade);
+            Frustum frustum = Frustum.FromMatrix(_cascadeShadowMatrices[i]);
             var corners = frustum.GetCorners();
 
             // Corner indices from GetCorners():
@@ -86,7 +86,7 @@ public class DirectionalLight : Light
         projection = Float4x4.CreateOrtho(cascadeDistance, cascadeDistance, -cascadeDistance * 0.5f, cascadeDistance * 0.5f);
 
         // Calculate texel size in world units
-        float texelSize = (cascadeDistance * 2.0f) / shadowResolution;
+        float texelSize = cascadeDistance / shadowResolution;
 
         // Build orthonormal basis for light space
         Float3 lightUp = Float3.Normalize(Transform.Up);

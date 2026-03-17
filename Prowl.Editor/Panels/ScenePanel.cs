@@ -93,16 +93,6 @@ public sealed class ScenePanel : EditorPanel
         float tbBtnH = 22 * Game.DpiScale;
         float tbTotalH = tbBtnH + tbPad * 2;
 
-        uint tbBgCol = ImGui.GetColorU32(new Vector4(0.10f, 0.10f, 0.10f, 0.70f));
-        windowDrawList.AddRectFilled(
-            contentScreenPos,
-            new Vector2(contentScreenPos.X + regionAvail.X, contentScreenPos.Y + tbTotalH),
-            tbBgCol);
-
-        ImGui.SetCursorPos(new Vector2(contentLocalPos.X + tbPad, contentLocalPos.Y + tbPad));
-        Gizmo.DrawToolbar();
-        ImGui.SameLine(0, 16 * Game.DpiScale);
-        DrawMaximizeButton();
 
         // ── Viewport interaction area (below toolbar) ──────────
         ImGui.SetCursorPos(new Vector2(contentLocalPos.X, contentLocalPos.Y + tbTotalH));
@@ -150,6 +140,18 @@ public sealed class ScenePanel : EditorPanel
 
         // ── Selected object outline ────────────────────────────
         DrawSelectionOutline(selectedGo);
+
+
+        uint tbBgCol = ImGui.GetColorU32(new Vector4(0.10f, 0.10f, 0.10f, 0.70f));
+        windowDrawList.AddRectFilled(
+            contentScreenPos,
+            new Vector2(contentScreenPos.X + regionAvail.X, contentScreenPos.Y + tbTotalH),
+            tbBgCol);
+
+        ImGui.SetCursorPos(new Vector2(contentLocalPos.X + tbPad, contentLocalPos.Y + tbPad));
+        Gizmo.DrawToolbar();
+        ImGui.SameLine(0, 16 * Game.DpiScale);
+        DrawMaximizeButton();
 
         // ── Drag-drop target: accept assets from the Project panel ──
         AcceptAssetDrop();

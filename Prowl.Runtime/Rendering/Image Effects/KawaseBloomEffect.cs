@@ -19,11 +19,15 @@ public sealed class KawaseBloomEffect : ImageEffect
 
     public override void OnRenderEffect(RenderContext context)
     {
-        // Create material if it doesn't exist
-        _bloomMaterial ??= new Material(Shader.LoadDefault(DefaultShader.Bloom));
 
         int width = context.Width / 4;
         int height = context.Height / 4;
+
+        if (width <= 0 || height <= 0)
+            return;
+
+        // Create material if it doesn't exist
+        _bloomMaterial ??= new Material(Shader.LoadDefault(DefaultShader.Bloom));
 
         // Create ping-pong buffers
         RenderTexture pingPongBuffer0 = RenderTexture.GetTemporaryRT(width, height, false, [context.SceneColor.MainTexture.ImageFormat]);

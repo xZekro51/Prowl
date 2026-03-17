@@ -248,6 +248,15 @@ public static unsafe class Graphics
     {
         GL.ClearColor(r, g, b, a);
 
+        // OpenGL requires DepthMask(true) for glClear to actually clear the depth buffer.
+        // Temporarily enable depth writes if needed, then restore the previous state.
+        bool needRestoreDepthWrite = false;
+        if (v.HasFlag(ClearFlags.Depth) && !depthWrite)
+        {
+            GL.DepthMask(true);
+            needRestoreDepthWrite = true;
+        }
+
         ClearBufferMask clearBufferMask = 0;
         if (v.HasFlag(ClearFlags.Color))
             clearBufferMask |= ClearBufferMask.ColorBufferBit;
@@ -256,6 +265,9 @@ public static unsafe class Graphics
         if (v.HasFlag(ClearFlags.Stencil))
             clearBufferMask |= ClearBufferMask.StencilBufferBit;
         GL.Clear(clearBufferMask);
+
+        if (needRestoreDepthWrite)
+            GL.DepthMask(false);
     }
 
     public static void SetState(RasterizerState state, bool force = false)

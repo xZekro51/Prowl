@@ -145,7 +145,7 @@ public sealed class SceneCamera
             Float3 right = Float3.Normalize(Float3.Cross(forward, Float3.UnitY));
             Float3 upVec = Float3.Cross(right, forward);
 
-            Pivot -= right * delta.X * PanSpeed * Distance;
+            Pivot += right * delta.X * PanSpeed * Distance;
             Pivot += upVec * delta.Y * PanSpeed * Distance;
         }
 
