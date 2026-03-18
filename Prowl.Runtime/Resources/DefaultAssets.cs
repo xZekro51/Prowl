@@ -30,7 +30,9 @@ public enum DefaultShader
     Bloom,
     BokehDoF,
     GTAO,
-    SSPT
+    SSPT,
+    DebugView,
+    SelectionOutline
 }
 
 /// <summary>

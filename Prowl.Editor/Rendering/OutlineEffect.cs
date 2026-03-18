@@ -9,186 +9,114 @@ using Prowl.Vector;
 namespace Prowl.Editor.Rendering;
 
 /// <summary>
-/// Screen-space selection outline effect that uses a silhouette render-texture
-/// and ImGui DrawList edge sampling to draw outlines around selected objects.
+/// GPU-based selection outline effect with a soft faded edge.
 ///
 /// <para><b>Algorithm overview:</b></para>
 /// <list type="number">
 /// <item>Render selected objects as flat white silhouettes into an off-screen
 ///        render texture using their existing meshes and transforms.</item>
-/// <item>Sample the silhouette texture on the CPU at the object's projected AABB
-///        to detect edge pixels, then draw outline segments via ImGui DrawList.</item>
+/// <item>Apply a two-pass separable Gaussian blur to the silhouette to produce
+///        a soft glow region around the object edges.</item>
+/// <item>Composite the outline over the scene render texture by subtracting the
+///        original silhouette from the blurred result, giving a faded edge that
+///        only appears around the object's contour.</item>
 /// </list>
-///
-/// <para>
-/// This approach works with the existing engine infrastructure and handles
-/// partial off-screen objects correctly. The outline width is consistent
-/// regardless of distance because it is drawn in screen space.
-/// </para>
 /// </summary>
 public sealed class OutlineEffect
 {
     /// <summary> Outline color (RGBA). </summary>
-    public Color OutlineColor { get; set; } = new(0.28f, 0.56f, 1.0f, 0.90f);
+    public Color OutlineColor { get; set; } = new(0.28f, 0.56f, 1.0f, 1.0f);
 
-    /// <summary> Outline thickness in pixels (before DPI scaling). </summary>
-    public float Thickness { get; set; } = 2.0f;
+    /// <summary> Outline width in texels (controls Gaussian blur spread). </summary>
+    public float OutlineWidth { get; set; } = 2.5f;
+
+    private Material? _outlineMat;
 
     /// <summary>
-    /// Renders selection outlines for the given objects by projecting their
-    /// AABB wireframes with proper near-plane clipping.
+    /// Renders a selection outline for the given objects directly onto
+    /// <paramref name="sceneRT"/>. Call this after the scene has been rendered
+    /// and while the camera's global uniforms are still active.
     /// </summary>
-    /// <param name="selectedObjects">Objects that should be outlined.</param>
-    /// <param name="viewProjectionMatrix">Combined VP matrix.</param>
-    /// <param name="viewport">Viewport rectangle in screen pixels.</param>
-    /// <param name="nearClip">Camera near clip plane distance.</param>
-    /// <param name="drawList">ImGui draw list to render into.</param>
-    /// <param name="dpiScale">Current DPI scale factor.</param>
-    public void Render(IReadOnlyList<GameObject> selectedObjects,
-        Float4x4 viewProjectionMatrix, Rect viewport, float nearClip,
-        ImGuiNET.ImDrawListPtr drawList, float dpiScale)
+    public void Render(IReadOnlyList<GameObject> selectedObjects, RenderTexture sceneRT)
     {
-        if (selectedObjects == null || selectedObjects.Count == 0)
-            return;
+        if (selectedObjects == null || selectedObjects.Count == 0) return;
+        if (sceneRT == null) return;
 
-        float vpW = viewport.Size.X;
-        float vpH = viewport.Size.Y;
-        if (vpW <= 0 || vpH <= 0) return;
+        EnsureMaterial();
+        if (_outlineMat == null) return;
 
-        float thickness = Thickness * dpiScale;
-        uint outlineCol = ToImGuiColor(OutlineColor);
-        float clipNear = Math.Max(nearClip, 0.001f);
-        float ox = viewport.Min.X;
-        float oy = viewport.Min.Y;
+        int w = sceneRT.Width;
+        int h = sceneRT.Height;
+        if (w <= 0 || h <= 0) return;
 
-        System.Numerics.Vector2 vpMin = new(viewport.Min.X, viewport.Min.Y);
-        System.Numerics.Vector2 vpMax = new(viewport.Max.X, viewport.Max.Y);
+        // ── 1. Silhouette pass ─────────────────────────────────
+        RenderTexture silhouetteRT = RenderTexture.GetTemporaryRT(w, h, false,
+            [TextureImageFormat.Color4b]);
 
-        foreach (var selected in selectedObjects)
+        Graphics.BindFramebuffer(silhouetteRT.frameBuffer);
+        Graphics.Clear(0, 0, 0, 0, ClearFlags.Color | ClearFlags.Depth);
+
+        foreach (var go in selectedObjects)
         {
-            if (selected == null) continue;
+            if (go == null) continue;
+            DrawSilhouettes(go);
+        }
 
-            // Compute AABB
-            Float3 center = selected.Transform.Position;
-            Float3 halfExt = new(0.5f, 0.5f, 0.5f);
+        // ── 2. Horizontal blur ─────────────────────────────────
+        RenderTexture blurH = RenderTexture.GetTemporaryRT(w, h, false,
+            [TextureImageFormat.Color4b]);
 
-            var renderer = selected.GetComponent<MeshRenderer>();
-            if (renderer != null && renderer.IsValid() && renderer.Mesh.IsValid())
-            {
-                renderer.GetCullingData(out bool renderable, out var aabb);
-                if (renderable)
-                {
-                    center = (aabb.Min + aabb.Max) * 0.5f;
-                    halfExt = (aabb.Max - aabb.Min) * 0.5f;
-                }
-            }
+        _outlineMat.SetTexture("_MainTex", silhouetteRT.MainTexture);
+        _outlineMat.SetFloat("_OutlineWidth", OutlineWidth);
+        _outlineMat.SetVector("_Direction", new Float2(1.0f / w, 0f));
+        RenderPipeline.Blit(blurH, _outlineMat, 1, false, true);
 
-            // 8 corners of the AABB
-            Float3[] corners =
-            [
-                center + new Float3(-halfExt.X, -halfExt.Y, -halfExt.Z),
-                center + new Float3( halfExt.X, -halfExt.Y, -halfExt.Z),
-                center + new Float3( halfExt.X,  halfExt.Y, -halfExt.Z),
-                center + new Float3(-halfExt.X,  halfExt.Y, -halfExt.Z),
-                center + new Float3(-halfExt.X, -halfExt.Y,  halfExt.Z),
-                center + new Float3( halfExt.X, -halfExt.Y,  halfExt.Z),
-                center + new Float3( halfExt.X,  halfExt.Y,  halfExt.Z),
-                center + new Float3(-halfExt.X,  halfExt.Y,  halfExt.Z),
-            ];
+        // ── 3. Vertical blur ───────────────────────────────────
+        RenderTexture blurV = RenderTexture.GetTemporaryRT(w, h, false,
+            [TextureImageFormat.Color4b]);
 
-            // Project to clip space
-            Float4[] clip = new Float4[8];
-            System.Numerics.Vector2[] screenPts = new System.Numerics.Vector2[8];
-            bool[] inFront = new bool[8];
-            int visibleCount = 0;
+        _outlineMat.SetTexture("_MainTex", blurH.MainTexture);
+        _outlineMat.SetVector("_Direction", new Float2(0f, 1.0f / h));
+        RenderPipeline.Blit(blurV, _outlineMat, 1, false, true);
 
-            for (int i = 0; i < 8; i++)
-            {
-                clip[i] = Float4x4.TransformPoint(new Float4(corners[i], 1f), viewProjectionMatrix);
-                inFront[i] = clip[i].W > clipNear;
-                if (inFront[i])
-                {
-                    float ndcX = clip[i].X / clip[i].W;
-                    float ndcY = clip[i].Y / clip[i].W;
-                    screenPts[i] = new System.Numerics.Vector2(
-                        ox + (ndcX * 0.5f + 0.5f) * vpW,
-                        oy + (1f - (ndcY * 0.5f + 0.5f)) * vpH);
-                    visibleCount++;
-                }
-            }
+        // ── 4. Composite over scene RT ─────────────────────────
+        _outlineMat.SetTexture("_MainTex", blurV.MainTexture);
+        _outlineMat.SetTexture("_SilhouetteTex", silhouetteRT.MainTexture);
+        _outlineMat.SetColor("_OutlineColor", OutlineColor);
+        RenderPipeline.Blit(sceneRT, _outlineMat, 2);
 
-            if (visibleCount == 0) continue;
+        // ── Cleanup ────────────────────────────────────────────
+        RenderTexture.ReleaseTemporaryRT(silhouetteRT);
+        RenderTexture.ReleaseTemporaryRT(blurH);
+        RenderTexture.ReleaseTemporaryRT(blurV);
+    }
 
-            // 12 edges
-            int[,] edges =
-            {
-                {0,1}, {1,2}, {2,3}, {3,0},
-                {4,5}, {5,6}, {6,7}, {7,4},
-                {0,4}, {1,5}, {2,6}, {3,7}
-            };
+    /// <summary>
+    /// Draws the silhouette (flat white) of a GameObject and all its children
+    /// that have a <see cref="MeshRenderer"/>.
+    /// </summary>
+    private void DrawSilhouettes(GameObject go)
+    {
+        foreach (var renderer in go.GetComponentsInChildren<MeshRenderer>())
+        {
+            if (renderer == null || !renderer.IsValid()) continue;
 
-            for (int e = 0; e < 12; e++)
-            {
-                int a = edges[e, 0], b = edges[e, 1];
-                if (!inFront[a] && !inFront[b]) continue;
+            Mesh? mesh = renderer.Mesh;
+            if (mesh == null || !mesh.IsValid() || mesh.VertexCount <= 0) continue;
 
-                System.Numerics.Vector2 p1, p2;
+            Float4x4 model = renderer.Transform.LocalToWorldMatrix;
+            PropertyState.SetGlobalMatrix("prowl_ObjectToWorld", model);
+            PropertyState.SetGlobalMatrix("prowl_WorldToObject", model.Invert());
 
-                if (inFront[a] && inFront[b])
-                {
-                    p1 = screenPts[a];
-                    p2 = screenPts[b];
-                }
-                else
-                {
-                    int front = inFront[a] ? a : b;
-                    int behind = inFront[a] ? b : a;
-
-                    float denom = clip[behind].W - clip[front].W;
-                    float t = Math.Abs(denom) > 1e-6f
-                        ? (clipNear - clip[front].W) / denom
-                        : 0.5f;
-                    t = Math.Clamp(t, 0.001f, 0.999f);
-
-                    Float4 c = new(
-                        clip[front].X + (clip[behind].X - clip[front].X) * t,
-                        clip[front].Y + (clip[behind].Y - clip[front].Y) * t,
-                        clip[front].Z + (clip[behind].Z - clip[front].Z) * t,
-                        clip[front].W + (clip[behind].W - clip[front].W) * t);
-
-                    float cw = Math.Max(c.W, 0.0001f);
-                    System.Numerics.Vector2 clippedScreen = new(
-                        ox + (c.X / cw * 0.5f + 0.5f) * vpW,
-                        oy + (1f - (c.Y / cw * 0.5f + 0.5f)) * vpH);
-
-                    if (inFront[a])
-                    { p1 = screenPts[a]; p2 = clippedScreen; }
-                    else
-                    { p1 = clippedScreen; p2 = screenPts[b]; }
-                }
-
-                p1 = Clamp(p1, vpMin, vpMax);
-                p2 = Clamp(p2, vpMin, vpMax);
-
-                drawList.AddLine(p1, p2, outlineCol, thickness);
-            }
+            RenderPipeline.DrawMeshNow(mesh, _outlineMat!, 0); // pass 0 = Silhouette
         }
     }
 
-    private static System.Numerics.Vector2 Clamp(System.Numerics.Vector2 pt,
-        System.Numerics.Vector2 min, System.Numerics.Vector2 max)
+    private void EnsureMaterial()
     {
-        return new System.Numerics.Vector2(
-            Math.Clamp(pt.X, min.X, max.X),
-            Math.Clamp(pt.Y, min.Y, max.Y));
-    }
-
-    private static uint ToImGuiColor(Color c)
-    {
-        byte r = (byte)Math.Clamp(c.R * 255f, 0, 255);
-        byte g = (byte)Math.Clamp(c.G * 255f, 0, 255);
-        byte b = (byte)Math.Clamp(c.B * 255f, 0, 255);
-        byte a = (byte)Math.Clamp(c.A * 255f, 0, 255);
-        return (uint)(r | (g << 8) | (b << 16) | (a << 24));
+        if (_outlineMat == null || _outlineMat.Shader.IsNotValid())
+        {
+            _outlineMat = new Material(Shader.LoadDefault(DefaultShader.SelectionOutline));
+        }
     }
 }

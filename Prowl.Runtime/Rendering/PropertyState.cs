@@ -115,6 +115,16 @@ public partial class PropertyState
     public GraphicsBuffer GetBuffer(string name) => _buffers.TryGetValue(name, out GraphicsBuffer value) ? value : null;
     public uint GetBufferBinding(string name) => _bufferBindings.TryGetValue(name, out uint value) ? value : 0;
 
+    // Name enumerators (for serialization)
+    public IEnumerable<string> GetColorNames() => _colors.Keys;
+    public IEnumerable<string> GetFloatNames() => _floats.Keys;
+    public IEnumerable<string> GetIntNames() => _ints.Keys;
+    public IEnumerable<string> GetVector2Names() => _vectors2.Keys;
+    public IEnumerable<string> GetVector3Names() => _vectors3.Keys;
+    public IEnumerable<string> GetVector4Names() => _vectors4.Keys;
+    public IEnumerable<string> GetMatrixNames() => _matrices.Keys;
+    public IEnumerable<string> GetTextureNames() => _textures.Keys;
+    public IEnumerable<string> GetTexture3DNames() => _textures3D.Keys;
 
     public void Clear()
     {

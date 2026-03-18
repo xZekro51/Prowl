@@ -16,17 +16,28 @@ namespace Prowl.Editor.Inspector;
 /// Draws an inline material editor inside the Inspector panel.
 /// Shows shader properties (colors, floats, textures) defined by the
 /// material's shader, or a set of common properties as a fallback.
+/// Supports assigning shaders from project .shader assets and saving
+/// material changes back to .mat files.
 /// </summary>
 public static class MaterialInspector
 {
     /// <summary> Label column width ratio (0–1). </summary>
     private const float LabelRatio = 0.35f;
 
+    private static string _shaderPickerFilter = string.Empty;
+    private static bool _shaderPickerOpen = false;
+
     /// <summary>
     /// Draws the material editor UI for a single <see cref="Material"/>.
     /// Should be called within an ImGui context (e.g. inside a collapsing header).
     /// </summary>
-    public static void DrawMaterial(Material material)
+    public static void DrawMaterial(Material material) => DrawMaterial(material, null);
+
+    /// <summary>
+    /// Draws the material editor UI with optional save support.
+    /// When <paramref name="materialFilePath"/> is provided, a Save button is shown.
+    /// </summary>
+    public static void DrawMaterial(Material material, string? materialFilePath)
     {
         if (material == null)
         {
@@ -46,7 +57,15 @@ public static class MaterialInspector
 
         ImGui.Spacing();
 
+        // ── Shader picker ──────────────────────────────────────
+        DrawShaderField(material);
+
+        ImGui.Spacing();
+        ImGui.Separator();
+        ImGui.Spacing();
+
         // Draw properties from shader definition if available
+        shader = material.Shader; // Re-read in case shader was changed above
         if (shader != null)
         {
             DrawShaderProperties(material, shader);
@@ -55,6 +74,180 @@ public static class MaterialInspector
         {
             // Fallback: draw common properties
             DrawCommonProperties(material);
+        }
+
+        // ── Save button ────────────────────────────────────────
+        if (materialFilePath != null)
+        {
+            ImGui.Spacing();
+            ImGui.Separator();
+            ImGui.Spacing();
+
+            float avail = ImGui.GetContentRegionAvail().X;
+            float btnW = MathF.Min(160 * Game.DpiScale, avail);
+            ImGui.SetCursorPosX((avail - btnW) * 0.5f + ImGui.GetCursorPosX());
+
+            if (ImGui.Button("Save Material", new Vector2(btnW, 0)))
+            {
+                try
+                {
+                    MaterialSerializer.Save(material, materialFilePath);
+                    Debug.Log($"[Material] Saved: {materialFilePath}");
+                }
+                catch (Exception ex)
+                {
+                    Debug.LogError($"[Material] Failed to save: {ex.Message}");
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// Draws a shader reference field with a picker popup.
+    /// Allows assigning .shader assets from the project or built-in default shaders.
+    /// </summary>
+    private static void DrawShaderField(Material material)
+    {
+        Shader? currentShader = material.Shader;
+        string displayName = currentShader != null
+            ? (currentShader.Name ?? currentShader.AssetPath ?? "Shader")
+            : "None (Shader)";
+
+        DrawRow("Shader", () =>
+        {
+            float availW = ImGui.GetContentRegionAvail().X;
+
+            ImGui.PushStyleColor(ImGuiCol.Button, currentShader != null
+                ? new Vector4(0.22f, 0.28f, 0.35f, 1f)
+                : new Vector4(0.20f, 0.20f, 0.20f, 1f));
+
+            if (ImGui.Button(displayName, new Vector2(availW, 0)))
+            {
+                _shaderPickerOpen = true;
+                _shaderPickerFilter = string.Empty;
+                ImGui.OpenPopup("##ShaderPicker");
+            }
+
+            ImGui.PopStyleColor();
+
+            // Drag-drop: accept .shader assets
+            if (ImGui.BeginDragDropTarget())
+            {
+                var payload = ImGui.AcceptDragDropPayload("ASSET_ENTRY");
+                unsafe
+                {
+                    if (payload.NativePtr != null && payload.DataSize > 0)
+                    {
+                        string data = System.Text.Encoding.UTF8.GetString(
+                            (byte*)payload.Data, payload.DataSize).TrimEnd('\0');
+
+                        TryAssignShaderFromDrop(material, data);
+                    }
+                }
+                ImGui.EndDragDropTarget();
+            }
+
+            // Also accept EditorDragDrop
+            if (ImGui.IsItemHovered() && EditorDragDrop.IsDragging &&
+                EditorDragDrop.PayloadType == "AssetEntry" &&
+                EditorDragDrop.Payload is AssetEntry dragEntry &&
+                dragEntry.Extension.Equals(".shader", StringComparison.OrdinalIgnoreCase))
+            {
+                ImGui.SetTooltip("Drop shader here");
+                if (ImGui.IsMouseReleased(ImGuiMouseButton.Left))
+                {
+                    TryAssignShaderFromFile(material, dragEntry.FullPath);
+                    EditorDragDrop.Clear();
+                }
+            }
+
+            // Shader picker popup
+            if (_shaderPickerOpen && ImGui.BeginPopup("##ShaderPicker"))
+            {
+                ImGui.Text("Select Shader");
+                ImGui.Separator();
+                ImGui.InputText("##filter", ref _shaderPickerFilter, 256);
+
+                ImGui.BeginChild("##shaderList", new Vector2(280 * Game.DpiScale, 250 * Game.DpiScale));
+
+                // Built-in default shaders
+                ImGui.TextColored(new Vector4(0.55f, 0.55f, 0.55f, 1f), "Built-in:");
+                foreach (DefaultShader ds in Enum.GetValues<DefaultShader>())
+                {
+                    string name = ds.ToString();
+                    if (!string.IsNullOrEmpty(_shaderPickerFilter) &&
+                        !name.Contains(_shaderPickerFilter, StringComparison.OrdinalIgnoreCase))
+                        continue;
+
+                    if (ImGui.Selectable($"  {name}"))
+                    {
+                        try
+                        {
+                            material.Shader = Shader.LoadDefault(ds);
+                        }
+                        catch (Exception ex)
+                        {
+                            Debug.LogWarning($"[MaterialInspector] Failed to load default shader '{name}': {ex.Message}");
+                        }
+                        _shaderPickerOpen = false;
+                        ImGui.CloseCurrentPopup();
+                    }
+                }
+
+                // Project .shader files
+                if (EditorServices.TryGet<IAssetService>(out var assetSvc) && assetSvc!.HasProject)
+                {
+                    var shaderEntries = assetSvc.GetAllEntriesRecursive(".shader");
+                    if (shaderEntries.Count > 0)
+                    {
+                        ImGui.Spacing();
+                        ImGui.TextColored(new Vector4(0.55f, 0.55f, 0.55f, 1f), "Project:");
+                        foreach (var entry in shaderEntries)
+                        {
+                            if (!string.IsNullOrEmpty(_shaderPickerFilter) &&
+                                !entry.Name.Contains(_shaderPickerFilter, StringComparison.OrdinalIgnoreCase))
+                                continue;
+
+                            if (ImGui.Selectable($"  {entry.Name}"))
+                            {
+                                TryAssignShaderFromFile(material, entry.FullPath);
+                                _shaderPickerOpen = false;
+                                ImGui.CloseCurrentPopup();
+                            }
+                        }
+                    }
+                }
+
+                ImGui.EndChild();
+                ImGui.EndPopup();
+            }
+        });
+    }
+
+    private static void TryAssignShaderFromDrop(Material material, string data)
+    {
+        if (EditorServices.TryGet<IAssetService>(out var assetSvc))
+        {
+            string? resolvedPath = assetSvc!.GetAssetPathByGuid(data);
+            string relativePath = resolvedPath ?? data;
+            string absPath = assetSvc.GetAbsolutePath(relativePath);
+
+            if (absPath.EndsWith(".shader", StringComparison.OrdinalIgnoreCase))
+                TryAssignShaderFromFile(material, absPath);
+        }
+    }
+
+    private static void TryAssignShaderFromFile(Material material, string filePath)
+    {
+        try
+        {
+            var shader = Shader.LoadFromFile(filePath);
+            if (shader != null)
+                material.Shader = shader;
+        }
+        catch (Exception ex)
+        {
+            Debug.LogWarning($"[MaterialInspector] Failed to load shader: {ex.Message}");
         }
     }
 

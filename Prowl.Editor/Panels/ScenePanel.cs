@@ -42,11 +42,11 @@ public sealed class ScenePanel : EditorPanel
     // Fullscreen toggle
     private bool _isMaximized;
 
-    // Selection outline effect
-    private readonly OutlineEffect _outlineEffect = new();
-
     /// <summary> True when the scene view is maximized (other panels should be hidden). </summary>
     public bool IsMaximized => _isMaximized;
+
+    /// <summary> Current debug rendering mode for the scene viewport. </summary>
+    public SceneViewMode ViewMode { get; set; } = SceneViewMode.Lit;
 
     public ScenePanel() : base("Scene") { }
 
@@ -138,10 +138,6 @@ public sealed class ScenePanel : EditorPanel
         var selectedGo = selService.ActiveObject as GameObject;
         Gizmo.Draw(selectedGo, Camera, ViewportRect, input);
 
-        // ── Selected object outline ────────────────────────────
-        DrawSelectionOutline(selectedGo);
-
-
         uint tbBgCol = ImGui.GetColorU32(new Vector4(0.10f, 0.10f, 0.10f, 0.70f));
         windowDrawList.AddRectFilled(
             contentScreenPos,
@@ -152,6 +148,8 @@ public sealed class ScenePanel : EditorPanel
         Gizmo.DrawToolbar();
         ImGui.SameLine(0, 16 * Game.DpiScale);
         DrawMaximizeButton();
+        ImGui.SameLine(0, 8 * Game.DpiScale);
+        DrawViewModeDropdown();
 
         // ── Drag-drop target: accept assets from the Project panel ──
         AcceptAssetDrop();
@@ -257,33 +255,6 @@ public sealed class ScenePanel : EditorPanel
         }
     }
 
-    // ── Selection outline (projected bounding-box wireframe) ───
-    //
-    // Uses the OutlineEffect class for robust near-plane clipping and
-    // consistent outline thickness regardless of distance.
-
-    private void DrawSelectionOutline(GameObject? selected)
-    {
-        if (selected == null) return;
-
-        float vpW = ViewportRect.Size.X;
-        float vpH = ViewportRect.Size.Y;
-        if (vpW <= 0 || vpH <= 0) return;
-
-        float aspect = vpW / Math.Max(vpH, 1f);
-        Float4x4 vpMatrix = Camera.GetProjectionMatrix(aspect) * Camera.GetViewMatrix();
-
-        var drawList = ImGui.GetWindowDrawList();
-
-        _outlineEffect.Render(
-            [selected],
-            vpMatrix,
-            ViewportRect,
-            Camera.NearClip,
-            drawList,
-            Game.DpiScale);
-    }
-
     // ── Maximize / restore toggle button ───────────────────────
 
     private void DrawMaximizeButton()
@@ -297,6 +268,25 @@ public sealed class ScenePanel : EditorPanel
         if (_isMaximized)
         {
             ImGui.SetWindowFocus();
+        }
+    }
+
+    // ── View-mode dropdown (Lit, Wireframe, Depth, …) ─────────
+
+    private static readonly string[] s_viewModeNames =
+        Enum.GetNames<SceneViewMode>();
+
+    private void DrawViewModeDropdown()
+    {
+        float btnW = 100 * Game.DpiScale;
+        float btnH = 22 * Game.DpiScale;
+
+        ImGui.SetNextItemWidth(btnW);
+
+        int current = (int)ViewMode;
+        if (ImGui.Combo("##ViewMode", ref current, s_viewModeNames, s_viewModeNames.Length))
+        {
+            ViewMode = (SceneViewMode)current;
         }
     }
 

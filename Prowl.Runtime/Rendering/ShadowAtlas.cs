@@ -40,7 +40,8 @@ public static class ShadowAtlas
         bool supports8k = Graphics.MaxTextureSize >= 8192;
         size = supports8k ? 8192 : 4096;
 
-        atlas ??= new RenderTexture(size, size, true, []);
+        atlas?.Dispose();
+        atlas = new RenderTexture(size, size, true, []);
 
         // Initialize with one large free rectangle covering the entire atlas
         freeRects.Clear();

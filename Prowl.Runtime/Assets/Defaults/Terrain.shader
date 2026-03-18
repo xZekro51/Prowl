@@ -240,13 +240,13 @@ Pass "TerrainShadow"
 
 		Fragment
 		{
-            #include "Fragment"
+			#include "Fragment"
 
 			in vec3 worldPos;
 
 			void main()
 			{
-                gl_FragDepth = gl_FragCoord.z;
+				gl_FragDepth = gl_FragCoord.z;
 			}
 		}
 	ENDGLSL

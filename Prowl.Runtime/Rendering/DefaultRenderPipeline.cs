@@ -412,8 +412,16 @@ public class DefaultRenderPipeline : RenderPipeline
 
     private void RenderShadowAtlas(CameraSnapshot css, IReadOnlyList<IRenderableLight> lights, IReadOnlyList<IRenderable> renderables)
     {
-        Graphics.BindFramebuffer(ShadowAtlas.GetAtlas().frameBuffer);
-        Graphics.Clear(0.0f, 0.0f, 0.0f, 1.0f, ClearFlags.Depth | ClearFlags.Stencil);
+        // Ensure the shadow atlas texture exists
+        ShadowAtlas.TryInitialize();
+
+        // Reset the tile allocator so every frame starts with a full atlas
+        ShadowAtlas.Clear();
+
+        var atlas = ShadowAtlas.GetAtlas();
+
+        Graphics.BindFramebuffer(atlas.frameBuffer);
+        Graphics.Clear(0.0f, 0.0f, 0.0f, 1.0f, ClearFlags.Depth);
 
         // Process all lights - each light handles its own shadow rendering
         foreach (IRenderableLight light in lights)

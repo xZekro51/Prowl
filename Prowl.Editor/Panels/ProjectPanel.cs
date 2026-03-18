@@ -11,6 +11,9 @@ using Prowl.Editor.Icons;
 using Prowl.Editor.Services;
 using Prowl.Editor.Prefabs;
 
+using Material = Prowl.Runtime.Resources.Material;
+using Shader = Prowl.Runtime.Resources.Shader;
+
 namespace Prowl.Editor.Panels;
 
 /// <summary>
@@ -104,8 +107,18 @@ public sealed class ProjectPanel : EditorPanel
 
             if (EditorIcons.IconMenuItem(EditorIconType.Material, "Material"))
             {
-                assets.CreateFile(contextDir, $"NewMaterial_{DateTime.Now:HHmmss}.mat",
-                    "{ \"shader\": \"Standard\", \"color\": [1,1,1,1] }");
+                string matName = $"NewMaterial_{DateTime.Now:HHmmss}";
+                string matFileName = $"{matName}.mat";
+                string absPath = assets.GetAbsolutePath(
+                    Path.Combine(contextDir == "." ? "" : contextDir, matFileName));
+
+                // Create a default material and save it using the serializer
+                var defaultShader = Shader.LoadDefault(DefaultShader.Standard);
+                var mat = new Material(defaultShader);
+                mat.Name = matName;
+                mat.SetColor("_MainColor", Prowl.Vector.Color.White);
+                MaterialSerializer.Save(mat, absPath);
+                assets.MetaManager.EnsureMeta(absPath);
             }
 
             if (EditorIcons.IconMenuItem(EditorIconType.Scene, "Scene"))

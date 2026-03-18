@@ -229,7 +229,14 @@ public sealed class EditorApplication : Game
                 rendering.RenderSceneView(
                     cam.GetPosition(), cam.GetRotation(),
                     cam.FieldOfView, cam.NearClip, cam.FarClip,
-                    w, h);
+                    w, h, _scenePanel.ViewMode);
+
+                // Selection outline (rendered onto the scene RT as a post-process)
+                var selService = EditorServices.Get<ISelectionService>();
+                if (selService.ActiveObject is GameObject selectedGo)
+                {
+                    rendering.RenderSelectionOutline([selectedGo]);
+                }
             }
         }
 

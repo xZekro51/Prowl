@@ -45,6 +45,11 @@ public sealed class Material : EngineObject, ISerializationCallbackReceiver
     [SerializeIgnore]
     internal Dictionary<string, bool> _localKeywords;
 
+    /// <summary>
+    /// Read-only view of the material's local shader keywords.
+    /// </summary>
+    public IReadOnlyDictionary<string, bool> LocalKeywords => _localKeywords;
+
     // Material batching optimization: materials with identical state (uniforms) are batched together
     // to minimize GPU state changes. The hash represents the current uniform values.
     [SerializeIgnore]

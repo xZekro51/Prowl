@@ -258,11 +258,11 @@ Pass "StandardShadow"
 
 		Fragment
 		{
-            #include "Fragment"
+			#include "Fragment"
 
 			void main()
 			{
-                    gl_FragDepth = gl_FragCoord.z;
+					gl_FragDepth = gl_FragCoord.z;
 			}
 		}
 	ENDGLSL

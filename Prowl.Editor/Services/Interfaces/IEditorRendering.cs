@@ -1,6 +1,7 @@
 // This file is part of the Prowl Game Engine
 // Licensed under the MIT License. See the LICENSE file in the project root for details.
 
+using Prowl.Editor.Rendering;
 using Prowl.Runtime;
 using Prowl.Runtime.Resources;
 using Prowl.Vector;
@@ -17,8 +18,10 @@ public interface IEditorRendering : IDisposable
     /// Renders the scene from the given virtual camera into an internal render texture.
     /// Called each frame during the render phase.
     /// </summary>
+    /// <param name="viewMode">Debug visualization mode for the scene view.</param>
     void RenderSceneView(Float3 cameraPosition, Quaternion cameraRotation,
-        float fov, float nearClip, float farClip, int width, int height);
+        float fov, float nearClip, float farClip, int width, int height,
+        SceneViewMode viewMode = SceneViewMode.Lit);
 
     /// <summary> The current scene-view render texture (null until first render). </summary>
     RenderTexture? SceneViewRT { get; }

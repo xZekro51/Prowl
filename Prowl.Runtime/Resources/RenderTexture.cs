@@ -5,6 +5,8 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 
+using ImageMagick;
+
 using Prowl.Echo;
 
 namespace Prowl.Runtime.Resources;
@@ -56,6 +58,7 @@ public sealed class RenderTexture : EngineObject, ISerializable
         if (hasDepthAttachment)
         {
             InternalDepth = new Texture2D((uint)Width, (uint)Height, false, TextureImageFormat.Depth24f);
+            InternalDepth.SetWrapModes(TextureWrap.ClampToEdge, TextureWrap.ClampToEdge);
             attachments[numTextures] = new GraphicsFrameBuffer.Attachment { Texture = InternalDepth.Handle, IsDepth = true };
         }
 
@@ -78,10 +81,54 @@ public sealed class RenderTexture : EngineObject, ISerializable
         foreach (Texture2D texture in InternalTextures)
             texture.Dispose();
 
-        //if(hasDepthAttachment) // Should auto dispose of Depth
-        //    Graphics.GL.DeleteRenderbuffer(InternalDepth.Handle);
+        InternalDepth?.Dispose();
         frameBuffer.Dispose();
     }
+
+    /// <summary>
+    /// Saves the contents of one of this <see cref="RenderTexture"/>'s color attachments to a PNG file.
+    /// </summary>
+    /// <param name="filePath">The destination file path.</param>
+    /// <param name="textureIndex">The index of the color attachment to save (default 0 = <see cref="MainTexture"/>).</param>
+    public void SaveToPng(string filePath, int textureIndex = 0)
+    {
+        ArgumentNullException.ThrowIfNull(filePath);
+
+        if (InternalTextures == null || textureIndex < 0 || textureIndex >= InternalTextures.Length)
+            throw new ArgumentOutOfRangeException(nameof(textureIndex), InternalTextures == null ? "Internal Textures array is null." : $"Texture Index: {textureIndex} is outside of the range (0,{InternalTextures.Length})");
+
+        Texture2D texture = InternalTextures[textureIndex];
+        int byteSize = texture.GetSize();
+        byte[] pixelData = new byte[byteSize];
+        texture.GetData<byte>(pixelData);
+
+        var (storageType, mapping) = GetPixelSettings(texture.ImageFormat);
+        var readSettings = new PixelReadSettings((uint)Width, (uint)Height, storageType, mapping);
+
+        using var image = new MagickImage();
+        image.ReadPixels(pixelData, readSettings);
+        image.Flip();
+        image.Write(filePath, MagickFormat.Png);
+    }
+
+    private static (StorageType storageType, string mapping) GetPixelSettings(TextureImageFormat format) => format switch
+    {
+        TextureImageFormat.Color4b => (StorageType.Char, "RGBA"),
+        TextureImageFormat.Byte => (StorageType.Char, "R"),
+        TextureImageFormat.Float => (StorageType.Float, "R"),
+        TextureImageFormat.Float2 => (StorageType.Float, "RG"),
+        TextureImageFormat.Float3 => (StorageType.Float, "RGB"),
+        TextureImageFormat.Float4 => (StorageType.Float, "RGBA"),
+        TextureImageFormat.Short or TextureImageFormat.UnsignedShort => (StorageType.Short, "R"),
+        TextureImageFormat.Short2 or TextureImageFormat.UnsignedShort2 => (StorageType.Short, "RG"),
+        TextureImageFormat.Short3 or TextureImageFormat.UnsignedShort3 => (StorageType.Short, "RGB"),
+        TextureImageFormat.Short4 or TextureImageFormat.UnsignedShort4 => (StorageType.Short, "RGBA"),
+        TextureImageFormat.Int or TextureImageFormat.UnsignedInt => (StorageType.Int32, "R"),
+        TextureImageFormat.Int2 or TextureImageFormat.UnsignedInt2 => (StorageType.Int32, "RG"),
+        TextureImageFormat.Int3 or TextureImageFormat.UnsignedInt3 => (StorageType.Int32, "RGB"),
+        TextureImageFormat.Int4 or TextureImageFormat.UnsignedInt4 => (StorageType.Int32, "RGBA"),
+        _ => throw new NotSupportedException($"Texture format '{format}' is not supported for PNG export.")
+    };
 
     public void Serialize(ref EchoObject compoundTag, SerializationContext ctx)
     {

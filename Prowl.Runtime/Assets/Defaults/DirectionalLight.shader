@@ -75,7 +75,7 @@ Pass "DirectionalLight"
 				return 0.0; // No shadows
 			}
 			// Calculate distance to select cascade
-			float worldDistance = distance(worldPos, _WorldSpaceCameraPos.xyz) * 2.0;
+			float worldDistance = distance(worldPos, _WorldSpaceCameraPos.xyz);
 
 			// Select appropriate cascade based on view depth
 			// Pick the first cascade whose split distance contains this depth
@@ -139,15 +139,9 @@ Pass "DirectionalLight"
 			vec2 atlasCoords, shadowMin, shadowMax;
 			GetAtlasCoordinates(projCoords, cascadeParams, atlasSize, atlasCoords, shadowMin, shadowMax);
 
-			// Calculate bias with directional light-specific texel size adjustment
+			// Calculate bias with slope-based adjustment (matches SpotLight pattern)
 			float slopeBias = CalculateSlopeBias(worldNormal, _LightDirection, _ShadowBias);
-
-			// Calculate texel size in light space for this cascade
-			float texelWorldSize = ((cascadeParams.w * 4.0) / (cascadeParams.z * atlasSize)) * 8.0;
-
-			// Combined bias: base + slope + texel offset
-			float finalBias = slopeBias + texelWorldSize;
-			float currentDepth = projCoords.z - finalBias;
+			float currentDepth = projCoords.z - slopeBias;
 
 			// Sample shadow using common PCF helper
 			return SampleShadowPCF(_ShadowAtlas, atlasCoords, shadowMin, shadowMax,

@@ -56,20 +56,31 @@ public unsafe class GraphicsFrameBuffer
             // Generate textures
             if (numTextures > 0)
             {
+                int colorAttachmentCount = 0;
                 for (int i = 0; i < numTextures; i++)
                 {
                     if (!attachments[i].IsDepth)
                     {
                         //InternalTextures[i].SetTextureFilters(TextureMinFilter.Linear, TextureMagFilter.Linear);
                         //InternalTextures[i].SetWrapModes(TextureWrapMode.ClampToEdge, TextureWrapMode.ClampToEdge);
-                        Graphics.GL.FramebufferTexture2D(FramebufferTarget.Framebuffer, FramebufferAttachment.ColorAttachment0 + i, attachments[i].Texture!.Target, attachments[i].Texture!.Handle, 0);
+                        Graphics.GL.FramebufferTexture2D(FramebufferTarget.Framebuffer, FramebufferAttachment.ColorAttachment0 + colorAttachmentCount, attachments[i].Texture!.Target, attachments[i].Texture!.Handle, 0);
+                        colorAttachmentCount++;
                     }
                     else
                     {
                         Graphics.GL.FramebufferTexture2D(FramebufferTarget.Framebuffer, FramebufferAttachment.DepthAttachment, TextureTarget.Texture2D, attachments[i].Texture!.Handle, 0);
                     }
                 }
-                Graphics.GL.DrawBuffers((uint)numTextures, buffers);
+
+                if (colorAttachmentCount > 0)
+                {
+                    Graphics.GL.DrawBuffers((uint)colorAttachmentCount, buffers);
+                }
+                else
+                {
+                    Graphics.GL.DrawBuffer(GLEnum.None);
+                    Graphics.GL.ReadBuffer(GLEnum.None);
+                }
             }
 
             if (Graphics.GL.CheckFramebufferStatus(FramebufferTarget.Framebuffer) != GLEnum.FramebufferComplete)

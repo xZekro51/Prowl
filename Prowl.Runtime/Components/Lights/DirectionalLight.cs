@@ -83,10 +83,13 @@ public class DirectionalLight : Light
     private void GetShadowMatrix(Float3 cameraPosition, int shadowResolution, float cascadeDistance, out Float4x4 view, out Float4x4 projection)
     {
         Float3 forward = -Transform.Forward;
-        projection = Float4x4.CreateOrtho(cascadeDistance, cascadeDistance, -cascadeDistance * 0.5f, cascadeDistance * 0.5f);
+        // The ortho size must be 2*cascadeDistance so the half-extent equals cascadeDistance,
+        // matching the cascade selection sphere radius used in the shader.
+        float orthoSize = cascadeDistance * 2.0f;
+        projection = Float4x4.CreateOrtho(orthoSize, orthoSize, -cascadeDistance, cascadeDistance);
 
         // Calculate texel size in world units
-        float texelSize = cascadeDistance / shadowResolution;
+        float texelSize = orthoSize / shadowResolution;
 
         // Build orthonormal basis for light space
         Float3 lightUp = Float3.Normalize(Transform.Up);

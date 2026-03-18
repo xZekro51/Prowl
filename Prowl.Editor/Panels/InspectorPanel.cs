@@ -260,6 +260,7 @@ public sealed class InspectorPanel : EditorPanel
             t.LocalScale = FromNumerics(scl);
     }
 
+
     /// <summary>
     /// Draws a Vector3 field with colored X/Y/Z labels in a two-column layout.
     /// </summary>
@@ -284,14 +285,16 @@ public sealed class InspectorPanel : EditorPanel
             float fieldWidth = (ImGui.GetContentRegionAvail().X - 60 * Game.DpiScale) / 3f;
             if (fieldWidth < 30 * Game.DpiScale) fieldWidth = 30 * Game.DpiScale;
 
+            
+
             // X
             ImGui.PushStyleColor(ImGuiCol.FrameBg, new Vector4(0.50f, 0.12f, 0.12f, 0.60f));
             ImGui.PushStyleColor(ImGuiCol.FrameBgHovered, new Vector4(0.60f, 0.18f, 0.18f, 0.70f));
             ImGui.PushStyleColor(ImGuiCol.FrameBgActive, new Vector4(0.70f, 0.22f, 0.22f, 0.80f));
             ImGui.TextColored(new Vector4(0.95f, 0.30f, 0.30f, 1f), "X");
+            float x = value.X;
             ImGui.SameLine();
             ImGui.SetNextItemWidth(fieldWidth);
-            float x = value.X;
             if (ImGui.DragFloat("##X", ref x, speed)) { value.X = x; changed = true; }
             ImGui.PopStyleColor(3);
 
@@ -554,12 +557,14 @@ public sealed class InspectorPanel : EditorPanel
             }
             else if (ft.IsEnum)
             {
-                int current = (int)(value ?? 0);
                 string[] names = Enum.GetNames(ft);
+                Array values = Enum.GetValues(ft);
+                int current = Array.IndexOf(values, value ?? values.GetValue(0));
+                if (current < 0) current = 0;
                 DrawFieldRow(label, () =>
                 {
                     if (ImGui.Combo("##val", ref current, names, names.Length))
-                        SetFieldWithUndo(target, field, value, Enum.ToObject(ft, current));
+                        SetFieldWithUndo(target, field, value, values.GetValue(current));
                 });
             }
             else if (ft.IsSubclassOf(typeof(EngineObject)) || ft == typeof(EngineObject) || ft == typeof(GameObject))
@@ -721,6 +726,27 @@ public sealed class InspectorPanel : EditorPanel
                     ImGui.CloseCurrentPopup();
                 }
 
+                // Built-in primitive meshes for Mesh fields
+                if (field.FieldType == typeof(Prowl.Runtime.Resources.Mesh) || field.FieldType.IsSubclassOf(typeof(Prowl.Runtime.Resources.Mesh)))
+                {
+                    ImGui.Spacing();
+                    ImGui.TextColored(new Vector4(0.55f, 0.55f, 0.55f, 1f), "Primitives:");
+
+                    foreach ((string name, Prowl.Runtime.Resources.Mesh mesh) in Prowl.Runtime.Resources.PrimitiveMeshes.All)
+                    {
+                        if (!string.IsNullOrEmpty(_assetPickerFilter) &&
+                            !name.Contains(_assetPickerFilter, StringComparison.OrdinalIgnoreCase))
+                            continue;
+
+                        if (ImGui.Selectable($"  {name}"))
+                        {
+                            SetFieldWithUndo(target, field, current, mesh);
+                            _activePickerFieldId = null;
+                            ImGui.CloseCurrentPopup();
+                        }
+                    }
+                }
+
                 // If field is GameObject, list scene objects
                 if (field.FieldType == typeof(GameObject) || field.FieldType.IsSubclassOf(typeof(GameObject)))
                 {
@@ -734,7 +760,9 @@ public sealed class InspectorPanel : EditorPanel
                 // List asset entries from the project
                 if (EditorServices.TryGet<IAssetService>(out var assetDb) && assetDb!.HasProject)
                 {
+                    // Only show project files section when there are compatible extensions
                     var entries = assetDb.GetAllEntriesRecursive();
+                    bool headerDrawn = false;
                     foreach (var entry in entries)
                     {
                         if (entry.IsDirectory) continue;
@@ -745,6 +773,13 @@ public sealed class InspectorPanel : EditorPanel
                         // Filter by compatible extension for the field type
                         if (!IsAssetCompatible(entry, field.FieldType))
                             continue;
+
+                        if (!headerDrawn)
+                        {
+                            ImGui.Spacing();
+                            ImGui.TextColored(new Vector4(0.55f, 0.55f, 0.55f, 1f), "Project:");
+                            headerDrawn = true;
+                        }
 
                         if (ImGui.Selectable(entry.Name))
                         {
@@ -805,8 +840,24 @@ public sealed class InspectorPanel : EditorPanel
         ".mat"
     };
 
+    private static readonly HashSet<string> ShaderExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".shader"
+    };
+
+    private static readonly HashSet<string> TextureExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".png", ".jpg", ".jpeg", ".bmp", ".tga", ".hdr"
+    };
+
+    private static readonly HashSet<string> AudioExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".wav", ".mp3", ".ogg", ".flac"
+    };
+
     /// <summary>
     /// Returns true if the given asset entry is compatible with the target field type.
+    /// Only shows assets whose file extension matches the expected type.
     /// </summary>
     private static bool IsAssetCompatible(AssetEntry entry, Type fieldType)
     {
@@ -814,10 +865,23 @@ public sealed class InspectorPanel : EditorPanel
             return MeshExtensions.Contains(entry.Extension);
         if (fieldType == typeof(Prowl.Runtime.Resources.Material) || fieldType.IsSubclassOf(typeof(Prowl.Runtime.Resources.Material)))
             return MaterialExtensions.Contains(entry.Extension);
+        if (fieldType == typeof(Prowl.Runtime.Resources.Shader) || fieldType.IsSubclassOf(typeof(Prowl.Runtime.Resources.Shader)))
+            return ShaderExtensions.Contains(entry.Extension);
         if (fieldType == typeof(Prowl.Runtime.Resources.Model) || fieldType.IsSubclassOf(typeof(Prowl.Runtime.Resources.Model)))
             return MeshExtensions.Contains(entry.Extension);
-        // Fallback: show all assets
-        return true;
+        if (fieldType == typeof(Prowl.Runtime.Resources.Texture2D) || fieldType.IsSubclassOf(typeof(Prowl.Runtime.Resources.Texture2D)))
+            return TextureExtensions.Contains(entry.Extension);
+        if (fieldType == typeof(Prowl.Runtime.Resources.AudioClip) || fieldType.IsSubclassOf(typeof(Prowl.Runtime.Resources.AudioClip)))
+            return AudioExtensions.Contains(entry.Extension);
+        if (fieldType == typeof(Prowl.Runtime.AnimationClip) || fieldType.IsSubclassOf(typeof(Prowl.Runtime.AnimationClip)))
+            return false; // Animations are loaded from model files, not standalone
+        if (fieldType == typeof(Prowl.Runtime.Resources.Scene) || fieldType.IsSubclassOf(typeof(Prowl.Runtime.Resources.Scene)))
+            return entry.Extension.Equals(".scene", StringComparison.OrdinalIgnoreCase);
+        if (fieldType == typeof(GameObject) || fieldType.IsSubclassOf(typeof(GameObject)))
+            return false; // GameObjects come from the scene, not asset files
+
+        // Unknown EngineObject types: don't show file assets (avoids cluttering the list)
+        return false;
     }
 
     /// <summary>
@@ -855,19 +919,23 @@ public sealed class InspectorPanel : EditorPanel
                 }
             }
 
-            // Material field: currently .mat files are JSON; a full implementation
-            // would deserialize them. For now, create a default material with the
-            // asset path set so it can be resolved later.
+            // Material field: load from .mat JSON file
             if (fieldType == typeof(Prowl.Runtime.Resources.Material))
             {
                 if (ext == ".mat" && File.Exists(path))
                 {
-                    var mat = new Prowl.Runtime.Resources.Material(
-                        Prowl.Runtime.Resources.Shader.LoadDefault(
-                            Prowl.Runtime.Resources.DefaultShader.Standard));
-                    mat.AssetPath = path;
-                    mat.Name = Path.GetFileNameWithoutExtension(path);
-                    return mat;
+                    var mat = MaterialSerializer.Load(path);
+                    if (mat != null)
+                        return mat;
+                }
+            }
+
+            // Shader field: load from .shader file
+            if (fieldType == typeof(Prowl.Runtime.Resources.Shader))
+            {
+                if (ext == ".shader" && File.Exists(path))
+                {
+                    return Prowl.Runtime.Resources.Shader.LoadFromFile(path);
                 }
             }
         }
@@ -1012,6 +1080,9 @@ public sealed class InspectorPanel : EditorPanel
             case ".mat":
                 DrawMaterialAssetInfo(asset);
                 break;
+            case ".shader":
+                DrawShaderAssetInfo(asset);
+                break;
             case ".cs":
                 DrawScriptAssetInfo(asset);
                 break;
@@ -1039,25 +1110,22 @@ public sealed class InspectorPanel : EditorPanel
         if (!ImGui.CollapsingHeader("Material", ImGuiTreeNodeFlags.DefaultOpen))
             return;
 
-        // Try to load and display material properties
-        // For now, show raw JSON with a note about the material inspector
-        if (File.Exists(asset.FullPath))
+        if (!File.Exists(asset.FullPath))
         {
-            ImGui.TextColored(new Vector4(0.6f, 0.7f, 0.8f, 1f),
-                "Material properties are editable when the material is assigned to a MeshRenderer on a selected GameObject.");
-            ImGui.Spacing();
-
-            try
-            {
-                string content = File.ReadAllText(asset.FullPath);
-                if (content.Length > 2048) content = content[..2048] + "\n... (truncated)";
-                ImGui.TextWrapped(content);
-            }
-            catch
-            {
-                ImGui.TextDisabled("(unable to read file)");
-            }
+            ImGui.TextDisabled("(file not found)");
+            return;
         }
+
+        // Load the material using the serializer
+        var mat = MaterialSerializer.Load(asset.FullPath);
+        if (mat == null)
+        {
+            ImGui.TextDisabled("(unable to parse material)");
+            return;
+        }
+
+        // Draw material properties via the MaterialInspector
+        MaterialInspector.DrawMaterial(mat, asset.FullPath);
     }
 
     private static void DrawScriptAssetInfo(AssetEntry asset)
@@ -1083,6 +1151,69 @@ public sealed class InspectorPanel : EditorPanel
             {
                 ImGui.TextDisabled("(unable to read file)");
             }
+        }
+    }
+
+    private static void DrawShaderAssetInfo(AssetEntry asset)
+    {
+        if (!ImGui.CollapsingHeader("Shader", ImGuiTreeNodeFlags.DefaultOpen))
+            return;
+
+        if (!File.Exists(asset.FullPath))
+        {
+            ImGui.TextDisabled("(file not found)");
+            return;
+        }
+
+        try
+        {
+            var shader = Prowl.Runtime.Resources.Shader.LoadFromFile(asset.FullPath);
+            if (shader == null)
+            {
+                ImGui.TextDisabled("(failed to parse shader)");
+                return;
+            }
+
+            ImGui.TextColored(new Vector4(0.70f, 0.80f, 0.90f, 1f), shader.Name ?? "Unnamed Shader");
+            ImGui.Spacing();
+
+            // Properties
+            bool anyProps = false;
+            foreach (var prop in shader.Properties)
+            {
+                if (!anyProps)
+                {
+                    ImGui.TextColored(new Vector4(0.55f, 0.55f, 0.55f, 1f), "Properties:");
+                    ImGui.Indent();
+                    anyProps = true;
+                }
+                string typeName = prop.PropertyType.ToString();
+                string display = !string.IsNullOrEmpty(prop.DisplayName) ? prop.DisplayName : prop.Name;
+                ImGui.BulletText($"{display}  ({typeName})");
+            }
+            if (anyProps) ImGui.Unindent();
+            else ImGui.TextDisabled("No properties defined.");
+
+            ImGui.Spacing();
+
+            // Passes
+            int passCount = 0;
+            foreach (var pass in shader.Passes)
+                passCount++;
+
+            DrawAssetFieldRow("Passes", passCount.ToString());
+
+            int idx = 0;
+            foreach (var pass in shader.Passes)
+            {
+                string passLabel = !string.IsNullOrEmpty(pass.Name) ? pass.Name : $"Pass {idx}";
+                ImGui.BulletText(passLabel);
+                idx++;
+            }
+        }
+        catch (Exception ex)
+        {
+            ImGui.TextDisabled($"(error: {ex.Message})");
         }
     }
 
