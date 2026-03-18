@@ -116,12 +116,15 @@ public sealed class ScenePanel : EditorPanel
         bool isActive = ImGui.IsItemActive();
         IsHovered = ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenBlockedByActiveItem) || isActive;
 
-        // Keyboard shortcuts for gizmo mode
-        Gizmo.ProcessShortcuts(input);
+        // Keyboard shortcuts for gizmo mode (W/E/R, only when not in fly mode)
+        if (IsHovered && !input.IsMouseButton(1))
+            Gizmo.ProcessShortcuts(input);
 
         // Camera navigation — skip when the gizmo is being dragged
         // so that gizmo movement doesn't also orbit/pan the camera.
         bool gizmoActive = Gizmo.IsActive;
+        Float2 vpMouseLocal = input.MousePosition - ViewportRect.Min;
+        Camera.SetViewportInfo(ViewportRect.Size.X, ViewportRect.Size.Y, vpMouseLocal);
         Camera.ProcessInput(input, IsHovered && !gizmoActive);
 
         // Focus on selected object with F key
@@ -212,7 +215,7 @@ public sealed class ScenePanel : EditorPanel
     private void DrawOverlay()
     {
         Float3 camPos = Camera.GetPosition();
-        string info = $"Cam: ({camPos.X:F1}, {camPos.Y:F1}, {camPos.Z:F1})  Mode: {Gizmo.Mode}  [RMB+WASD: Fly | Alt+LMB: Orbit | MMB: Pan]";
+        string info = $"Cam: ({camPos.X:F1}, {camPos.Y:F1}, {camPos.Z:F1})  Mode: {Gizmo.Mode}  [RMB+WASD: Fly | Alt+LMB: Orbit | MMB: Pan | Scroll: Zoom | W/E/R: Tool]";
 
         var drawList = ImGui.GetWindowDrawList();
         float x = ViewportRect.Min.X + 6 * Game.DpiScale;

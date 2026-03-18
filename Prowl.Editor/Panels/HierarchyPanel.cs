@@ -34,6 +34,10 @@ public sealed class HierarchyPanel : EditorPanel
     private int _renamingInstanceId;
     private string _renameBuffer = string.Empty;
 
+    // Scene rename state
+    private bool _renamingScene;
+    private string _sceneRenameBuffer = string.Empty;
+
     public HierarchyPanel() : base("Hierarchy") { }
 
     protected override void DrawContent()
@@ -68,7 +72,41 @@ public sealed class HierarchyPanel : EditorPanel
         {
             bool headerOpen = true;
             if (sceneService.CurrentScene != null)
-                headerOpen = ImGui.CollapsingHeader($"     {sceneService.CurrentScene.Name}", ImGuiTreeNodeFlags.DefaultOpen);
+            {
+                // Scene rename mode: replace header with input field
+                if (_renamingScene)
+                {
+                    ImGui.SetNextItemWidth(ImGui.GetContentRegionAvail().X);
+                    bool committed = ImGui.InputText("##SceneRename", ref _sceneRenameBuffer, 256,
+                        ImGuiInputTextFlags.EnterReturnsTrue | ImGuiInputTextFlags.AutoSelectAll);
+                    if (committed || ImGui.IsKeyPressed(ImGuiKey.Escape))
+                    {
+                        if (committed)
+                        {
+                            string newName = _sceneRenameBuffer.Trim();
+                            if (!string.IsNullOrEmpty(newName))
+                                sceneService.CurrentScene.Name = newName;
+                        }
+                        _renamingScene = false;
+                    }
+                    headerOpen = true;
+                }
+                else
+                {
+                    headerOpen = ImGui.CollapsingHeader($"     {sceneService.CurrentScene.Name}", ImGuiTreeNodeFlags.DefaultOpen);
+
+                    // Context menu on scene header
+                    if (ImGui.BeginPopupContextItem("##SceneHeaderCtx"))
+                    {
+                        if (ImGui.MenuItem("Rename Scene"))
+                        {
+                            _renamingScene = true;
+                            _sceneRenameBuffer = sceneService.CurrentScene.Name ?? "Untitled";
+                        }
+                        ImGui.EndPopup();
+                    }
+                }
+            }
             if (headerOpen)
             {
                 var roots = sceneService.GetRootGameObjects();

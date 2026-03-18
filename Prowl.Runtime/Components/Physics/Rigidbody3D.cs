@@ -8,6 +8,7 @@ using Jitter2.Dynamics;
 using Jitter2.LinearMath;
 
 using Prowl.Echo;
+using Prowl.Runtime.Resources;
 using Prowl.Vector;
 
 namespace Prowl.Runtime;
@@ -345,6 +346,15 @@ public sealed class Rigidbody3D : MonoBehaviour
     {
         if (_body == null || _body.Handle.IsZero) return;
 
+        // Only write physics body → transform when physics is actually simulating.
+        // In edit mode the user moves objects via the gizmo, so we do the opposite:
+        // sync the transform → body so the collider follows the object.
+        if (!Scene.SimulatePhysics)
+        {
+            UpdateTransform(_body);
+            return;
+        }
+
         interpTimer += Time.DeltaTime;
 
         //_body.PredictPose(interpTimer, out JVector predictedPosition, out JQuaternion predictedOrientation);
@@ -357,6 +367,7 @@ public sealed class Rigidbody3D : MonoBehaviour
 
     public override void FixedUpdate()
     {
+        if (!Scene.SimulatePhysics) return;
         interpTimer = 0;
     }
 

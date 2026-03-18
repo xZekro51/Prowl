@@ -1125,4 +1125,42 @@ public class GameObject : EngineObject, ISerializable
             }
         }
     }
+
+    /// <summary>
+    /// Attempts to resolve any <see cref="MissingMonobehaviour"/> components by
+    /// re-checking whether their original types are now available (e.g. after a
+    /// script assembly has been reloaded). Returns the number of components
+    /// that were successfully recovered.
+    /// </summary>
+    public int TryResolveMissingComponents()
+    {
+        int resolved = 0;
+
+        for (int i = _components.Count - 1; i >= 0; i--)
+        {
+            if (_components[i] is not MissingMonobehaviour missing)
+                continue;
+
+            EchoObject data = missing.ComponentData;
+            if (data == null || !data.TryGet("$type", out EchoObject? typeProp))
+                continue;
+
+            Type? oType = RuntimeUtils.FindType(typeProp.StringValue);
+            if (oType == null || oType == typeof(MissingMonobehaviour))
+                continue;
+
+            // Type is now available — deserialize the original data
+            MonoBehaviour? component = Serializer.Deserialize<MonoBehaviour>(data);
+            if (component.IsValid())
+            {
+                _components[i] = component;
+                _componentCache.Remove(typeof(MissingMonobehaviour), missing);
+                _componentCache.Add(component.GetType(), component);
+                component.AttachToGameObject(this);
+                resolved++;
+            }
+        }
+
+        return resolved;
+    }
 }

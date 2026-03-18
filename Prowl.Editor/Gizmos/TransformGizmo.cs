@@ -58,6 +58,12 @@ public sealed class TransformGizmo
     // Start rotation (world quaternion) for rotation gizmo
     private Prowl.Vector.Quaternion _dragStartRotation;
 
+    // Axis direction captured at drag start (prevents drift when in Local orientation)
+    private Float3 _dragStartAxisDir;
+
+    // Start angle of mouse around gizmo center (for rotation mode)
+    private float _dragStartAngle;
+
     // Camera distance at drag start (for translate sensitivity scaling)
     private float _dragCameraDistance;
 
@@ -66,9 +72,10 @@ public sealed class TransformGizmo
     /// </summary>
     public void ProcessShortcuts(IEditorInput input)
     {
-        if (input.IsKeyDown(KeyCode.Number1)) Mode = GizmoMode.Translate;
-        if (input.IsKeyDown(KeyCode.Number2)) Mode = GizmoMode.Rotate;
-        if (input.IsKeyDown(KeyCode.Number3)) Mode = GizmoMode.Scale;
+        // Unity-style shortcuts: W = Translate, E = Rotate, R = Scale
+        if (input.IsKeyDown(KeyCode.W)) Mode = GizmoMode.Translate;
+        if (input.IsKeyDown(KeyCode.E)) Mode = GizmoMode.Rotate;
+        if (input.IsKeyDown(KeyCode.R)) Mode = GizmoMode.Scale;
     }
 
     /// <summary>
@@ -148,9 +155,16 @@ public sealed class TransformGizmo
 
         // Pre-compute rotation arc parameters (center in viewport-local coords, radius)
         Float2 center = new(screenPos.X, screenPos.Y);
-        float[] arcRadii = new float[3];
-        for (int i = 0; i < 3; i++)
-            arcRadii[i] = screenLens[i] * 0.8f;
+        float rotationRadius = DesiredScreenLength * 0.8f;
+
+        // Pre-compute projected circle points for rotation hit testing
+        Float2[][] circlePoints = new Float2[3][];
+        if (Mode == GizmoMode.Rotate)
+        {
+            for (int i = 0; i < 3; i++)
+                circlePoints[i] = ProjectCircleToScreen(worldPos, axisDirs[i], worldHandleLen * 0.8f,
+                    camera, vpW, vpH, 48);
+        }
 
         // Determine which axis is hovered (for dimming others)
         int hoveredAxis = -1;
@@ -158,7 +172,7 @@ public sealed class TransformGizmo
         {
             if (screenLens[i] < 1f) continue;
             bool hovered = Mode == GizmoMode.Rotate
-                ? IsNearArc(mouseLocal, center, screenDirs[i], arcRadii[i], HandleHitSize)
+                ? IsNearProjectedCircle(mouseLocal, circlePoints[i], HandleHitSize)
                 : IsNearSegment(mouseLocal, center, tipVp[i], HandleHitSize);
             if (hovered) { hoveredAxis = i; break; }
         }
@@ -177,9 +191,9 @@ public sealed class TransformGizmo
             float tipX = ox + tipVp2[i].X;
             float tipY = oy + tipVp2[i].Y;
 
-            // Hit test — use arc proximity for Rotate mode, segment for others
+            // Hit test — use projected circle proximity for Rotate mode, segment for others
             bool hovered = Mode == GizmoMode.Rotate
-                ? IsNearArc(mouseLocal, center, screenDirs[i], arcRadii[i], HandleHitSize)
+                ? IsNearProjectedCircle(mouseLocal, circlePoints[i], HandleHitSize)
                 : IsNearSegment(mouseLocal, center, tipVp[i], HandleHitSize);
             bool active = _activeAxis == i;
 
@@ -204,8 +218,8 @@ public sealed class TransformGizmo
 
             if (Mode == GizmoMode.Rotate)
             {
-                // Draw rotation arcs instead of straight lines
-                DrawRotationArc(drawList, cx, cy, screenDirs[i], screenLens[i] * 0.8f, col, thick);
+                // Draw proper projected 3D rotation circle
+                DrawProjectedCircle(drawList, circlePoints[i], ox, oy, col, thick);
             }
             else
             {
@@ -226,15 +240,6 @@ public sealed class TransformGizmo
                 drawList.AddRectFilled(
                     new Vector2(endX - tipR, endY - tipR),
                     new Vector2(endX + tipR, endY + tipR), col);
-            }
-            else // Rotate
-            {
-                // Small circle at arc end
-                float arcEndAngle = MathF.Atan2(screenDirs[i].Y, screenDirs[i].X) + MathF.PI * 0.3f;
-                float radius = screenLens[i] * 0.8f;
-                float arcEndX = cx + MathF.Cos(arcEndAngle) * radius;
-                float arcEndY = cy + MathF.Sin(arcEndAngle) * radius;
-                drawList.AddCircleFilled(new Vector2(arcEndX, arcEndY), tipR * 0.8f, col);
             }
 
             // Handle interaction
@@ -311,27 +316,57 @@ public sealed class TransformGizmo
     }
 
     /// <summary>
-    /// Draws a rotation arc (partial circle) for the Rotate mode.
+    /// Projects a 3D circle (in the plane perpendicular to <paramref name="axis"/>) to viewport-local screen coordinates.
+    /// Returns an array of screen-space points (not offset by viewport origin).
     /// </summary>
-    private static void DrawRotationArc(ImDrawListPtr drawList, float cx, float cy,
-        Float2 dir, float radius, uint color, float thickness)
+    private static Float2[] ProjectCircleToScreen(Float3 worldCenter, Float3 axis, float worldRadius,
+        SceneCamera camera, float vpW, float vpH, int segments = 48)
     {
-        float baseAngle = MathF.Atan2(dir.Y, dir.X);
-        float arcSpan = MathF.PI * 0.6f; // 108° arc
-        int segments = 24;
+        // Compute two perpendicular vectors to the axis
+        Float3 perp1;
+        if (MathF.Abs(Float3.Dot(axis, Float3.UnitY)) < 0.99f)
+            perp1 = Float3.Normalize(Float3.Cross(axis, Float3.UnitY));
+        else
+            perp1 = Float3.Normalize(Float3.Cross(axis, Float3.UnitX));
+        Float3 perp2 = Float3.Normalize(Float3.Cross(axis, perp1));
 
-        float startAngle = baseAngle - arcSpan * 0.5f;
-
-        for (int s = 0; s < segments; s++)
+        var points = new Float2[segments + 1];
+        for (int i = 0; i <= segments; i++)
         {
-            float a0 = startAngle + arcSpan * s / segments;
-            float a1 = startAngle + arcSpan * (s + 1) / segments;
+            float angle = (float)i / segments * MathF.PI * 2f;
+            Float3 worldPt = worldCenter + (perp1 * MathF.Cos(angle) + perp2 * MathF.Sin(angle)) * worldRadius;
+            Float3 sp = camera.WorldToViewport(worldPt, vpW, vpH);
+            points[i] = new Float2(sp.X, sp.Y);
+        }
+        return points;
+    }
 
+    /// <summary>
+    /// Draws a projected 3D circle from pre-computed viewport-local screen points.
+    /// </summary>
+    private static void DrawProjectedCircle(ImDrawListPtr drawList, Float2[] points,
+        float ox, float oy, uint color, float thickness)
+    {
+        for (int i = 0; i < points.Length - 1; i++)
+        {
             drawList.AddLine(
-                new Vector2(cx + MathF.Cos(a0) * radius, cy + MathF.Sin(a0) * radius),
-                new Vector2(cx + MathF.Cos(a1) * radius, cy + MathF.Sin(a1) * radius),
+                new Vector2(ox + points[i].X, oy + points[i].Y),
+                new Vector2(ox + points[i + 1].X, oy + points[i + 1].Y),
                 color, thickness);
         }
+    }
+
+    /// <summary>
+    /// Hit-tests a point against a projected 3D circle (polyline of screen-space points).
+    /// </summary>
+    private static bool IsNearProjectedCircle(Float2 point, Float2[] circlePoints, float threshold)
+    {
+        for (int i = 0; i < circlePoints.Length - 1; i++)
+        {
+            if (IsNearSegment(point, circlePoints[i], circlePoints[i + 1], threshold))
+                return true;
+        }
+        return false;
     }
 
     /// <summary>
@@ -426,6 +461,11 @@ public sealed class TransformGizmo
                 _ => Float3.Zero
             };
             _dragStartRotation = selected.Transform.Rotation;
+            _dragStartAxisDir = axisWorldDir;
+
+            // For rotation, capture the initial mouse angle around the gizmo center
+            Float2 toMouse = mouseLocal - new Float2(screenDir.X, screenDir.Y); // dummy, we use center below
+            _dragStartAngle = MathF.Atan2(mouseLocal.Y - _dragStart.Y, mouseLocal.X - _dragStart.X);
 
             // Capture pre-drag transform for undo
             _undoLocalPos   = selected.Transform.LocalPosition;
@@ -464,9 +504,10 @@ public sealed class TransformGizmo
                     Float2 perp = new(-screenDir.Y, screenDir.X);
                     float angle = Float2.Dot(diff, perp) * sensitivity;
 
-                    // Build a delta quaternion around the world-space axis
+                    // Build a delta quaternion around the CACHED axis direction
+                    // (using the axis captured at drag start prevents drift in Local mode)
                     Prowl.Vector.Quaternion deltaRot = Prowl.Vector.Quaternion.AxisAngle(
-                        axisWorldDir, angle * (MathF.PI / 180f));
+                        _dragStartAxisDir, angle * (MathF.PI / 180f));
 
                     // Apply to the start rotation (captured as a quaternion)
                     Prowl.Vector.Quaternion startRot = _dragStartRotation;
@@ -533,29 +574,4 @@ public sealed class TransformGizmo
         return Float2.Length(point - closest) <= threshold;
     }
 
-    /// <summary>
-    /// Hit-tests a point against a rotation arc (partial circle) centered at
-    /// <paramref name="center"/> with the given <paramref name="radius"/>.
-    /// The arc spans 108° (0.6π) centered on the direction <paramref name="dir"/>.
-    /// </summary>
-    private static bool IsNearArc(Float2 point, Float2 center, Float2 dir, float radius, float threshold)
-    {
-        Float2 d = point - center;
-        float dist = Float2.Length(d);
-
-        // Check radial distance to the arc circle
-        if (MathF.Abs(dist - radius) > threshold) return false;
-
-        // Check angular range — the arc spans ±54° from the base direction
-        float baseAngle = MathF.Atan2(dir.Y, dir.X);
-        float pointAngle = MathF.Atan2(d.Y, d.X);
-        float diff = pointAngle - baseAngle;
-
-        // Normalize to [-π, π]
-        while (diff > MathF.PI) diff -= 2f * MathF.PI;
-        while (diff < -MathF.PI) diff += 2f * MathF.PI;
-
-        float halfSpan = MathF.PI * 0.3f; // half of 0.6π
-        return MathF.Abs(diff) <= halfSpan + 0.15f; // small angular tolerance
     }
-}

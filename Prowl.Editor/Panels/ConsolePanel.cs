@@ -20,6 +20,10 @@ public sealed class ConsolePanel : EditorPanel
     private bool _autoScroll = true;
     private int _selectedIndex = -1;
 
+    // Detail pane buffer for selectable text
+    private string _detailBuffer = string.Empty;
+    private int _lastDetailIndex = -2;
+
     // Color palette
     private static readonly Vector4 InfoColor    = new(0.78f, 0.78f, 0.78f, 1f);
     private static readonly Vector4 SuccessColor = new(0.40f, 0.85f, 0.40f, 1f);
@@ -42,6 +46,10 @@ public sealed class ConsolePanel : EditorPanel
 
         var entries = EditorConsoleLogger.GetEntries();
         bool hasSearch = !string.IsNullOrWhiteSpace(_searchFilter);
+        bool collapse = EditorConsoleLogger.Collapse;
+
+        // When collapsing, track unique messages to skip duplicates
+        HashSet<string>? seenMessages = collapse ? new(StringComparer.Ordinal) : null;
 
         // Use clipper for efficient rendering of large lists
         int visibleCount = 0;
@@ -55,6 +63,14 @@ public sealed class ConsolePanel : EditorPanel
             // Filter by search
             if (hasSearch && !entry.Message.Contains(_searchFilter, StringComparison.OrdinalIgnoreCase))
                 continue;
+
+            // Collapse: skip if we've already shown this message+severity
+            if (collapse && seenMessages != null)
+            {
+                string key = $"{(int)entry.Severity}:{entry.Message}";
+                if (!seenMessages.Add(key))
+                    continue;
+            }
 
             visibleCount++;
             DrawLogEntry(i, entry);
@@ -173,7 +189,7 @@ public sealed class ConsolePanel : EditorPanel
         }
     }
 
-    private static void DrawDetailPane(LogEntry entry)
+    private void DrawDetailPane(LogEntry entry)
     {
         ImGui.BeginChild("##LogDetail", Vector2.Zero, ImGuiChildFlags.Border);
 
@@ -181,18 +197,19 @@ public sealed class ConsolePanel : EditorPanel
             $"[{entry.Timestamp:HH:mm:ss.fff}] {GetSeverityPrefix(entry.Severity)}");
         ImGui.Separator();
 
-        // Full message (wrapped)
-        ImGui.TextWrapped(entry.Message);
-
-        // Stack trace
-        if (!string.IsNullOrEmpty(entry.StackTrace))
+        // Build selectable text buffer (rebuild when selection changes)
+        if (_lastDetailIndex != _selectedIndex)
         {
-            ImGui.Spacing();
-            ImGui.TextColored(new Vector4(0.50f, 0.50f, 0.50f, 1f), "Stack Trace:");
-            ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.55f, 0.55f, 0.55f, 0.85f));
-            ImGui.TextWrapped(entry.StackTrace);
-            ImGui.PopStyleColor();
+            _lastDetailIndex = _selectedIndex;
+            _detailBuffer = entry.Message;
+            if (!string.IsNullOrEmpty(entry.StackTrace))
+                _detailBuffer += "\n\n--- Stack Trace ---\n" + entry.StackTrace;
         }
+
+        // Use InputTextMultiline with ReadOnly so the user can select & copy text
+        Vector2 avail = ImGui.GetContentRegionAvail();
+        ImGui.InputTextMultiline("##DetailText", ref _detailBuffer, (uint)(_detailBuffer.Length + 1),
+            avail, ImGuiInputTextFlags.ReadOnly);
 
         ImGui.EndChild();
     }

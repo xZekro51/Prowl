@@ -13,6 +13,7 @@ using Prowl.Editor.Panels;
 using Prowl.Editor.Rendering;
 using Prowl.Editor.Core;
 using Prowl.Editor.Icons;
+using Prowl.Editor.Project;
 using Prowl.Editor.Toolbar;
 using Prowl.Editor.Undo;
 
@@ -31,6 +32,9 @@ public sealed class EditorApplication : Game
     private readonly EditorPlayMode _playMode = new();
     private PlayModeToolbar? _playToolbar;
 
+    // Script compilation
+    private ProjectAssemblyManager? _assemblyManager;
+
     // Panel references
     private HierarchyPanel? _hierarchyPanel;
     private InspectorPanel? _inspectorPanel;
@@ -46,6 +50,12 @@ public sealed class EditorApplication : Game
 
     /// <summary> The project folder path passed via --project, or null. </summary>
     public static string? ProjectPath { get; private set; }
+
+    /// <summary>
+    /// The project script assembly manager. Use this to trigger recompilation
+    /// or subscribe to assembly-change events. Null when no project is open.
+    /// </summary>
+    public static ProjectAssemblyManager? ScriptAssemblyManager { get; private set; }
 
     private bool _themeApplied;
     private float _lastAppliedUserScale = 1.0f;
@@ -63,6 +73,9 @@ public sealed class EditorApplication : Game
     // Layout persistence
     private string _iniFilePath = "imgui.ini";
     private bool _layoutInitialised;
+
+    // Per-project session state
+    private ProjectSessionState? _sessionState;
 
     public EditorApplication(string? projectPath = null)
     {
@@ -128,6 +141,22 @@ public sealed class EditorApplication : Game
         }
         EditorServices.Register<IAssetService>(assetDb);
 
+        // ── Script compilation ─────────────────────────────────
+        // Compile user scripts BEFORE loading scenes so that custom
+        // MonoBehaviour types are available during deserialization.
+        if (!string.IsNullOrEmpty(ProjectPath))
+        {
+            _assemblyManager = new ProjectAssemblyManager(ProjectPath);
+            ScriptAssemblyManager = _assemblyManager;
+            _assemblyManager.OnAssemblyChanged += OnScriptAssemblyChanged;
+            _assemblyManager.CompileAndLoad();
+            _assemblyManager.StartWatching();
+
+            // Generate IDE solution (.sln + .csproj) so external editors
+            // get IntelliSense for user scripts — similar to Unity's workflow.
+            ProjectSolutionGenerator.GenerateSolution(ProjectPath);
+        }
+
         // Try to load the project's default scene; otherwise create an empty one
         bool sceneLoaded = false;
         if (!string.IsNullOrEmpty(ProjectPath) && assetDb.HasProject)
@@ -152,6 +181,9 @@ public sealed class EditorApplication : Game
         // Play mode toolbar
         _playToolbar = new PlayModeToolbar(_playMode);
 
+        // Disable physics during edit mode
+        _playMode.InitEditMode();
+
         // Create panels
         _hierarchyPanel = new HierarchyPanel();
         _inspectorPanel = new InspectorPanel();
@@ -160,6 +192,9 @@ public sealed class EditorApplication : Game
         _gamePanel = new GamePanel();
         _preferencesPanel = new PreferencesPanel();
         _consolePanel = new ConsolePanel();
+
+        // Register ProjectPanel so other panels can find it for cross-panel features
+        EditorServices.Register<ProjectPanel>(_projectPanel);
 
         // Menu bar panel toggles
         _menuBar.OnToggleHierarchy = () => _hierarchyPanel.IsOpen = !_hierarchyPanel.IsOpen;
@@ -173,6 +208,35 @@ public sealed class EditorApplication : Game
         // Initialise the icon system (registers all built-in icons)
         IconManager.Load();
 
+        // ── Per-project session state ──────────────────────────
+        if (!string.IsNullOrEmpty(ProjectPath))
+        {
+            _sessionState = ProjectSessionState.Load(ProjectPath);
+
+            // Restore last scene
+            if (!sceneLoaded && _sessionState.LastScenePath != null)
+            {
+                string absScene = Path.Combine(ProjectPath, _sessionState.LastScenePath);
+                if (File.Exists(absScene) &&
+                    EditorServices.TryGet<ISceneSerializer>(out var ser))
+                {
+                    var s = ser!.Load(absScene);
+                    if (s != null)
+                    {
+                        EditorServices.Get<ISceneService>().SetScene(s);
+                        EditorServices.Get<ISceneService>().SceneFilePath = absScene;
+                    }
+                }
+            }
+
+            // Restore game view resolution
+            if (_gamePanel != null)
+                _gamePanel.SelectedResolutionIndex = _sessionState.GameViewResolutionIndex;
+
+            // Restore panel open states
+            RestorePanelStates(_sessionState);
+        }
+
         Debug.LogSuccess("Editor initialized.");
     }
 
@@ -180,6 +244,7 @@ public sealed class EditorApplication : Game
     {
         _playMode.Update(Time.UnscaledDeltaTime);
         _preferencesPanel?.Tick(Time.UnscaledDeltaTime);
+        _assemblyManager?.ProcessPendingRecompile();
         HandleKeyboardShortcuts();
         UpdateWindowTitle();
     }
@@ -193,6 +258,29 @@ public sealed class EditorApplication : Game
         Window.InternalWindow.Title = title;
     }
 
+    /// <summary>
+    /// Called when the user-script assembly is (re)compiled and loaded.
+    /// Walks every GameObject in the current scene and attempts to resolve
+    /// <see cref="MissingMonobehaviour"/> placeholders whose types may now
+    /// be available in the freshly loaded assembly.
+    /// </summary>
+    private void OnScriptAssemblyChanged()
+    {
+        if (!EditorServices.TryGet<ISceneService>(out var sceneSvc))
+            return;
+
+        var scene = sceneSvc!.CurrentScene;
+        if (scene == null)
+            return;
+
+        int totalResolved = 0;
+        foreach (var go in scene.AllObjects)
+            totalResolved += go.TryResolveMissingComponents();
+
+        if (totalResolved > 0)
+            Debug.LogSuccess($"[Scripts] Recovered {totalResolved} previously-missing component(s).");
+    }
+
     private static void HandleKeyboardShortcuts()
     {
         bool ctrl = Input.GetKey(KeyCode.ControlLeft) || Input.GetKey(KeyCode.ControlRight);
@@ -200,6 +288,10 @@ public sealed class EditorApplication : Game
         if (ctrl && Input.GetKeyDown(KeyCode.S))
         {
             EditorMenuBar.OnSaveScene();
+        }
+        else if (ctrl && Input.GetKeyDown(KeyCode.B))
+        {
+            EditorApplication.ScriptAssemblyManager?.CompileAndLoad();
         }
         else if (ctrl && Input.GetKeyDown(KeyCode.Z))
         {
@@ -544,10 +636,61 @@ public sealed class EditorApplication : Game
         io.FontGlobalScale = Game.DpiScale / DpiManager.BaseFontScale;
     }
 
+    private void SavePanelStates(ProjectSessionState state)
+    {
+        state.OpenPanels.Clear();
+        if (_hierarchyPanel != null) state.OpenPanels["Hierarchy"] = _hierarchyPanel.IsOpen;
+        if (_inspectorPanel != null) state.OpenPanels["Inspector"] = _inspectorPanel.IsOpen;
+        if (_scenePanel != null) state.OpenPanels["Scene"] = _scenePanel.IsOpen;
+        if (_projectPanel != null) state.OpenPanels["Project"] = _projectPanel.IsOpen;
+        if (_gamePanel != null) state.OpenPanels["Game"] = _gamePanel.IsOpen;
+        if (_preferencesPanel != null) state.OpenPanels["Preferences"] = _preferencesPanel.IsOpen;
+        if (_consolePanel != null) state.OpenPanels["Console"] = _consolePanel.IsOpen;
+    }
+
+    private void RestorePanelStates(ProjectSessionState state)
+    {
+        if (state.OpenPanels.Count == 0) return;
+        if (state.OpenPanels.TryGetValue("Hierarchy", out var h) && _hierarchyPanel != null) _hierarchyPanel.IsOpen = h;
+        if (state.OpenPanels.TryGetValue("Inspector", out var i) && _inspectorPanel != null) _inspectorPanel.IsOpen = i;
+        if (state.OpenPanels.TryGetValue("Scene", out var s) && _scenePanel != null) _scenePanel.IsOpen = s;
+        if (state.OpenPanels.TryGetValue("Project", out var p) && _projectPanel != null) _projectPanel.IsOpen = p;
+        if (state.OpenPanels.TryGetValue("Game", out var g) && _gamePanel != null) _gamePanel.IsOpen = g;
+        if (state.OpenPanels.TryGetValue("Preferences", out var pr) && _preferencesPanel != null) _preferencesPanel.IsOpen = pr;
+        if (state.OpenPanels.TryGetValue("Console", out var c) && _consolePanel != null) _consolePanel.IsOpen = c;
+    }
+
     public override void Closing()
     {
         // Save the dock layout one final time before shutdown
         ImGui.SaveIniSettingsToDisk(_iniFilePath);
+
+        // ── Save per-project session state ─────────────────────
+        if (!string.IsNullOrEmpty(ProjectPath))
+        {
+            _sessionState ??= new ProjectSessionState();
+
+            // Save last opened scene
+            var sceneFilePath = EditorServices.Get<ISceneService>().SceneFilePath;
+            if (sceneFilePath != null && ProjectPath != null)
+            {
+                try { _sessionState.LastScenePath = Path.GetRelativePath(ProjectPath, sceneFilePath); }
+                catch { _sessionState.LastScenePath = sceneFilePath; }
+            }
+
+            // Save game view resolution
+            if (_gamePanel != null)
+                _sessionState.GameViewResolutionIndex = _gamePanel.SelectedResolutionIndex;
+
+            // Save panel open states
+            SavePanelStates(_sessionState);
+
+            _sessionState.Save(ProjectPath);
+        }
+
+        // Dispose script compilation system
+        _assemblyManager?.Dispose();
+        ScriptAssemblyManager = null;
 
         // Dispose icon textures
         IconManager.Dispose();

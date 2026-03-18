@@ -29,6 +29,7 @@ public sealed class ProjectPanel : EditorPanel
     private string _searchFilter = string.Empty;
     private string _renameBuffer = string.Empty;
     private string? _renamingPath;
+    private bool _renameNeedsFocus;
 
     // Deferred selection: wait for mouse release so drags don't trigger inspector switch
     private string? _pendingSelectPath;
@@ -43,11 +44,58 @@ public sealed class ProjectPanel : EditorPanel
     private const float MinTreeWidth = 120f;
     private const float MaxTreeWidth = 400f;
 
+    // Ping state: highlight a specific entry briefly
+    private string? _pingPath;
+    private float _pingTimer;
+    private const float PingDuration = 2.0f;
+
     public ProjectPanel() : base("Project") { }
+
+    /// <summary>
+    /// Navigates to the folder containing the specified asset and highlights it.
+    /// If the asset is in a different folder, the project view switches to that folder first.
+    /// </summary>
+    public void PingAsset(string relativePath)
+    {
+        if (string.IsNullOrEmpty(relativePath)) return;
+
+        // Navigate to the containing folder
+        string? dir = Path.GetDirectoryName(relativePath);
+        if (string.IsNullOrEmpty(dir)) dir = ".";
+        dir = dir.Replace('\\', '/');
+
+        _selectedFolder = dir;
+
+        // Expand all parent folders in the tree
+        string current = dir;
+        while (!string.IsNullOrEmpty(current) && current != ".")
+        {
+            _expandedFolders.Add(current);
+            current = Path.GetDirectoryName(current) ?? ".";
+            current = current.Replace('\\', '/');
+        }
+        _expandedFolders.Add(".");
+
+        // Select and ping the entry
+        _selectedEntry = relativePath;
+        _pingPath = relativePath;
+        _pingTimer = PingDuration;
+
+        // Ensure the panel is visible
+        IsOpen = true;
+    }
 
     protected override void DrawContent()
     {
         var assets = EditorServices.Get<IAssetService>();
+
+        // Tick ping timer
+        if (_pingTimer > 0)
+        {
+            _pingTimer -= Runtime.Time.DeltaTime;
+            if (_pingTimer <= 0)
+                _pingPath = null;
+        }
 
         if (!assets.HasProject)
         {
@@ -95,22 +143,24 @@ public sealed class ProjectPanel : EditorPanel
                 var entry = assets.CreateFolder(contextDir, $"NewFolder_{DateTime.Now:HHmmss}");
                 _selectedFolder = entry.RelativePath;
                 _expandedFolders.Add(contextDir);
+                BeginRename(entry.RelativePath, entry.Name);
             }
 
             ImGui.Separator();
 
             if (EditorIcons.IconMenuItem(EditorIconType.Script, "C# Script"))
             {
-                string name = $"NewScript_{DateTime.Now:HHmmss}.cs";
-                assets.CreateFile(contextDir, name, GenerateScriptTemplate(name.Replace(".cs", "")));
+                string name = $"NewBehaviour.cs";
+                var scriptEntry = assets.CreateFile(contextDir, name, GenerateScriptTemplate(name.Replace(".cs", "")));
+                BeginRename(scriptEntry.RelativePath, Path.GetFileNameWithoutExtension(scriptEntry.Name));
             }
 
             if (EditorIcons.IconMenuItem(EditorIconType.Material, "Material"))
             {
                 string matName = $"NewMaterial_{DateTime.Now:HHmmss}";
                 string matFileName = $"{matName}.mat";
-                string absPath = assets.GetAbsolutePath(
-                    Path.Combine(contextDir == "." ? "" : contextDir, matFileName));
+                string relPath = Path.Combine(contextDir == "." ? "" : contextDir, matFileName);
+                string absPath = assets.GetAbsolutePath(relPath);
 
                 // Create a default material and save it using the serializer
                 var defaultShader = Shader.LoadDefault(DefaultShader.Standard);
@@ -119,6 +169,8 @@ public sealed class ProjectPanel : EditorPanel
                 mat.SetColor("_MainColor", Prowl.Vector.Color.White);
                 MaterialSerializer.Save(mat, absPath);
                 assets.MetaManager.EnsureMeta(absPath);
+                assets.Refresh();
+                BeginRename(relPath, matName);
             }
 
             if (EditorIcons.IconMenuItem(EditorIconType.Scene, "Scene"))
@@ -129,9 +181,11 @@ public sealed class ProjectPanel : EditorPanel
                     var scene = EditorServices.Get<ISceneService>().CurrentScene;
                     if (scene != null)
                     {
-                        string absPath = assets.GetAbsolutePath(
-                            Path.Combine(contextDir == "." ? "" : contextDir, name));
+                        string relPath = Path.Combine(contextDir == "." ? "" : contextDir, name);
+                        string absPath = assets.GetAbsolutePath(relPath);
                         serializer!.Save(scene, absPath);
+                        assets.Refresh();
+                        BeginRename(relPath, Path.GetFileNameWithoutExtension(name));
                     }
                 }
             }
@@ -200,6 +254,7 @@ public sealed class ProjectPanel : EditorPanel
                 var entry = assets.CreateFolder(relativeDir, $"NewFolder_{DateTime.Now:HHmmss}");
                 _selectedFolder = entry.RelativePath;
                 _expandedFolders.Add(relativeDir);
+                BeginRename(entry.RelativePath, entry.Name);
             }
             if (relativeDir != "." && ImGui.MenuItem("Delete Folder"))
             {
@@ -262,14 +317,21 @@ public sealed class ProjectPanel : EditorPanel
         foreach (var entry in entries)
         {
             if (entry.IsDirectory)
-                DrawContentFolderItem(entry);
+                DrawContentFolderItem(entry, assets);
             else
                 DrawContentFileItem(entry, assets);
         }
     }
 
-    private void DrawContentFolderItem(AssetEntry entry)
+    private void DrawContentFolderItem(AssetEntry entry, IAssetService assets)
     {
+        // Inline rename mode for folders
+        if (_renamingPath == entry.RelativePath)
+        {
+            DrawRenameInput(entry, assets, isDirectory: true);
+            return;
+        }
+
         bool isSelected = _selectedEntry == entry.RelativePath;
 
         ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.90f, 0.80f, 0.40f, 1f));
@@ -294,10 +356,32 @@ public sealed class ProjectPanel : EditorPanel
             _selectedFolder = entry.RelativePath;
             _expandedFolders.Add(entry.RelativePath);
         }
+
+        // Folder context menu in content area
+        if (ImGui.BeginPopupContextItem())
+        {
+            if (ImGui.MenuItem("Rename"))
+            {
+                BeginRename(entry.RelativePath, entry.Name);
+            }
+            if (ImGui.MenuItem("Delete"))
+            {
+                try { assets.Delete(entry); }
+                catch (Exception ex) { Runtime.Debug.LogWarning($"Cannot delete: {ex.Message}"); }
+            }
+            ImGui.EndPopup();
+        }
     }
 
     private void DrawContentFileItem(AssetEntry entry, IAssetService assets)
     {
+        // Inline rename mode — replace the tree node with an input field
+        if (_renamingPath == entry.RelativePath)
+        {
+            DrawRenameInput(entry, assets, isDirectory: false);
+            return;
+        }
+
         bool isSelected = _selectedEntry == entry.RelativePath;
 
         var flags = ImGuiTreeNodeFlags.Leaf | ImGuiTreeNodeFlags.NoTreePushOnOpen | ImGuiTreeNodeFlags.SpanAvailWidth;
@@ -310,6 +394,19 @@ public sealed class ProjectPanel : EditorPanel
         {
             string fileIconName = IconManager.GetIconNameForExtension(entry.Extension);
             IconManager.DrawIconOverLastItem(fileIconName, useTreeIndent: false);
+        }
+
+        // Ping highlight: pulsing border around the pinged asset
+        if (_pingPath == entry.RelativePath && _pingTimer > 0)
+        {
+            float alpha = 0.4f + 0.4f * MathF.Sin(_pingTimer * 6f);
+            var drawList = ImGui.GetWindowDrawList();
+            drawList.AddRect(ImGui.GetItemRectMin(), ImGui.GetItemRectMax(),
+                ImGui.GetColorU32(new Vector4(0.28f, 0.56f, 1.0f, alpha)), 3f, ImDrawFlags.None, 2f);
+
+            // Scroll to make the pinged item visible
+            if (_pingTimer > PingDuration - 0.1f)
+                ImGui.SetScrollHereY(0.5f);
         }
 
         // On mouse press: highlight the item but defer inspector selection until release
@@ -410,8 +507,7 @@ public sealed class ProjectPanel : EditorPanel
 
             if (ImGui.MenuItem("Rename"))
             {
-                _renamingPath = entry.RelativePath;
-                _renameBuffer = Path.GetFileNameWithoutExtension(entry.Name);
+                BeginRename(entry.RelativePath, Path.GetFileNameWithoutExtension(entry.Name));
             }
 
             if (ImGui.MenuItem("Copy"))
@@ -470,42 +566,7 @@ public sealed class ProjectPanel : EditorPanel
             ImGui.EndPopup();
         }
 
-        // Inline rename mode
-        if (_renamingPath == entry.RelativePath)
-        {
-            ImGui.SetNextItemWidth(ImGui.GetContentRegionAvail().X);
-            bool committed = ImGui.InputText("##Rename", ref _renameBuffer, 256,
-                ImGuiInputTextFlags.EnterReturnsTrue | ImGuiInputTextFlags.AutoSelectAll);
-            if (!ImGui.IsItemActive() && !ImGui.IsItemFocused())
-                committed = true; // lost focus = commit
-
-            if (committed)
-            {
-                string newName = _renameBuffer.Trim();
-                if (!string.IsNullOrEmpty(newName))
-                {
-                    string dir = Path.GetDirectoryName(entry.FullPath) ?? "";
-                    string ext = entry.Extension;
-                    string newFullPath = Path.Combine(dir, newName + ext);
-                    if (!File.Exists(newFullPath))
-                    {
-                        try
-                        {
-                            File.Move(entry.FullPath, newFullPath);
-                            // Move .meta file if it exists
-                            string metaOld = entry.FullPath + ".meta";
-                            string metaNew = newFullPath + ".meta";
-                            if (File.Exists(metaOld))
-                                File.Move(metaOld, metaNew);
-                            assets.Refresh();
-                        }
-                        catch (Exception ex) { Runtime.Debug.LogWarning($"Rename failed: {ex.Message}"); }
-                    }
-                }
-                _renamingPath = null;
-            }
         }
-    }
 
     private void DrawSearchResults(IAssetService assets)
     {
@@ -568,18 +629,21 @@ public sealed class ProjectPanel : EditorPanel
             var entry = assets.CreateFolder(contextDir, $"NewFolder_{DateTime.Now:HHmmss}");
             _selectedFolder = entry.RelativePath;
             _expandedFolders.Add(contextDir);
+            BeginRename(entry.RelativePath, entry.Name);
         }
 
         if (ImGui.MenuItem("New C# Script"))
         {
-            string name = $"NewScript_{DateTime.Now:HHmmss}.cs";
-            assets.CreateFile(contextDir, name, GenerateScriptTemplate(name.Replace(".cs", "")));
+            string name = $"NewBehaviour.cs";
+            var scriptEntry = assets.CreateFile(contextDir, name, GenerateScriptTemplate(name.Replace(".cs", "")));
+            BeginRename(scriptEntry.RelativePath, Path.GetFileNameWithoutExtension(scriptEntry.Name));
         }
 
         if (ImGui.MenuItem("New Material"))
         {
-            assets.CreateFile(contextDir, $"NewMaterial_{DateTime.Now:HHmmss}.mat",
+            var matEntry = assets.CreateFile(contextDir, $"NewMaterial_{DateTime.Now:HHmmss}.mat",
                 "{ \"shader\": \"Standard\", \"color\": [1,1,1,1] }");
+            BeginRename(matEntry.RelativePath, Path.GetFileNameWithoutExtension(matEntry.Name));
         }
 
         if (ImGui.MenuItem("New Scene"))
@@ -590,9 +654,11 @@ public sealed class ProjectPanel : EditorPanel
                 var scene = EditorServices.Get<ISceneService>().CurrentScene;
                 if (scene != null)
                 {
-                    string absPath = assets.GetAbsolutePath(
-                        Path.Combine(contextDir == "." ? "" : contextDir, name));
+                    string relPath = Path.Combine(contextDir == "." ? "" : contextDir, name);
+                    string absPath = assets.GetAbsolutePath(relPath);
                     serializer!.Save(scene, absPath);
+                    assets.Refresh();
+                    BeginRename(relPath, Path.GetFileNameWithoutExtension(name));
                 }
             }
         }
@@ -638,6 +704,76 @@ public sealed class ProjectPanel : EditorPanel
             {
                 Runtime.Debug.LogWarning("[Project] Select a GameObject first to create a prefab.");
             }
+        }
+    }
+
+    // ── Inline rename ──────────────────────────────────────────
+
+    private void BeginRename(string relativePath, string initialName)
+    {
+        _renamingPath = relativePath;
+        _renameBuffer = initialName;
+        _renameNeedsFocus = true;
+    }
+
+    private void DrawRenameInput(AssetEntry entry, IAssetService assets, bool isDirectory)
+    {
+        if (_renameNeedsFocus)
+        {
+            ImGui.SetKeyboardFocusHere();
+            _renameNeedsFocus = false;
+        }
+
+        ImGui.SetNextItemWidth(ImGui.GetContentRegionAvail().X);
+        bool committed = ImGui.InputText("##Rename", ref _renameBuffer, 256,
+            ImGuiInputTextFlags.EnterReturnsTrue | ImGuiInputTextFlags.AutoSelectAll);
+
+        // Cancel on Escape
+        if (ImGui.IsKeyPressed(ImGuiKey.Escape))
+        {
+            _renamingPath = null;
+            return;
+        }
+
+        // Commit when focus is lost (but not on the very first frame)
+        if (!committed && !ImGui.IsItemActive() && !ImGui.IsItemFocused())
+        {
+            Runtime.Debug.Log($"Committed! {!ImGui.IsItemActive()} - {!ImGui.IsItemFocused()}");
+            //committed = true;
+        }
+
+        if (committed)
+        {
+            string newName = _renameBuffer.Trim();
+            if (!string.IsNullOrEmpty(newName))
+            {
+                string dir = Path.GetDirectoryName(entry.FullPath) ?? "";
+                string ext = isDirectory ? "" : entry.Extension;
+                string newFullPath = Path.Combine(dir, newName + ext);
+                bool alreadyExists = isDirectory ? Directory.Exists(newFullPath) : File.Exists(newFullPath);
+                if (!alreadyExists && newFullPath != entry.FullPath)
+                {
+                    try
+                    {
+                        if (isDirectory)
+                        {
+                            Directory.Move(entry.FullPath, newFullPath);
+                        }
+                        else
+                        {
+                            File.Move(entry.FullPath, newFullPath);
+                            // Move .meta file if it exists
+                            string metaOld = entry.FullPath + ".meta";
+                            string metaNew = newFullPath + ".meta";
+                            if (File.Exists(metaOld))
+                                File.Move(metaOld, metaNew);
+                        }
+                        assets.Refresh();
+                    }
+                    catch (Exception ex) { Runtime.Debug.LogWarning($"Rename failed: {ex.Message}"); }
+                }
+            }
+            _renamingPath = null;
         }
     }
 

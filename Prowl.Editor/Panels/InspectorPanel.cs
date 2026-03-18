@@ -10,6 +10,7 @@ using Prowl.Runtime.Resources;
 using Prowl.Editor.Docking;
 using Prowl.Editor.Icons;
 using Prowl.Editor.Inspector;
+using Prowl.Editor.Project;
 using Prowl.Editor.Services;
 using Prowl.Editor.Undo;
 using Prowl.Editor.Undo.Commands;
@@ -46,7 +47,21 @@ public sealed class InspectorPanel : EditorPanel
     /// <summary> Label column width ratio (0–1). </summary>
     private const float LabelRatio = 0.3f;
 
-    public InspectorPanel() : base("Inspector") { }
+    public InspectorPanel() : base("Inspector")
+    {
+        // Invalidate cached component list when user scripts are recompiled
+        if (EditorApplication.ScriptAssemblyManager != null)
+            EditorApplication.ScriptAssemblyManager.OnAssemblyChanged += InvalidateComponentCache;
+    }
+
+    /// <summary>
+    /// Clears the cached list of available MonoBehaviour types so it is
+    /// rebuilt on the next frame, picking up newly compiled user scripts.
+    /// </summary>
+    public void InvalidateComponentCache()
+    {
+        _availableComponents = null;
+    }
 
     protected override void DrawContent()
     {
@@ -162,6 +177,19 @@ public sealed class InspectorPanel : EditorPanel
 
             // Overlay component icon on the header
             IconManager.DrawIconOverLastItem(compIconName);
+
+            // Drag source — allows dragging components to reference fields
+            if (ImGui.BeginDragDropSource(ImGuiDragDropFlags.None))
+            {
+                EditorDragDrop.BeginDrag("Component", comp);
+                unsafe
+                {
+                    int dummy = 0;
+                    ImGui.SetDragDropPayload("COMPONENT", (nint)(&dummy), sizeof(int));
+                }
+                ImGui.Text($"{typeName} ({go.Name ?? "?"})");
+                ImGui.EndDragDropSource();
+            }
 
             // Component context menu (right-click header)
             if (ImGui.BeginPopupContextItem())
@@ -625,6 +653,12 @@ public sealed class InspectorPanel : EditorPanel
             ImGui.Button(displayName, new Vector2(refBtnW, 0));
             ImGui.PopStyleColor();
 
+            // Single-click on reference button → ping asset in project view
+            if (ImGui.IsItemClicked(ImGuiMouseButton.Left) && !EditorDragDrop.IsDragging && current != null)
+            {
+                PingReferencedAsset(current);
+            }
+
             // Drag-drop target: accept EditorDragDrop payloads
             if (ImGui.IsItemHovered() && EditorDragDrop.IsDragging)
             {
@@ -646,6 +680,14 @@ public sealed class InspectorPanel : EditorPanel
                         if (field.FieldType.IsAssignableFrom(typeof(GameObject)))
                         {
                             SetFieldWithUndo(target, field, current, droppedGo);
+                            EditorDragDrop.Clear();
+                        }
+                    }
+                    else if (EditorDragDrop.PayloadType == "Component" && EditorDragDrop.Payload is MonoBehaviour droppedComp)
+                    {
+                        if (field.FieldType.IsInstanceOfType(droppedComp))
+                        {
+                            SetFieldWithUndo(target, field, current, droppedComp);
                             EditorDragDrop.Clear();
                         }
                     }
@@ -950,6 +992,61 @@ public sealed class InspectorPanel : EditorPanel
     // ────────────────────────────────────────────────────────────
     // Undo helper
     // ────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Attempts to find the referenced asset in the project and ping it in the ProjectPanel.
+    /// Navigates to the asset's folder and highlights it.
+    /// </summary>
+    private static void PingReferencedAsset(EngineObject obj)
+    {
+        if (obj == null) return;
+
+        // Try to find the asset by its AssetPath property or name
+        if (!EditorServices.TryGet<IAssetService>(out var assets) || !assets!.HasProject)
+            return;
+
+        string? assetRelPath = null;
+
+        // Check if the object has an AssetPath property
+        var assetPathProp = obj.GetType().GetProperty("AssetPath");
+        if (assetPathProp != null)
+        {
+            string? absPath = assetPathProp.GetValue(obj) as string;
+            if (!string.IsNullOrEmpty(absPath) && absPath.StartsWith(assets.AssetRootPath, StringComparison.OrdinalIgnoreCase))
+            {
+                try
+                {
+                    assetRelPath = Path.GetRelativePath(assets.AssetRootPath, absPath).Replace('\\', '/');
+                }
+                catch { /* not a project path */ }
+            }
+        }
+
+        // Fall back to searching by name in the asset database
+        if (assetRelPath == null && !string.IsNullOrEmpty(obj.Name))
+        {
+            var allEntries = assets.GetAllEntriesRecursive();
+            foreach (var entry in allEntries)
+            {
+                if (entry.IsDirectory) continue;
+                string nameNoExt = Path.GetFileNameWithoutExtension(entry.Name);
+                if (nameNoExt.Equals(obj.Name, StringComparison.OrdinalIgnoreCase))
+                {
+                    assetRelPath = entry.RelativePath;
+                    break;
+                }
+            }
+        }
+
+        if (assetRelPath != null)
+        {
+            // Find the ProjectPanel and ping the asset
+            if (EditorServices.TryGet<ProjectPanel>(out var projectPanel))
+            {
+                projectPanel!.PingAsset(assetRelPath);
+            }
+        }
+    }
 
     private static void SetFieldWithUndo(object target, FieldInfo field, object? oldValue, object? newValue)
     {

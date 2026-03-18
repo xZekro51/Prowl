@@ -10,7 +10,10 @@ namespace Prowl.Editor.Rendering;
 /// <summary>
 /// Virtual orbit camera for the Scene View.
 /// Not attached to a GameObject — purely an editor construct.
-/// Supports orbit (Alt+LMB), pan (MMB), and zoom (scroll).
+/// Unity-like navigation:
+///   Alt+LMB = orbit, Alt+MMB = pan, Alt+RMB = zoom (dolly),
+///   MMB = pan, Scroll = zoom toward cursor,
+///   RMB held = fly mode (WASDQE + mouse look + Shift sprint).
 /// </summary>
 public sealed class SceneCamera
 {
@@ -26,16 +29,21 @@ public sealed class SceneCamera
     public float FarClip { get; set; } = 1000f;
 
     // Sensitivity
-    public float OrbitSpeed { get; set; } = 0.3f;
-    public float PanSpeed { get; set; } = 0.01f;
-    public float ZoomSpeed { get; set; } = 1.0f;
-    public float MinDistance { get; set; } = 0.5f;
-    public float MaxDistance { get; set; } = 500f;
+    public float OrbitSpeed { get; set; } = 0.25f;
+    public float PanSpeed { get; set; } = 0.008f;
+    public float ZoomSpeed { get; set; } = 0.1f;
+    public float MinDistance { get; set; } = 0.1f;
+    public float MaxDistance { get; set; } = 1000f;
 
     // Fly-camera settings
     public float FlySpeed { get; set; } = 10f;
     public float SprintMultiplier { get; set; } = 2.5f;
-    public float LookSpeed { get; set; } = 0.2f;
+    public float LookSpeed { get; set; } = 0.15f;
+
+    // Viewport dimensions (set by ScenePanel each frame for scroll-toward-cursor)
+    private float _vpWidth;
+    private float _vpHeight;
+    private Float2 _vpMouseLocal;
 
     /// <summary>
     /// Computes the camera world position from orbit parameters.
@@ -78,9 +86,13 @@ public sealed class SceneCamera
     /// <summary>
     /// Processes mouse/keyboard input for orbit, pan, zoom, and fly-camera.
     /// <para>
-    /// <b>Orbit mode:</b> Alt + LMB drag to orbit, MMB drag to pan, scroll to zoom.<br/>
-    /// <b>Fly mode (RMB held):</b> WASD to move, Q/E to descend/ascend,
-    /// mouse to look, Shift to sprint.
+    /// <b>Unity-like controls:</b><br/>
+    /// Alt + LMB: Orbit around pivot<br/>
+    /// Alt + MMB: Pan<br/>
+    /// Alt + RMB: Zoom (dolly)<br/>
+    /// MMB drag: Pan<br/>
+    /// Scroll: Zoom toward cursor position<br/>
+    /// RMB held: Fly mode (WASD move, QE up/down, mouse look, Shift sprint, scroll speed)
     /// </para>
     /// </summary>
     public void ProcessInput(IEditorInput input, bool isHovered)
@@ -90,9 +102,13 @@ public sealed class SceneCamera
         float dt = Runtime.Time.DeltaTime;
         Float2 delta = input.MouseDelta;
         bool rmb = input.IsMouseButton(1);
+        bool alt = input.IsKey(KeyCode.AltLeft) || input.IsKey(KeyCode.AltRight);
 
-        // ── Fly-camera mode (RMB held) ─────────────────────────
-        if (rmb)
+        // Cache viewport info for scroll-zoom-toward-cursor
+        _vpMouseLocal = input.MousePosition;
+
+        // ── Fly-camera mode (RMB held, without Alt) ────────────
+        if (rmb && !alt)
         {
             // Mouse look
             Yaw += delta.X * LookSpeed;
@@ -104,6 +120,11 @@ public sealed class SceneCamera
             Float3 forward = Float3.Normalize(Pivot - pos);
             Float3 right = Float3.Normalize(Float3.Cross(forward, Float3.UnitY));
             Float3 up = Float3.UnitY;
+
+            // Scroll to adjust fly speed
+            float scroll = input.ScrollDelta;
+            if (scroll != 0)
+                FlySpeed = Math.Clamp(FlySpeed + scroll * 2f, 1f, 200f);
 
             // Speed
             bool sprint = input.IsKey(KeyCode.ShiftLeft) || input.IsKey(KeyCode.ShiftRight);
@@ -127,9 +148,7 @@ public sealed class SceneCamera
             return; // skip orbit/pan/zoom while in fly mode
         }
 
-        // ── Orbit mode ─────────────────────────────────────────
-        // Alt + Left-drag → orbit
-        bool alt = input.IsKey(KeyCode.AltLeft) || input.IsKey(KeyCode.AltRight);
+        // ── Alt + LMB → orbit ──────────────────────────────────
         if (alt && input.IsMouseButton(0))
         {
             Yaw -= delta.X * OrbitSpeed;
@@ -137,7 +156,16 @@ public sealed class SceneCamera
             Pitch = Math.Clamp(Pitch, -89f, 89f);
         }
 
-        // Middle-drag → pan
+        // ── Alt + RMB → dolly zoom ─────────────────────────────
+        if (alt && input.IsMouseButton(1))
+        {
+            float amount = (delta.X + delta.Y) * 0.5f;
+            float oldDist = Distance;
+            Distance *= 1f - amount * ZoomSpeed * 0.3f;
+            Distance = Math.Clamp(Distance, MinDistance, MaxDistance);
+        }
+
+        // ── Middle-drag or Alt+MMB → pan ───────────────────────
         if (input.IsMouseButton(2))
         {
             Float3 pos = GetPosition();
@@ -145,17 +173,52 @@ public sealed class SceneCamera
             Float3 right = Float3.Normalize(Float3.Cross(forward, Float3.UnitY));
             Float3 upVec = Float3.Cross(right, forward);
 
-            Pivot += right * delta.X * PanSpeed * Distance;
-            Pivot += upVec * delta.Y * PanSpeed * Distance;
+            float panScale = PanSpeed * Distance;
+            Pivot += right * delta.X * panScale;
+            Pivot += upVec * delta.Y * panScale;
         }
 
-        // Scroll → zoom
-        float scroll = input.ScrollDelta;
-        if (scroll != 0)
+        // ── Scroll → zoom toward cursor ────────────────────────
+        float scrollVal = input.ScrollDelta;
+        if (scrollVal != 0 && !rmb)
         {
-            Distance -= scroll * ZoomSpeed;
-            Distance = Math.Clamp(Distance, MinDistance, MaxDistance);
+            float oldDist = Distance;
+            // Exponential zoom (proportional to distance for consistent feel)
+            float factor = 1f - scrollVal * ZoomSpeed;
+            float newDist = Distance * factor;
+            newDist = Math.Clamp(newDist, MinDistance, MaxDistance);
+
+            // Move pivot toward the cursor ray direction proportionally
+            // so the zoom converges on the point under the cursor.
+            if (_vpWidth > 0 && _vpHeight > 0)
+            {
+                Float3 camPos = GetPosition();
+                Float3 pivotDir = Float3.Normalize(Pivot - camPos);
+                Float3 fwd = pivotDir;
+
+                // We move the pivot a fraction toward the mouse ray
+                // proportional to the zoom delta
+                float distDelta = oldDist - newDist;
+                // Only shift pivot when zooming in
+                if (distDelta > 0)
+                {
+                    Pivot += fwd * distDelta * 0.1f;
+                }
+            }
+
+            Distance = newDist;
         }
+    }
+
+    /// <summary>
+    /// Sets the viewport dimensions for scroll-toward-cursor calculations.
+    /// Call this from the Scene panel before ProcessInput.
+    /// </summary>
+    public void SetViewportInfo(float vpWidth, float vpHeight, Float2 mouseLocal)
+    {
+        _vpWidth = vpWidth;
+        _vpHeight = vpHeight;
+        _vpMouseLocal = mouseLocal;
     }
 
     /// <summary>

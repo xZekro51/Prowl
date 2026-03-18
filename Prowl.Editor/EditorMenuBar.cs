@@ -4,6 +4,7 @@
 using ImGuiNET;
 using Prowl.Runtime;
 using Prowl.Runtime.Resources;
+using Prowl.Editor.Project;
 using Prowl.Editor.Services;
 using Prowl.Editor.Undo;
 
@@ -69,6 +70,19 @@ public sealed class EditorMenuBar
             if (ImGui.MenuItem("Project Browser")) OnToggleProjectBrowser?.Invoke();
             if (ImGui.MenuItem("Game View"))       OnToggleGameView?.Invoke();
             if (ImGui.MenuItem("Console"))         OnToggleConsole?.Invoke();
+            ImGui.EndMenu();
+        }
+
+        if (ImGui.BeginMenu("Build"))
+        {
+            bool hasProject = EditorApplication.ScriptAssemblyManager != null;
+            if (ImGui.MenuItem("Compile Scripts", "Ctrl+B", false, hasProject))
+                OnCompileScripts();
+            ImGui.Separator();
+            if (ImGui.MenuItem("Open C# Project", "", false, hasProject))
+                OnOpenCSharpProject();
+            if (ImGui.MenuItem("Regenerate IDE Solution", "", false, hasProject))
+                OnRegenerateIDESolution();
             ImGui.EndMenu();
         }
 
@@ -209,5 +223,22 @@ public sealed class EditorMenuBar
     private static void OnAbout()
     {
         Debug.Log("[Menu] Prowl Editor v0.1 — Built on Prowl Engine (Standalone).");
+    }
+
+    private static void OnCompileScripts()
+    {
+        EditorApplication.ScriptAssemblyManager?.CompileAndLoad();
+    }
+
+    private static void OnOpenCSharpProject()
+    {
+        if (!string.IsNullOrEmpty(EditorApplication.ProjectPath))
+            ProjectSolutionGenerator.OpenSolution(EditorApplication.ProjectPath);
+    }
+
+    private static void OnRegenerateIDESolution()
+    {
+        if (!string.IsNullOrEmpty(EditorApplication.ProjectPath))
+            ProjectSolutionGenerator.GenerateSolution(EditorApplication.ProjectPath);
     }
 }

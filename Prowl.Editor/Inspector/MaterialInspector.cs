@@ -1,6 +1,7 @@
 // This file is part of the Prowl Game Engine
 // Licensed under the MIT License. See the LICENSE file in the project root for details.
 
+using System.IO;
 using System.Numerics;
 using ImGuiNET;
 using Prowl.Runtime;
@@ -417,6 +418,8 @@ public static class MaterialInspector
         });
     }
 
+    private static readonly string[] TextureExtensions = [".png", ".jpg", ".jpeg", ".bmp", ".tga", ".hdr"];
+
     private static void DrawTextureProperty(Material material, string propName, string label)
     {
         Texture2D? tex = material._properties.GetTexture(propName);
@@ -424,7 +427,12 @@ public static class MaterialInspector
         DrawRow(label, () =>
         {
             float thumbSz = 48f * Game.DpiScale;
+            float availW = ImGui.GetContentRegionAvail().X;
+            float clearBtnW = 15 * Game.DpiScale;
+            float refBtnW = availW - clearBtnW - thumbSz - ImGui.GetStyle().ItemSpacing.X * 3;
+            if (refBtnW < 30 * Game.DpiScale) refBtnW = 30 * Game.DpiScale;
 
+            // Thumbnail preview
             if (tex != null && tex.IsValid())
             {
                 nint texId = (nint)tex.Handle.Handle;
@@ -442,35 +450,192 @@ public static class MaterialInspector
                 ImGui.Dummy(new Vector2(thumbSz, thumbSz));
             }
 
-            // Drag-drop target: accept texture assets from the Project panel
-            if (ImGui.BeginDragDropTarget())
+            ImGui.SameLine();
+
+            ImGui.BeginGroup();
+
+            // Asset reference button — shows current texture name
+            string displayName = tex != null ? $"{tex.Name ?? "(texture)"} (Texture2D)" : "None (Texture2D)";
+
+            ImGui.PushStyleColor(ImGuiCol.Button, tex != null
+                ? new Vector4(0.22f, 0.30f, 0.22f, 1f)
+                : new Vector4(0.20f, 0.20f, 0.20f, 1f));
+            ImGui.Button(displayName, new Vector2(refBtnW, 0));
+            ImGui.PopStyleColor();
+
+            // Single-click on reference button → ping texture asset in project view
+            if (ImGui.IsItemClicked(ImGuiMouseButton.Left) && tex != null && !string.IsNullOrEmpty(tex.AssetPath))
             {
-                var payload = ImGui.AcceptDragDropPayload("ASSET_ENTRY");
-                unsafe
-                {
-                    if (payload.NativePtr != null && payload.DataSize > 0)
-                    {
-                        // In a full implementation, resolve the asset path and load
-                        // the Texture2D. For now log the intent.
-                        string data = System.Text.Encoding.UTF8.GetString(
-                            (byte*)payload.Data, payload.DataSize).TrimEnd('\0');
-                        Debug.Log($"[MaterialInspector] Texture drop on '{propName}': {data}");
-                    }
-                }
-                ImGui.EndDragDropTarget();
+                PingTextureAsset(tex);
             }
+
+            // Drag-drop target on the reference button: accept texture assets from the Project panel
+            AcceptTextureDrop(material, propName);
 
             // Also accept EditorDragDrop
             if (ImGui.IsItemHovered() && EditorDragDrop.IsDragging &&
-                EditorDragDrop.PayloadType == "AssetEntry")
+                EditorDragDrop.PayloadType == "AssetEntry" &&
+                EditorDragDrop.Payload is AssetEntry dragEntry &&
+                IsTextureFile(dragEntry.Extension))
             {
                 ImGui.SetTooltip("Drop texture here");
+                if (ImGui.IsMouseReleased(ImGuiMouseButton.Left))
+                {
+                    TryAssignTextureFromFile(material, propName, dragEntry.FullPath);
+                    EditorDragDrop.Clear();
+                }
             }
 
+            // Clear button (X)
             ImGui.SameLine();
-            string texName = tex != null ? tex.Name ?? "(texture)" : "None";
-            ImGui.TextUnformatted(texName);
+            if (ImGui.Button("\u2716##clr", new Vector2(clearBtnW, 0)))
+            {
+                material.SetTexture(propName, null);
+            }
+
+            // Picker button: open texture picker popup
+            string pickerId = $"##TexPicker_{propName}";
+            if (ImGui.Button("Pick...##pick", new Vector2(refBtnW + clearBtnW + ImGui.GetStyle().ItemSpacing.X, 0)))
+            {
+                ImGui.OpenPopup(pickerId);
+            }
+
+            // Texture picker popup
+            if (ImGui.BeginPopup(pickerId))
+            {
+                ImGui.Text("Select Texture");
+                ImGui.Separator();
+
+                // Built-in defaults
+                ImGui.TextColored(new Vector4(0.55f, 0.55f, 0.55f, 1f), "Built-in:");
+                foreach (DefaultTexture dt in Enum.GetValues<DefaultTexture>())
+                {
+                    if (ImGui.Selectable($"  {dt}"))
+                    {
+                        material.SetTexture(propName, Texture2D.LoadDefault(dt));
+                        ImGui.CloseCurrentPopup();
+                    }
+                }
+
+                // Project texture files
+                if (EditorServices.TryGet<IAssetService>(out var assetSvc) && assetSvc!.HasProject)
+                {
+                    var allEntries = assetSvc.GetAllEntriesRecursive();
+                    bool headerShown = false;
+                    foreach (var entry in allEntries)
+                    {
+                        if (entry.IsDirectory) continue;
+                        if (!IsTextureFile(entry.Extension)) continue;
+
+                        if (!headerShown)
+                        {
+                            ImGui.Spacing();
+                            ImGui.TextColored(new Vector4(0.55f, 0.55f, 0.55f, 1f), "Project:");
+                            headerShown = true;
+                        }
+
+                        if (ImGui.Selectable($"  {entry.Name}"))
+                        {
+                            TryAssignTextureFromFile(material, propName, entry.FullPath);
+                            ImGui.CloseCurrentPopup();
+                        }
+                    }
+                }
+
+                ImGui.EndPopup();
+            }
+
+            ImGui.EndGroup();
         });
+    }
+
+    private static bool IsTextureFile(string extension)
+    {
+        string ext = extension.ToLowerInvariant();
+        foreach (string texExt in TextureExtensions)
+            if (ext == texExt) return true;
+        return false;
+    }
+
+    private static void AcceptTextureDrop(Material material, string propName)
+    {
+        if (ImGui.BeginDragDropTarget())
+        {
+            var payload = ImGui.AcceptDragDropPayload("ASSET_ENTRY");
+            unsafe
+            {
+                if (payload.NativePtr != null && payload.DataSize > 0)
+                {
+                    string data = System.Text.Encoding.UTF8.GetString(
+                        (byte*)payload.Data, payload.DataSize).TrimEnd('\0');
+
+                    if (EditorServices.TryGet<IAssetService>(out var assetSvc))
+                    {
+                        string? resolvedPath = assetSvc!.GetAssetPathByGuid(data);
+                        string relativePath = resolvedPath ?? data;
+                        string absPath = assetSvc.GetAbsolutePath(relativePath);
+
+                        if (IsTextureFile(Path.GetExtension(absPath)))
+                            TryAssignTextureFromFile(material, propName, absPath);
+                    }
+                }
+            }
+            ImGui.EndDragDropTarget();
+        }
+    }
+
+    private static void TryAssignTextureFromFile(Material material, string propName, string filePath)
+    {
+        try
+        {
+            if (File.Exists(filePath))
+            {
+                var newTex = Texture2D.LoadFromFile(filePath, generateMipmaps: true);
+                newTex.Name = Path.GetFileNameWithoutExtension(filePath);
+                newTex.AssetPath = filePath;
+                material.SetTexture(propName, newTex);
+            }
+        }
+        catch (Exception ex)
+        {
+            Debug.LogWarning($"[MaterialInspector] Failed to load texture: {ex.Message}");
+        }
+    }
+
+    private static void PingTextureAsset(Texture2D tex)
+    {
+        if (!EditorServices.TryGet<IAssetService>(out var assets) || !assets!.HasProject)
+            return;
+
+        string? relPath = null;
+        string? absPath = tex.AssetPath;
+
+        if (!string.IsNullOrEmpty(absPath) && absPath.StartsWith(assets.AssetRootPath, StringComparison.OrdinalIgnoreCase))
+        {
+            try { relPath = Path.GetRelativePath(assets.AssetRootPath, absPath).Replace('\\', '/'); }
+            catch { /* ignore */ }
+        }
+
+        // Fallback: search by name
+        if (relPath == null && !string.IsNullOrEmpty(tex.Name))
+        {
+            var allEntries = assets.GetAllEntriesRecursive();
+            foreach (var entry in allEntries)
+            {
+                if (entry.IsDirectory) continue;
+                string nameNoExt = Path.GetFileNameWithoutExtension(entry.Name);
+                if (nameNoExt.Equals(tex.Name, StringComparison.OrdinalIgnoreCase) && IsTextureFile(entry.Extension))
+                {
+                    relPath = entry.RelativePath;
+                    break;
+                }
+            }
+        }
+
+        if (relPath != null && EditorServices.TryGet<Panels.ProjectPanel>(out var projectPanel))
+        {
+            projectPanel!.PingAsset(relPath);
+        }
     }
 
     // ────────────────────────────────────────────────────────────

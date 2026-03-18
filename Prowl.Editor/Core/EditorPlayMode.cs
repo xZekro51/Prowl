@@ -24,9 +24,9 @@ public enum PlayModeState
 
 /// <summary>
 /// Manages the editor's play/pause/stop lifecycle.
-/// On Play: snapshots the scene, starts simulation time.
+/// On Play: snapshots the scene, starts simulation time, enables physics.
 /// On Pause/Step: freezes/advances the simulation.
-/// On Stop: restores the pre-play scene state.
+/// On Stop: restores the pre-play scene state, disables physics.
 /// </summary>
 public sealed class EditorPlayMode
 {
@@ -38,6 +38,15 @@ public sealed class EditorPlayMode
 
     /// <summary> Fires when the play mode state changes. </summary>
     public event Action<PlayModeState>? StateChanged;
+
+    /// <summary>
+    /// Ensures physics is disabled in edit mode at startup.
+    /// Call this once during editor initialization.
+    /// </summary>
+    public void InitEditMode()
+    {
+        Scene.SimulatePhysics = false;
+    }
 
     /// <summary>
     /// Toggle play mode. If stopped → play. If playing/paused → stop.
@@ -106,6 +115,9 @@ public sealed class EditorPlayMode
         // Clone the scene for play-mode simulation
         _playScene = sceneService.CloneCurrentScene();
 
+        // Enable physics simulation
+        Scene.SimulatePhysics = true;
+
         // Start the simulation clock
         time.Play();
 
@@ -122,6 +134,9 @@ public sealed class EditorPlayMode
 
         // Stop the simulation clock
         time.Stop();
+
+        // Disable physics simulation
+        Scene.SimulatePhysics = false;
 
         // Dispose the play scene
         if (_playScene != null)

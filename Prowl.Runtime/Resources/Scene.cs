@@ -480,12 +480,19 @@ public class Scene : EngineObject, ISerializationCallbackReceiver
     }
 
     /// <summary>
+    /// When false, <see cref="FixedUpdate"/> will skip the physics step.
+    /// The editor sets this to false during edit mode and true during play mode.
+    /// </summary>
+    public static bool SimulatePhysics { get; set; } = true;
+
+    /// <summary>
     /// Executes physics update on all active GameObjects and their components.
     /// Calls Physics.Update and FixedUpdate.
     /// </summary>
     public void FixedUpdate()
     {
-        Physics.Update();
+        if (SimulatePhysics)
+            Physics.Update();
 
         List<GameObject> activeGOs = [.. ActiveObjects];
         ForeachComponent(activeGOs, (x) => x.FixedUpdate());

@@ -39,6 +39,13 @@ public sealed class GamePanel : EditorPanel
     private int _customW = 1280;
     private int _customH = 720;
 
+    /// <summary> Gets or sets the resolution preset index for session persistence. </summary>
+    public int SelectedResolutionIndex
+    {
+        get => _selectedResolution;
+        set => _selectedResolution = Math.Clamp(value, 0, ResolutionPresets.Length - 1);
+    }
+
     // Stats overlay
     private bool _showStats;
     private float _smoothedFps;
