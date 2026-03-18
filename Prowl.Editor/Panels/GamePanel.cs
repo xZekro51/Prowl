@@ -138,13 +138,10 @@ public sealed class GamePanel : EditorPanel
 
         if (!isPlaying)
         {
-            // Stopped overlay — centered hint text
-            string stopped = "Press Play to start the game";
-            Vector2 textSize = ImGui.CalcTextSize(stopped);
-            float cx = cursorScreen.X + (regionAvail.X - textSize.X) * 0.5f;
-            float cy = cursorScreen.Y + (regionAvail.Y - textSize.Y) * 0.5f;
-            drawList.AddText(new Vector2(cx, cy),
-                ImGui.GetColorU32(new Vector4(0.40f, 0.40f, 0.40f, 1f)), stopped);
+            // Stopped overlay — top-left "Preview" label
+            string preview = "\u25B6 Preview";
+            drawList.AddText(new Vector2(cursorScreen.X + 6 * Game.DpiScale, cursorScreen.Y + 4 * Game.DpiScale),
+                ImGui.GetColorU32(new Vector4(0.55f, 0.70f, 0.86f, 0.78f)), preview);
         }
         else
         {

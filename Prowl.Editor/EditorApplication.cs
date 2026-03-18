@@ -240,8 +240,9 @@ public sealed class EditorApplication : Game
             }
         }
 
-        // Render game view whenever in play or paused state (keeps the last frame visible)
-        if (_gamePanel != null && _gamePanel.IsOpen && _playMode.State != PlayModeState.Stopped)
+        // Render game view always — in edit mode this provides a live preview
+        // from the scene's highest-priority camera (sorted by Camera.Depth).
+        if (_gamePanel != null && _gamePanel.IsOpen)
         {
             Rect gvp = _gamePanel.ViewportRect;
             var (rw, rh) = _gamePanel.RenderResolution;
