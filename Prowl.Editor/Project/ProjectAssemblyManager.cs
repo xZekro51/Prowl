@@ -20,7 +20,7 @@ namespace Prowl.Editor.Project;
 /// editor's "Add Component" list.
 /// </para>
 /// </summary>
-public sealed class ProjectAssemblyManager : IDisposable
+public sealed class ProjectAssemblyManager : IDisposable, IProjectTypeResolver
 {
     private readonly string _projectPath;
     private ScriptLoadContext? _loadContext;
@@ -114,6 +114,8 @@ public sealed class ProjectAssemblyManager : IDisposable
             Debug.LogError($"[Scripts] Compilation failed with {result.Errors.Count} error(s).");
         }
 
+
+        ProjectAssembly.Register(this);   // ← one line!
         OnAssemblyChanged?.Invoke();
         return result;
     }
@@ -124,6 +126,7 @@ public sealed class ProjectAssemblyManager : IDisposable
     /// </summary>
     public void Unload()
     {
+        ProjectAssembly.Register(null);
         if (_loadContext != null)
         {
             _loadedAssembly = null;
@@ -131,6 +134,20 @@ public sealed class ProjectAssemblyManager : IDisposable
             _loadContext = null;
             Debug.Log("[Scripts] Previous script assembly unloaded.");
         }
+    }
+
+    public global::System.Type? GetType(string typeNameOrAssemblyQualified)
+    {
+        if (_loadedAssembly == null)
+            return global::System.Type.GetType(typeNameOrAssemblyQualified);
+
+        // Fast path for user types (most common case)
+        var shortName = typeNameOrAssemblyQualified.Split(',')[0].Trim();
+        var t = _loadedAssembly.GetType(shortName, throwOnError: false);
+        if (t != null) return t;
+
+        // Fallback for BCL/system types
+        return global::System.Type.GetType(typeNameOrAssemblyQualified);
     }
 
     /// <summary>

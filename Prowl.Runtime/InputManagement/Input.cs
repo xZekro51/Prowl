@@ -134,7 +134,7 @@ public static class Input
     /// <summary>
     /// Updates all registered action maps. Should be called once per frame.
     /// </summary>
-    internal static void UpdateActions(float deltaTime)
+    public static void UpdateActions(float deltaTime)
     {
         _currentTime += deltaTime;
 

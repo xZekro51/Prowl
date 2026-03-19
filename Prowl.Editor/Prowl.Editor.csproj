@@ -33,4 +33,10 @@
     <EmbeddedResource Include="Icons\Resources\*.png" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Reference Include="Echo">
+      <HintPath>..\..\Prowl.Echo\Echo\bin\Debug\net9.0\Echo.dll</HintPath>
+    </Reference>
+  </ItemGroup>
+
 </Project>

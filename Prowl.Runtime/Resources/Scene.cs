@@ -484,6 +484,36 @@ public class Scene : EngineObject, ISerializationCallbackReceiver
     }
 
     /// <summary>
+    /// Updates all active GameObjects and their components in this scene.
+    /// Calls PreUpdate, Update, and LateUpdate.
+    /// </summary>
+    public void UpdateCameras()
+    {
+        // Clear render tracking at the start of each update
+        ClearRenderTracking();
+
+        List<GameObject> activeGOs = [.. ActiveObjects];
+        foreach (GameObject go in activeGOs)
+            go.PreUpdate();
+
+        Game.BaseEventManager.InvokeEvent(EventSystem.BaseEvents.OnBeforeUpdate);
+        ForeachComponent(activeGOs, (x) => {
+            if (x is IRenderable || x is IRenderableLight)
+                x.Update();
+        });
+        Game.BaseEventManager.InvokeEvent(EventSystem.BaseEvents.OnAfterUpdate);
+
+        Game.BaseEventManager.InvokeEvent(EventSystem.BaseEvents.OnBeforeLateUpdate);
+        ForeachComponent(activeGOs, (x) => {
+            if (x is IRenderable || x is IRenderableLight)
+                x.LateUpdate();
+        });
+        Game.BaseEventManager.InvokeEvent(EventSystem.BaseEvents.OnAfterLateUpdate);
+
+        Flush();
+    }
+
+    /// <summary>
     /// When false, <see cref="FixedUpdate"/> will skip the physics step.
     /// The editor sets this to false during edit mode and true during play mode.
     /// </summary>

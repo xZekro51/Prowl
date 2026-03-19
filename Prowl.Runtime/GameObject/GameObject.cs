@@ -1073,6 +1073,7 @@ public class GameObject : EngineObject, ISerializable
             {
                 // Look for Monobehaviour Type
                 Type oType = RuntimeUtils.FindType(typeProperty.StringValue);
+                Debug.Log(oType);
                 if (oType == null)
                 {
                     Debug.LogWarning("Missing Monobehaviour Type: " + typeProperty.StringValue + " On " + Name);
@@ -1089,8 +1090,21 @@ public class GameObject : EngineObject, ISerializable
                     continue;
                 }
             }
-
+            Debug.Log("Value");
+            if (compTag.Value is Dictionary<string, EchoObject> valueDict)
+            {
+                foreach(var kvp in valueDict)
+                {
+                    Debug.Log($"Key: {kvp.Key}, Value: {kvp.Value}");
+                }
+            }
+            else
+            {
+                Debug.Log(compTag.Value);
+            }
+            Debug.Log(compTag.TagType);
             MonoBehaviour? component = Serializer.Deserialize<MonoBehaviour>(compTag, ctx);
+            Debug.Log($"Final Component result: {component == null}");
             if (component.IsNotValid()) continue;
             _components.Add(component);
             _componentCache.Add(component.GetType(), component);

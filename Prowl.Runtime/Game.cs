@@ -36,17 +36,21 @@ public class EchoLogger : IEchoLogger
 
 public abstract class Game
 {
-    private TimeData time = new();
-    private float fixedTimeAccumulator = 0.0f;
+    protected TimeData time = new();
+    protected float fixedTimeAccumulator = 0.0f;
 
     private PaperRenderer _paperRenderer;
     private Paper _paper;
-    private int frameCounter;
+    protected int frameCounter;
 
     private SilkImGui.ImGuiController _imguiController;
     private ImGuiUIRenderer _imguiRenderer;
 
     public static EventSystem.EventManager<EventSystem.BaseEvents> BaseEventManager { get; } = new();
+
+    public string WindowTitle => _title;
+
+    private string _title; 
 
     public Paper PaperInstance => _paper;
 
@@ -63,10 +67,62 @@ public abstract class Game
     private int _logicalHeight;
     private bool _imguiReady;
 
-    public void Run(string title, int width, int height)
+    public virtual void WindowUpdate(float delta)
+    {
+        try
+        {
+            UpdatePaperInput();
+
+            AudioContext.Update();
+
+            time.Update();
+            Time.TimeStack.Clear();
+            Time.TimeStack.Push(time);
+
+            Input.UpdateActions(delta);
+
+            BeginUpdate();
+
+            Scene? currentScene = Scene.Current;
+
+            // Fixed update loop
+            fixedTimeAccumulator += delta;
+            int count = 0;
+            while (fixedTimeAccumulator >= Time.FixedDeltaTime && count++ < 10)
+            {
+                currentScene?.FixedUpdate();
+                fixedTimeAccumulator -= Time.FixedDeltaTime;
+            }
+
+            currentScene?.Update();
+
+            if (DrawGizmos)
+            {
+                currentScene?.DrawGizmos();
+            }
+
+            EndUpdate();
+
+            if (frameCounter++ % 60 == 0)
+            {
+                Console.Title = $"{_title} - {Window.InternalWindow.FramebufferSize.X}x{Window.InternalWindow.FramebufferSize.Y} - FPS: {1.0 / Time.DeltaTime}";
+            }
+
+        }
+        catch (Exception e)
+        {
+            Debug.LogError("An exception occurred during the Update loop:");
+            Debug.LogError(e.ToString());
+            throw;
+        }
+    }
+
+    public virtual void Run(string title, int width, int height)
     {
         _logicalWidth = width;
         _logicalHeight = height;
+
+        _title = title;
 
         // Use DpiManager for system-level DPI detection before window creation.
         DpiManager.EnsureProcessDpiAware();
@@ -120,55 +176,7 @@ public abstract class Game
             Initialize();
         };
 
-        Window.Update += (delta) =>
-        {
-            try
-            {
-                UpdatePaperInput();
-
-                AudioContext.Update();
-
-                time.Update();
-                Time.TimeStack.Clear();
-                Time.TimeStack.Push(time);
-
-                Input.UpdateActions(delta);
-
-                BeginUpdate();
-
-                Scene? currentScene = Scene.Current;
-
-                // Fixed update loop
-                fixedTimeAccumulator += delta;
-                int count = 0;
-                while (fixedTimeAccumulator >= Time.FixedDeltaTime && count++ < 10)
-                {
-                    currentScene?.FixedUpdate();
-                    fixedTimeAccumulator -= Time.FixedDeltaTime;
-                }
-
-                currentScene?.Update();
-
-                if (DrawGizmos)
-                {
-                    currentScene?.DrawGizmos();
-                }
-
-                EndUpdate();
-
-                if (frameCounter++ % 60 == 0)
-                { 
-                    Console.Title = $"{title} - {Window.InternalWindow.FramebufferSize.X}x{Window.InternalWindow.FramebufferSize.Y} - FPS: {1.0 / Time.DeltaTime}";
-                }
-
-            }
-            catch (Exception e)
-            {
-                Debug.LogError("An exception occurred during the Update loop:");
-                Debug.LogError(e.ToString());
-                throw;
-            }
-        };
+        Window.Update += WindowUpdate;
 
         Window.Render += (delta) =>
         {
@@ -305,7 +313,7 @@ public abstract class Game
     }
 
     [RequiresDynamicCode("Calls System.Enum.GetValues(Type)")]
-    private void UpdatePaperInput()
+    protected void UpdatePaperInput()
     {
         // Handle mouse position and movement
         Int2 mousePos = Input.MousePosition;

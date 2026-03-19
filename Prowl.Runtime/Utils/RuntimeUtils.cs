@@ -70,7 +70,8 @@ public static class RuntimeUtils
 
     public static Type? FindType(string qualifiedTypeName)
     {
-        Type? t = Type.GetType(qualifiedTypeName);
+        //Type? t = Type.GetType(qualifiedTypeName);
+        Type? t = ProjectAssembly.GetType(qualifiedTypeName);
 
         if (t != null)
         {

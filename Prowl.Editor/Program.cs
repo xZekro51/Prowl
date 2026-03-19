@@ -17,7 +17,7 @@ internal class Program
         string title = projectPath != null
             ? $"Prowl Editor — {Path.GetFileName(projectPath)}"
             : "Prowl Editor";
-        editor.Run(title, 1600, 900);
+        editor.Run(title, 1920, 1080);
     }
 
     /// <summary>

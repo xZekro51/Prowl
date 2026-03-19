@@ -2,20 +2,23 @@
 // Licensed under the MIT License. See the LICENSE file in the project root for details.
 
 using System.Numerics;
+using System.Timers;
+
 using ImGuiNET;
-using Prowl.Runtime;
-using Prowl.Runtime.Resources;
-using Prowl.Vector;
-using Prowl.UI;
-using Prowl.Editor.Services;
-using Prowl.Editor.Docking;
-using Prowl.Editor.Panels;
-using Prowl.Editor.Rendering;
+
 using Prowl.Editor.Core;
+using Prowl.Editor.Docking;
 using Prowl.Editor.Icons;
+using Prowl.Editor.Panels;
 using Prowl.Editor.Project;
+using Prowl.Editor.Rendering;
+using Prowl.Editor.Services;
 using Prowl.Editor.Toolbar;
 using Prowl.Editor.Undo;
+using Prowl.Runtime;
+using Prowl.Runtime.Resources;
+using Prowl.UI;
+using Prowl.Vector;
 
 namespace Prowl.Editor;
 
@@ -82,6 +85,64 @@ public sealed class EditorApplication : Game
         ProjectPath = projectPath;
     }
 
+    public override void WindowUpdate(float delta)
+    {
+        try
+        {
+            UpdatePaperInput();
+
+            Prowl.Runtime.Audio.AudioContext.Update();
+
+            time.Update();
+            Time.TimeStack.Clear();
+            Time.TimeStack.Push(time);
+
+            Input.UpdateActions(delta);
+
+            BeginUpdate();
+
+            Scene? currentScene = Scene.Current;
+
+            // Fixed update loop
+            fixedTimeAccumulator += delta;
+            int count = 0;
+            while (fixedTimeAccumulator >= Time.FixedDeltaTime && count++ < 10)
+            {
+                currentScene?.FixedUpdate();
+                fixedTimeAccumulator -= Time.FixedDeltaTime;
+            }
+
+            if (_playMode.State == PlayModeState.Playing)
+            {
+                currentScene?.Update();
+            }
+            else
+            {
+                // Update only the cameras
+                currentScene?.UpdateCameras();
+            }
+
+            if (DrawGizmos)
+            {
+                currentScene?.DrawGizmos();
+            }
+
+            EndUpdate();
+
+            if (frameCounter++ % 60 == 0)
+            {
+                Console.Title = $"{WindowTitle} - {Window.InternalWindow.FramebufferSize.X}x{Window.InternalWindow.FramebufferSize.Y} - FPS: {1.0 / Time.DeltaTime}";
+            }
+
+        }
+        catch (Exception e)
+        {
+            Debug.LogError("An exception occurred during the Update loop:");
+            Debug.LogError(e.ToString());
+            throw;
+        }
+    }
+
     public override void Initialize()
     {
         // ── Layout persistence ──
@@ -109,6 +170,8 @@ public sealed class EditorApplication : Game
         // If a saved layout exists, load it now
         if (_layoutInitialised)
             ImGui.LoadIniSettingsFromDisk(_iniFilePath);
+
+        Prowl.Echo.Serializer.OnResolveCustomType += Serializer_OnResolveCustomType;
 
         // Initialize the editor console logger (hooks into Debug.OnLog)
         EditorConsoleLogger.Initialize();
@@ -147,6 +210,8 @@ public sealed class EditorApplication : Game
         if (!string.IsNullOrEmpty(ProjectPath))
         {
             _assemblyManager = new ProjectAssemblyManager(ProjectPath);
+            ProjectAssembly.Register(_assemblyManager);
+
             ScriptAssemblyManager = _assemblyManager;
             _assemblyManager.OnAssemblyChanged += OnScriptAssemblyChanged;
             _assemblyManager.CompileAndLoad();
@@ -238,6 +303,11 @@ public sealed class EditorApplication : Game
         }
 
         Debug.LogSuccess("Editor initialized.");
+    }
+
+    private void Serializer_OnResolveCustomType(string typeName, ref Type type)
+    {
+        if (type == null) type = ProjectAssembly.GetType(typeName);
     }
 
     public override void BeginUpdate()

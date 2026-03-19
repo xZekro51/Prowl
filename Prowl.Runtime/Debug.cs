@@ -74,25 +74,25 @@ public static class Debug
     public static event OnLog? OnLog;
 
     public static void Log(object message)
-        => Log(message.ToString(), LogSeverity.Normal);
+        => Log(message != null ? message.ToString() : "null", LogSeverity.Normal);
 
     public static void Log(string message)
         => Log(message, LogSeverity.Normal);
 
     public static void LogWarning(object message)
-        => Log(message.ToString(), LogSeverity.Warning);
+        => Log(message != null ? message.ToString() : "null", LogSeverity.Warning);
 
     public static void LogWarning(string message)
         => Log(message, LogSeverity.Warning);
 
     public static void LogError(object message)
-        => Log(message.ToString(), LogSeverity.Error);
+        => Log(message != null ? message.ToString() : "null", LogSeverity.Error);
 
     public static void LogError(string message)
         => Log(message, LogSeverity.Error);
 
     public static void LogSuccess(object message)
-        => Log(message.ToString(), LogSeverity.Success);
+        => Log(message != null ? message.ToString() : "null", LogSeverity.Success);
 
     public static void LogSuccess(string message)
         => Log(message, LogSeverity.Success);
