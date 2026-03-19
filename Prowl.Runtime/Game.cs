@@ -19,6 +19,7 @@ using Prowl.Vector;
 
 using ImGuiNET;
 using SilkImGui = Silk.NET.OpenGL.Extensions.ImGui;
+using Prowl.Runtime.EventSystem;
 
 namespace Prowl.Runtime;
 
@@ -44,6 +45,8 @@ public abstract class Game
 
     private SilkImGui.ImGuiController _imguiController;
     private ImGuiUIRenderer _imguiRenderer;
+
+    public static EventSystem.EventManager<EventSystem.BaseEvents> BaseEventManager { get; } = new();
 
     public Paper PaperInstance => _paper;
 

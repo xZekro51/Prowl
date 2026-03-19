@@ -472,9 +472,13 @@ public class Scene : EngineObject, ISerializationCallbackReceiver
         foreach (GameObject go in activeGOs)
             go.PreUpdate();
 
+        Game.BaseEventManager.InvokeEvent(EventSystem.BaseEvents.OnBeforeUpdate);
         ForeachComponent(activeGOs, (x) => x.Update());
+        Game.BaseEventManager.InvokeEvent(EventSystem.BaseEvents.OnAfterUpdate);
 
+        Game.BaseEventManager.InvokeEvent(EventSystem.BaseEvents.OnBeforeLateUpdate);
         ForeachComponent(activeGOs, (x) => x.LateUpdate());
+        Game.BaseEventManager.InvokeEvent(EventSystem.BaseEvents.OnAfterLateUpdate);
 
         Flush();
     }
