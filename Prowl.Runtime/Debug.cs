@@ -50,7 +50,13 @@ public record DebugStackTrace(params DebugStackFrame[] StackFrames)
         for (int i = 0; i < stackFrames.Length; i++)
         {
             StackFrame srcFrame = stackTrace.GetFrame(i);
-            stackFrames[i] = new DebugStackFrame(srcFrame.GetFileName(), srcFrame.GetFileLineNumber(), srcFrame.GetFileColumnNumber(), srcFrame.GetMethod());
+            int rawLine = srcFrame.GetFileLineNumber();
+            int rawCol  = srcFrame.GetFileColumnNumber();
+            stackFrames[i] = new DebugStackFrame(
+                srcFrame.GetFileName(),
+                rawLine > 0 ? rawLine : null,
+                rawCol  > 0 ? rawCol  : null,
+                srcFrame.GetMethod());
         }
 
         return new DebugStackTrace(stackFrames);

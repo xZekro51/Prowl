@@ -149,6 +149,25 @@ public static class ExternalEditorUtility
             Launch(devenvPath, $"\"{solutionPath}\" /Edit \"{filePath}\"");
         else
             Launch(devenvPath, $"/Edit \"{filePath}\"");
+
+        // devenv /Edit opens the file but cannot navigate to a specific line.
+        // Retry COM automation in the background once VS has had time to start.
+        if (OperatingSystem.IsWindows() && line > 0)
+        {
+            _ = Task.Run(async () =>
+            {
+                for (int attempt = 0; attempt < 15; attempt++)
+                {
+                    await Task.Delay(2000);
+                    try
+                    {
+                        if (TryOpenViaRunningObjectTable(filePath, line, column))
+                            return;
+                    }
+                    catch { /* VS not ready yet — keep retrying */ }
+                }
+            });
+        }
     }
 
     // P/Invoke for the COM Running Object Table (Windows only).

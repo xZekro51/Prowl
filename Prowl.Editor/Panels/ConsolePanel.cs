@@ -426,13 +426,13 @@ public sealed class ConsolePanel : EditorPanel
             {
                 var frame = entry.StackFrames.StackFrames[i];
                 string frameText = frame.ToString();
-                bool canOpen = !string.IsNullOrEmpty(frame.FileName) && frame.Line.HasValue;
+                bool canOpen = !string.IsNullOrEmpty(frame.FileName) && frame.Line is > 0;
 
                 if (canOpen)
                 {
                     ImGui.PushStyleColor(ImGuiCol.Text, LinkColor);
                     if (ImGui.Selectable($"  {frameText}##frame_{i}"))
-                        OpenFileAtLine(frame.FileName!, frame.Line!.Value, frame.Column ?? 1);
+                        OpenFileAtLine(frame.FileName!, frame.Line!.Value, Math.Max(1, frame.Column ?? 1));
                     ImGui.PopStyleColor();
 
                     if (ImGui.IsItemHovered())
@@ -498,9 +498,9 @@ public sealed class ConsolePanel : EditorPanel
 
         foreach (var frame in entry.StackFrames.StackFrames)
         {
-            if (!string.IsNullOrEmpty(frame.FileName) && frame.Line.HasValue)
+            if (!string.IsNullOrEmpty(frame.FileName) && frame.Line is > 0)
             {
-                OpenFileAtLine(frame.FileName!, frame.Line!.Value, frame.Column ?? 1);
+                OpenFileAtLine(frame.FileName!, frame.Line.Value, frame.Column ?? 1);
                 return;
             }
         }
