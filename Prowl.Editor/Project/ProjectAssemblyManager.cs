@@ -38,6 +38,14 @@ public sealed class ProjectAssemblyManager : IDisposable, IProjectTypeResolver
     private static readonly TimeSpan DebounceDelay = TimeSpan.FromSeconds(1);
     private DateTime _lastChangeTime;
 
+    // ── Polling fallback ─────────────────────────────────────
+    // FileSystemWatcher is unreliable on some platforms (e.g. Linux
+    // with certain filesystems, NFS mounts). We periodically poll
+    // for changes as a safety net.
+    private static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(5);
+    private DateTime _lastPollTime;
+    private Dictionary<string, DateTime>? _knownFileTimestamps;
+
     /// <summary>
     /// Raised after a new script assembly has been successfully loaded (or
     /// after the previous one was unloaded due to compilation failure).
@@ -55,6 +63,17 @@ public sealed class ProjectAssemblyManager : IDisposable, IProjectTypeResolver
     /// </summary>
     public bool RecompilePending => _recompileRequested;
 
+    /// <summary>
+    /// Whether a compilation is currently in progress.
+    /// </summary>
+    public bool IsCompiling { get; private set; }
+
+    /// <summary>
+    /// The result of the most recent compilation attempt, or <c>null</c> if
+    /// no compilation has been performed yet.
+    /// </summary>
+    public CompilationResult? LastCompilationResult { get; private set; }
+
     public ProjectAssemblyManager(string projectPath)
     {
         _projectPath = projectPath;
@@ -68,6 +87,7 @@ public sealed class ProjectAssemblyManager : IDisposable, IProjectTypeResolver
     public CompilationResult CompileAndLoad()
     {
         _recompileRequested = false;
+        IsCompiling = true;
 
         // Unload any previously loaded assembly
         Unload();
@@ -134,6 +154,13 @@ public sealed class ProjectAssemblyManager : IDisposable, IProjectTypeResolver
         // so that any lookups performed during the Unload() phase
         // (which may have cached null for user types) are purged.
         InvalidateTypeCaches();
+
+        LastCompilationResult = result;
+        IsCompiling = false;
+
+        // Refresh the polling snapshot so we don't immediately
+        // detect our own compilation as a change.
+        SnapshotFileTimestamps();
 
         OnAssemblyChanged?.Invoke();
         return result;
@@ -209,6 +236,10 @@ public sealed class ProjectAssemblyManager : IDisposable, IProjectTypeResolver
         _watcher.Created += OnSourceChanged;
         _watcher.Deleted += OnSourceChanged;
         _watcher.Renamed += (_, _) => { _recompileRequested = true; _lastChangeTime = DateTime.UtcNow; };
+
+        // Take an initial snapshot for the polling fallback
+        SnapshotFileTimestamps();
+        _lastPollTime = DateTime.UtcNow;
     }
 
     /// <summary>
@@ -225,17 +256,40 @@ public sealed class ProjectAssemblyManager : IDisposable, IProjectTypeResolver
     }
 
     /// <summary>
-    /// If a recompilation was flagged (by the file watcher or manually),
-    /// performs the compile-and-load cycle. Call this once per frame from
-    /// the editor's update loop.
+    /// If a recompilation was flagged (by the file watcher, the polling
+    /// fallback, or manually), performs the compile-and-load cycle. Call
+    /// this once per frame from the editor's update loop.
     /// <para>
     /// A debounce delay is applied: the recompile only proceeds once
     /// <see cref="DebounceDelay"/> has elapsed since the last file-system
     /// change, giving external editors time to release file locks.
     /// </para>
+    /// <para>
+    /// On platforms where <see cref="FileSystemWatcher"/> is unreliable
+    /// (e.g. Linux with certain filesystems), a periodic polling pass
+    /// detects changes that the watcher may have missed.
+    /// </para>
     /// </summary>
     public void ProcessPendingRecompile()
     {
+        // ── Polling fallback ───────────────────────────────────
+        // If the watcher is active but hasn't flagged a recompile,
+        // periodically check for file changes we may have missed.
+        if (!_recompileRequested && _watcher != null)
+        {
+            DateTime now = DateTime.UtcNow;
+            if (now - _lastPollTime >= PollInterval)
+            {
+                _lastPollTime = now;
+                if (PollForChanges())
+                {
+                    _recompileRequested = true;
+                    _lastChangeTime = now;
+                    Debug.Log("[Scripts] Polling detected source changes missed by the file watcher.");
+                }
+            }
+        }
+
         if (!_recompileRequested)
             return;
 
@@ -250,6 +304,7 @@ public sealed class ProjectAssemblyManager : IDisposable, IProjectTypeResolver
         catch (Exception ex)
         {
             _recompileRequested = false;
+            IsCompiling = false;
             Debug.LogError($"[Scripts] Recompilation failed: {ex.Message}");
         }
     }
@@ -288,6 +343,70 @@ public sealed class ProjectAssemblyManager : IDisposable, IProjectTypeResolver
     {
         _recompileRequested = true;
         _lastChangeTime = DateTime.UtcNow;
+    }
+
+    // ── Polling helpers ──────────────────────────────────────────
+
+    /// <summary>
+    /// Captures a snapshot of all <c>.cs</c> files and their last-write
+    /// timestamps under the project's Assets folder. Used by the polling
+    /// fallback to detect changes that <see cref="FileSystemWatcher"/> missed.
+    /// </summary>
+    private void SnapshotFileTimestamps()
+    {
+        string assetsDir = Path.Combine(_projectPath, "Assets");
+        if (!Directory.Exists(assetsDir))
+        {
+            _knownFileTimestamps = null;
+            return;
+        }
+
+        string[] files = Directory.GetFiles(assetsDir, "*.cs", SearchOption.AllDirectories);
+        var snapshot = new Dictionary<string, DateTime>(files.Length, StringComparer.OrdinalIgnoreCase);
+        foreach (string file in files)
+        {
+            try { snapshot[file] = File.GetLastWriteTimeUtc(file); }
+            catch { /* file may have been deleted between enumeration and read */ }
+        }
+        _knownFileTimestamps = snapshot;
+    }
+
+    /// <summary>
+    /// Compares the current <c>.cs</c> files against the last snapshot.
+    /// Returns <c>true</c> if any file was added, removed, or modified.
+    /// </summary>
+    private bool PollForChanges()
+    {
+        string assetsDir = Path.Combine(_projectPath, "Assets");
+        if (!Directory.Exists(assetsDir))
+            return _knownFileTimestamps != null && _knownFileTimestamps.Count > 0;
+
+        string[] currentFiles;
+        try { currentFiles = Directory.GetFiles(assetsDir, "*.cs", SearchOption.AllDirectories); }
+        catch { return false; }
+
+        if (_knownFileTimestamps == null)
+        {
+            // No previous snapshot — treat any files as a change.
+            return currentFiles.Length > 0;
+        }
+
+        // Check for new or modified files.
+        foreach (string file in currentFiles)
+        {
+            DateTime writeTime;
+            try { writeTime = File.GetLastWriteTimeUtc(file); }
+            catch { continue; }
+
+            if (!_knownFileTimestamps.TryGetValue(file, out DateTime known) || writeTime != known)
+                return true;
+        }
+
+        // Check for deleted files.
+        if (currentFiles.Length != _knownFileTimestamps.Count)
+            return true;
+
+        return false;
     }
 
     /// <summary>

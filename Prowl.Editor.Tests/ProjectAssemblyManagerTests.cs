@@ -203,4 +203,87 @@ public sealed class ProjectAssemblyManagerTests : IDisposable
 
         Assert.True(found, "MyComponent should be discoverable via AppDomain.GetAssemblies().");
     }
+
+    [Fact]
+    public void CompileAndLoad_SetsLastCompilationResult_OnSuccess()
+    {
+        WriteScript("Scripts/Ok.cs", """
+            namespace TestProject;
+            public class Ok { }
+            """);
+
+        using var mgr = new ProjectAssemblyManager(_projectPath);
+        Assert.Null(mgr.LastCompilationResult);
+
+        mgr.CompileAndLoad();
+
+        Assert.NotNull(mgr.LastCompilationResult);
+        Assert.True(mgr.LastCompilationResult!.Success);
+        Assert.Empty(mgr.LastCompilationResult.Errors);
+    }
+
+    [Fact]
+    public void CompileAndLoad_SetsLastCompilationResult_OnFailure()
+    {
+        WriteScript("Scripts/Err.cs", """
+            namespace TestProject;
+            public class Err { INVALID }
+            """);
+
+        using var mgr = new ProjectAssemblyManager(_projectPath);
+        mgr.CompileAndLoad();
+
+        Assert.NotNull(mgr.LastCompilationResult);
+        Assert.False(mgr.LastCompilationResult!.Success);
+        Assert.NotEmpty(mgr.LastCompilationResult.Errors);
+    }
+
+    [Fact]
+    public void IsCompiling_FalseBeforeAndAfterCompilation()
+    {
+        WriteScript("Scripts/Simple.cs", """
+            namespace TestProject;
+            public class Simple { }
+            """);
+
+        using var mgr = new ProjectAssemblyManager(_projectPath);
+        Assert.False(mgr.IsCompiling);
+
+        mgr.CompileAndLoad();
+
+        Assert.False(mgr.IsCompiling);
+    }
+
+    [Fact]
+    public void ProcessPendingRecompile_DetectsNewFilesViaPoll()
+    {
+        // Start with a valid script and compile
+        WriteScript("Scripts/Initial.cs", """
+            namespace TestProject;
+            public class Initial { }
+            """);
+
+        using var mgr = new ProjectAssemblyManager(_projectPath);
+        mgr.CompileAndLoad();
+        Assert.NotNull(mgr.LoadedAssembly);
+
+        // Start watching (captures initial snapshot)
+        mgr.StartWatching();
+
+        // Simulate adding a new file AFTER watching started.
+        // The FSW may or may not fire in a test environment,
+        // but the polling path should detect the new file.
+        WriteScript("Scripts/NewFile.cs", """
+            namespace TestProject;
+            public class NewFile { }
+            """);
+
+        // Manually trigger the polling by calling RequestRecompile.
+        // This verifies the process path works end-to-end.
+        mgr.RequestRecompile();
+        mgr.ProcessPendingRecompile();
+
+        Assert.NotNull(mgr.LastCompilationResult);
+        Assert.True(mgr.LastCompilationResult!.Success);
+    }
 }

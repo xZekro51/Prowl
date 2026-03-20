@@ -4,6 +4,7 @@
 using System.Numerics;
 using ImGuiNET;
 using Prowl.Editor.Core;
+using Prowl.Editor.Project;
 using Prowl.Editor.Services;
 
 using Prowl.Runtime;
@@ -13,13 +14,18 @@ namespace Prowl.Editor.Toolbar;
 /// <summary>
 /// Draws the Play / Pause / Step toolbar inline within the main menu bar
 /// or at the top of the editor. Not a dockable window — it's always visible.
-/// Communicates with <see cref="EditorPlayMode"/> for state transitions.
+/// Communicates with <see cref="EditorPlayMode"/> for state transitions
+/// and shows script compilation status with a manual recompile button.
 /// </summary>
 public sealed class PlayModeToolbar
 {
     private static readonly Vector4 PlayActive  = new(0.20f, 0.52f, 0.32f, 1f);
     private static readonly Vector4 PauseActive = new(0.72f, 0.56f, 0.16f, 1f);
     private static readonly Vector4 InfoCol     = new(0.56f, 0.56f, 0.56f, 1f);
+
+    private static readonly Vector4 CompileSuccessCol = new(0.40f, 0.85f, 0.40f, 1f);
+    private static readonly Vector4 CompileErrorCol   = new(0.95f, 0.30f, 0.30f, 1f);
+    private static readonly Vector4 CompilingCol      = new(0.72f, 0.56f, 0.16f, 1f);
 
     private static Vector2 Sz(float x, float y) => new(x * Game.DpiScale, y * Game.DpiScale);
 
@@ -96,8 +102,112 @@ public sealed class PlayModeToolbar
             ImGui.TextColored(InfoCol, status);
         }
 
+        // ── Compile button + status (right-aligned) ──────────────
+        DrawCompileSection(barHeight, yPad);
+
         ImGui.EndChild();
         ImGui.PopStyleColor();
         ImGui.PopStyleVar();
+    }
+
+    /// <summary>
+    /// Draws a Compile button and compilation status indicator on the
+    /// right side of the toolbar. Acts as a manual recompile fallback
+    /// when <see cref="FileSystemWatcher"/> misses changes.
+    /// </summary>
+    private static void DrawCompileSection(float barHeight, float yPad)
+    {
+        var mgr = EditorApplication.ScriptAssemblyManager;
+        if (mgr == null) return;
+
+        // Compute the right-aligned position
+        float rightPad = 8 * Game.DpiScale;
+        Vector2 btnSize = Sz(80, 24);
+        float statusTextWidth = 0;
+        string statusText = "";
+        Vector4 statusColor = InfoCol;
+
+        if (mgr.IsCompiling)
+        {
+            statusText = "Compiling...";
+            statusColor = CompilingCol;
+        }
+        else if (mgr.LastCompilationResult != null)
+        {
+            if (mgr.LastCompilationResult.Success)
+            {
+                int errorCount = mgr.LastCompilationResult.Errors.Count;
+                int warnCount = mgr.LastCompilationResult.Warnings.Count;
+                if (warnCount > 0)
+                {
+                    statusText = $"{warnCount} warning(s)";
+                    statusColor = CompilingCol;
+                }
+                else
+                {
+                    statusText = "OK";
+                    statusColor = CompileSuccessCol;
+                }
+            }
+            else
+            {
+                int errorCount = mgr.LastCompilationResult.Errors.Count;
+                statusText = $"{errorCount} error(s)";
+                statusColor = CompileErrorCol;
+            }
+        }
+
+        if (statusText.Length > 0)
+            statusTextWidth = ImGui.CalcTextSize(statusText).X + ImGui.GetStyle().ItemSpacing.X;
+
+        float totalWidth = btnSize.X + statusTextWidth + rightPad;
+        float xPos = ImGui.GetWindowWidth() - totalWidth;
+        if (xPos < 0) xPos = 0;
+
+        ImGui.SetCursorPosX(xPos);
+        ImGui.SetCursorPosY(yPad);
+
+        // Status text (before button)
+        if (statusText.Length > 0)
+        {
+            float textY = yPad + (btnSize.Y - ImGui.GetFontSize()) * 0.5f;
+            ImGui.SetCursorPosY(textY);
+            ImGui.TextColored(statusColor, statusText);
+
+            // Tooltip with error details on hover
+            if (ImGui.IsItemHovered() && mgr.LastCompilationResult != null)
+            {
+                var result = mgr.LastCompilationResult;
+                if (result.Errors.Count > 0 || result.Warnings.Count > 0)
+                {
+                    ImGui.BeginTooltip();
+                    int shown = 0;
+                    foreach (string err in result.Errors)
+                    {
+                        ImGui.TextColored(CompileErrorCol, err);
+                        if (++shown >= 10) { ImGui.Text("..."); break; }
+                    }
+                    shown = 0;
+                    foreach (string warn in result.Warnings)
+                    {
+                        ImGui.TextColored(CompilingCol, warn);
+                        if (++shown >= 10) { ImGui.Text("..."); break; }
+                    }
+                    ImGui.EndTooltip();
+                }
+            }
+
+            ImGui.SameLine();
+            ImGui.SetCursorPosY(yPad);
+        }
+
+        // Compile button
+        bool compileDisabled = mgr.IsCompiling;
+        if (compileDisabled) ImGui.BeginDisabled();
+        if (EditorIcons.ImageButtonWithLabel("CompileBtn", EditorIconType.Refresh, "Compile", btnSize))
+            mgr.CompileAndLoad();
+        if (compileDisabled) ImGui.EndDisabled();
+        if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+            ImGui.SetTooltip("Recompile project scripts (Ctrl+B)");
     }
 }
