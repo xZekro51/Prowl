@@ -86,6 +86,14 @@ public class Scene : EngineObject, ISerializationCallbackReceiver
     [SerializeIgnore]
     private readonly List<IRenderableLight> _lights = [];
 
+    // Reusable lists for hot-path iteration to avoid per-frame allocations
+    [SerializeIgnore]
+    private readonly List<GameObject> _activeGOsBuffer = [];
+    [SerializeIgnore]
+    private readonly List<MonoBehaviour> _componentBuffer = [];
+    [SerializeIgnore]
+    private readonly List<Camera> _cameraBuffer = [];
+
     [SerializeIgnore]
     private bool _isActive = false;
 
@@ -274,6 +282,21 @@ public class Scene : EngineObject, ISerializationCallbackReceiver
     {
         _renderables.Clear();
         _lights.Clear();
+    }
+
+    /// <summary>
+    /// Fills <see cref="_activeGOsBuffer"/> with all non-disposed, hierarchy-enabled
+    /// objects. Reuses the same list instance to avoid per-frame allocations.
+    /// </summary>
+    private List<GameObject> GetActiveObjectsNonAlloc()
+    {
+        _activeGOsBuffer.Clear();
+        foreach (GameObject o in _allObj)
+        {
+            if (!o.IsDisposed && o.EnabledInHierarchy)
+                _activeGOsBuffer.Add(o);
+        }
+        return _activeGOsBuffer;
     }
 
     /// <summary>
@@ -479,7 +502,7 @@ public class Scene : EngineObject, ISerializationCallbackReceiver
 
         bool editFilter = !IsPlayMode;
 
-        List<GameObject> activeGOs = [.. ActiveObjects];
+        List<GameObject> activeGOs = GetActiveObjectsNonAlloc();
         foreach (GameObject go in activeGOs)
             go.PreUpdate(editFilter ? ShouldRunInEditMode : null);
 
@@ -552,7 +575,7 @@ public class Scene : EngineObject, ISerializationCallbackReceiver
 
         bool editFilter = !IsPlayMode;
 
-        List<GameObject> activeGOs = [.. ActiveObjects];
+        List<GameObject> activeGOs = GetActiveObjectsNonAlloc();
         ForeachComponent(activeGOs, (x) => x.FixedUpdate(), editFilter);
 
         Flush();
@@ -563,7 +586,7 @@ public class Scene : EngineObject, ISerializationCallbackReceiver
     /// </summary>
     public void DrawGizmos()
     {
-        List<GameObject> activeGOs = [.. ActiveObjects];
+        List<GameObject> activeGOs = GetActiveObjectsNonAlloc();
         ForeachComponent(activeGOs, (x) =>
         {
             x.DrawGizmos();
@@ -578,7 +601,7 @@ public class Scene : EngineObject, ISerializationCallbackReceiver
     /// </summary>
     public void OnGui(Paper paper)
     {
-        List<GameObject> activeGOs = [.. ActiveObjects];
+        List<GameObject> activeGOs = GetActiveObjectsNonAlloc();
         ForeachComponent(activeGOs, (x) =>
         {
             x.OnGui(paper);
@@ -594,14 +617,17 @@ public class Scene : EngineObject, ISerializationCallbackReceiver
     /// <returns>True if any cameras were rendered, false otherwise</returns>
     public bool Render(RenderTexture? target = null)
     {
-        var Cameras = ActiveObjects.SelectMany(x => x.GetComponentsInChildren<Camera>()).ToList();
+        _cameraBuffer.Clear();
+        foreach (GameObject go in GetActiveObjectsNonAlloc())
+            foreach (Camera cam in go.GetComponentsInChildren<Camera>())
+                _cameraBuffer.Add(cam);
 
-        Cameras.Sort((a, b) => a.Depth.CompareTo(b.Depth));
+        _cameraBuffer.Sort((a, b) => a.Depth.CompareTo(b.Depth));
 
-        if (Cameras.Count == 0)
+        if (_cameraBuffer.Count == 0)
             return false;
 
-        foreach (Camera? cam in Cameras)
+        foreach (Camera cam in _cameraBuffer)
         {
             RenderPipeline pipeline = cam.Pipeline ?? DefaultRenderPipeline.Default;
 
@@ -627,13 +653,20 @@ public class Scene : EngineObject, ISerializationCallbackReceiver
     /// and execute an action on each enabled component.
     /// When <paramref name="editModeFilter"/> is true, only components that pass
     /// <see cref="ShouldRunInEditMode"/> are included.
+    /// Components are snapshot into a reusable buffer to safely handle collection
+    /// modifications during enumeration without per-call allocations.
     /// </summary>
-    public void ForeachComponent(IEnumerable<GameObject> objs, Action<MonoBehaviour> action, bool editModeFilter = false)
+    private void ForeachComponent(List<GameObject> objs, Action<MonoBehaviour> action, bool editModeFilter = false)
     {
         foreach (GameObject go in objs)
         {
-            MonoBehaviour[] components = [.. go.GetComponents<MonoBehaviour>()];
-            foreach (MonoBehaviour? comp in components)
+            // Snapshot components into the reusable buffer to guard against
+            // collection modification during callbacks.
+            _componentBuffer.Clear();
+            foreach (MonoBehaviour comp in go.GetComponents<MonoBehaviour>())
+                _componentBuffer.Add(comp);
+
+            foreach (MonoBehaviour comp in _componentBuffer)
                 if (comp.EnabledInHierarchy && (!editModeFilter || ShouldRunInEditMode(comp)))
                     action.Invoke(comp);
         }
