@@ -10,7 +10,8 @@ namespace Prowl.Runtime.Graphite;
 /// </summary>
 public enum GraphicsBackendType
 {
-    OpenGL
+    OpenGL,
+    Vulkan,
 }
 
 /// <summary>

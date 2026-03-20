@@ -307,6 +307,7 @@ public abstract class GraphiteDevice : IDisposable
         return backend switch
         {
             GraphicsBackendType.OpenGL => new OpenGL.GLGraphiteDevice(),
+            GraphicsBackendType.Vulkan => new Vulkan.VKGraphiteDevice(),
             _ => throw new ArgumentException($"Unknown backend type: {backend}", nameof(backend)),
         };
     }
