@@ -172,6 +172,23 @@ public sealed class EditorApplication : Game
         // Initialize the editor console logger (hooks into Debug.OnLog)
         EditorConsoleLogger.Initialize();
 
+        // Wire up "Clear on Play": automatically clear the log when entering play mode
+        _playMode.StateChanged += state =>
+        {
+            if (state == PlayModeState.Playing && EditorConsoleLogger.ClearOnPlay)
+            {
+                EditorConsoleLogger.Clear();
+                EditorConsoleLogger.ResetCounts();
+            }
+        };
+
+        // Wire up "Error Pause": pause play mode when an error is logged
+        EditorConsoleLogger.OnErrorLogged += () =>
+        {
+            if (EditorConsoleLogger.ErrorPause && _playMode.State == PlayModeState.Playing)
+                _playMode.TogglePause();
+        };
+
         // Register core services
         EditorServices.Register<ISceneService>(new DefaultSceneService());
         EditorServices.Register<ISelectionService>(new DefaultSelectionService());
@@ -560,11 +577,11 @@ public sealed class EditorApplication : Game
 
             string prefix = lastEntry.Severity switch
             {
-                LogSeverity.Success => "\u2714 ",
-                LogSeverity.Warning => "\u26A0 ",
-                LogSeverity.Error => "\u2716 ",
-                LogSeverity.Exception => "\u2716 ",
-                _ => "\u25CF ",
+                LogSeverity.Success => "[+] ",
+                LogSeverity.Warning => "[!] ",
+                LogSeverity.Error => "[x] ",
+                LogSeverity.Exception => "[x] ",
+                _ => "[-] ",
             };
 
             // Truncate long messages

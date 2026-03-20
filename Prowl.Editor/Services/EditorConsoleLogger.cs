@@ -1,6 +1,8 @@
 // This file is part of the Prowl Game Engine
 // Licensed under the MIT License. See the LICENSE file in the project root for details.
 
+using System.Text;
+
 using Prowl.Runtime;
 
 namespace Prowl.Editor.Services;
@@ -15,6 +17,8 @@ public sealed class LogEntry
     public string? StackTrace { get; init; }
     public DateTime Timestamp { get; init; } = DateTime.Now;
     public int RepeatCount { get; set; } = 1;
+    public long FrameNumber { get; init; }
+    public DebugStackTrace? StackFrames { get; init; }
 }
 
 /// <summary>
@@ -38,6 +42,18 @@ public static class EditorConsoleLogger
     public static bool ShowInfo { get; set; } = true;
     public static bool ShowWarning { get; set; } = true;
     public static bool ShowError { get; set; } = true;
+
+    /// <summary> Automatically clear the log when entering play mode. </summary>
+    public static bool ClearOnPlay { get; set; } = true;
+
+    /// <summary> Pause play mode when an error or exception is logged. </summary>
+    public static bool ErrorPause { get; set; }
+
+    /// <summary>
+    /// Fired when an error or exception is logged. Used by the editor
+    /// to pause play mode when <see cref="ErrorPause"/> is enabled.
+    /// </summary>
+    public static event Action? OnErrorLogged;
 
     /// <summary> Subscribes to the engine's Debug.OnLog event. Safe to call multiple times. </summary>
     public static void Initialize()
@@ -85,6 +101,63 @@ public static class EditorConsoleLogger
     public static int WarningCount { get; private set; }
     public static int ErrorCount { get; private set; }
 
+    /// <summary>
+    /// Exports all current log entries to a text file.
+    /// </summary>
+    public static void ExportToFile(string filePath)
+    {
+        List<LogEntry> snapshot;
+        lock (_lock)
+            snapshot = new List<LogEntry>(_entries);
+
+        var sb = new StringBuilder();
+        sb.AppendLine($"Prowl Engine \u2014 Console Log Export ({DateTime.Now:yyyy-MM-dd HH:mm:ss})");
+        sb.AppendLine(new string('=', 80));
+        sb.AppendLine();
+
+        foreach (var entry in snapshot)
+        {
+            string sev = entry.Severity switch
+            {
+                LogSeverity.Success   => "SUCCESS",
+                LogSeverity.Warning   => "WARN   ",
+                LogSeverity.Error     => "ERROR  ",
+                LogSeverity.Exception => "EXCEPT ",
+                _                     => "INFO   ",
+            };
+            sb.AppendLine($"[{entry.Timestamp:HH:mm:ss.fff}] [Frame {entry.FrameNumber,6}] [{sev}] {entry.Message}");
+            if (!string.IsNullOrEmpty(entry.StackTrace))
+                sb.AppendLine(entry.StackTrace);
+        }
+
+        File.WriteAllText(filePath, sb.ToString());
+    }
+
+    /// <summary>
+    /// Formats all entries as plain text, suitable for copying to the clipboard.
+    /// </summary>
+    public static string FormatAllAsText()
+    {
+        List<LogEntry> snapshot;
+        lock (_lock)
+            snapshot = new List<LogEntry>(_entries);
+
+        var sb = new StringBuilder();
+        foreach (var entry in snapshot)
+        {
+            string sev = entry.Severity switch
+            {
+                LogSeverity.Success   => "[SUCCESS]",
+                LogSeverity.Warning   => "[WARN]",
+                LogSeverity.Error     => "[ERROR]",
+                LogSeverity.Exception => "[EXCEPTION]",
+                _                     => "[INFO]",
+            };
+            sb.AppendLine($"[{entry.Timestamp:HH:mm:ss.fff}] {sev} {entry.Message}");
+        }
+        return sb.ToString();
+    }
+
     private static void OnLogReceived(string message, DebugStackTrace? stackTrace, LogSeverity severity)
     {
         lock (_lock)
@@ -110,22 +183,37 @@ public static class EditorConsoleLogger
                 if (last.Message == message && last.Severity == severity)
                 {
                     last.RepeatCount++;
-                    return;
+                }
+                else
+                {
+                    AppendEntry(message, severity, stackTrace);
                 }
             }
-
-            _entries.Add(new LogEntry
+            else
             {
-                Message = message,
-                Severity = severity,
-                StackTrace = stackTrace?.ToString(),
-                Timestamp = DateTime.Now,
-            });
-
-            // Trim to max size
-            while (_entries.Count > MaxEntries)
-                _entries.RemoveAt(0);
+                AppendEntry(message, severity, stackTrace);
+            }
         }
+
+        // Fire outside the lock to avoid deadlocks from re-entrant logging
+        if (severity is LogSeverity.Error or LogSeverity.Exception)
+            OnErrorLogged?.Invoke();
+    }
+
+    private static void AppendEntry(string message, LogSeverity severity, DebugStackTrace? stackTrace)
+    {
+        _entries.Add(new LogEntry
+        {
+            Message = message,
+            Severity = severity,
+            StackTrace = stackTrace?.ToString(),
+            StackFrames = stackTrace,
+            Timestamp = DateTime.Now,
+            FrameNumber = Time.FrameCount,
+        });
+
+        while (_entries.Count > MaxEntries)
+            _entries.RemoveAt(0);
     }
 
     internal static void ResetCounts()

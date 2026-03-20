@@ -8,6 +8,7 @@ using ImGuiNET;
 using Prowl.Runtime;
 using Prowl.Editor.Docking;
 using Prowl.Editor.Services;
+using Prowl.Editor.Utilities;
 
 namespace Prowl.Editor.Panels;
 
@@ -25,6 +26,14 @@ public sealed class PreferencesPanel : EditorPanel
     private string _externalScriptEditor = string.Empty;
     private int _undoHistorySize = 256;
     private float _uiScale = 1.0f;
+
+    /// <summary> The configured external script editor executable path, readable by other panels. </summary>
+    public static string ExternalEditor { get; private set; } = string.Empty;
+
+    // Auto-detected editor list
+    private int _selectedEditorIndex;
+    private List<DetectedEditor> _detectedEditors = new();
+    private string[] _editorDisplayNames = ["(Open by file extension)"];
 
     // Internal
     private float _autoSaveTimer;
@@ -95,11 +104,23 @@ public sealed class PreferencesPanel : EditorPanel
         }
         ImGui.Spacing();
 
-        // ── External Editor ────────────────────────────
+        // ── External Script Editor ──────────────────────
         ImGui.Text("External Script Editor");
-        ImGui.SetNextItemWidth(ImGui.GetContentRegionAvail().X);
-        if (ImGui.InputText("##ExtEditor", ref _externalScriptEditor, 512))
+        float refreshWidth = ImGui.CalcTextSize("Refresh").X + ImGui.GetStyle().FramePadding.X * 2 + ImGui.GetStyle().ItemSpacing.X;
+        ImGui.SetNextItemWidth(ImGui.GetContentRegionAvail().X - refreshWidth);
+        if (ImGui.Combo("##ExtEditor", ref _selectedEditorIndex, _editorDisplayNames, _editorDisplayNames.Length))
+        {
+            _externalScriptEditor = _selectedEditorIndex == 0
+                ? string.Empty
+                : _detectedEditors[_selectedEditorIndex - 1].ExecutablePath;
+            ExternalEditor = _externalScriptEditor;
             Save();
+        }
+        ImGui.SameLine();
+        if (ImGui.SmallButton("Refresh"))
+            RefreshDetectedEditors();
+        if (_selectedEditorIndex > 0 && _selectedEditorIndex <= _detectedEditors.Count)
+            ImGui.TextColored(new Vector4(0.5f, 0.5f, 0.5f, 1f), _detectedEditors[_selectedEditorIndex - 1].ExecutablePath);
 
         ImGui.Spacing();
         ImGui.Separator();
@@ -136,6 +157,31 @@ public sealed class PreferencesPanel : EditorPanel
         if (_loaded) return;
         _loaded = true;
         Load();
+        RefreshDetectedEditors();
+    }
+
+    private void RefreshDetectedEditors()
+    {
+        _detectedEditors = new List<DetectedEditor>(ExternalEditorUtility.GetDetectedEditors(refresh: true));
+        _editorDisplayNames = new string[_detectedEditors.Count + 1];
+        _editorDisplayNames[0] = "(Open by file extension)";
+        for (int i = 0; i < _detectedEditors.Count; i++)
+            _editorDisplayNames[i + 1] = _detectedEditors[i].DisplayName;
+        SyncEditorIndex();
+    }
+
+    private void SyncEditorIndex()
+    {
+        _selectedEditorIndex = 0;
+        if (string.IsNullOrEmpty(_externalScriptEditor)) return;
+        for (int i = 0; i < _detectedEditors.Count; i++)
+        {
+            if (string.Equals(_detectedEditors[i].ExecutablePath, _externalScriptEditor, StringComparison.OrdinalIgnoreCase))
+            {
+                _selectedEditorIndex = i + 1;
+                return;
+            }
+        }
     }
 
     private string GetFilePath()
@@ -189,6 +235,7 @@ public sealed class PreferencesPanel : EditorPanel
             _autoSaveIntervalMinutes = root["autoSaveIntervalMinutes"]?.GetValue<float>() ?? 5f;
             _selectedTheme = root["theme"]?.GetValue<int>() ?? 0;
             _externalScriptEditor = root["externalScriptEditor"]?.GetValue<string>() ?? string.Empty;
+            ExternalEditor = _externalScriptEditor;
             _undoHistorySize = root["undoHistorySize"]?.GetValue<int>() ?? 256;
             _uiScale = root["uiScale"]?.GetValue<float>() ?? 1.0f;
 
@@ -209,6 +256,8 @@ public sealed class PreferencesPanel : EditorPanel
         _autoSaveIntervalMinutes = 5f;
         _selectedTheme = 0;
         _externalScriptEditor = string.Empty;
+        ExternalEditor = string.Empty;
+        _selectedEditorIndex = 0;
         _undoHistorySize = 256;
         _uiScale = 1.0f;
         DpiManager.UserScale = 1.0f;
