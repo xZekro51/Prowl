@@ -124,6 +124,9 @@ public abstract class Game
 
         _title = title;
 
+        // Create a fresh engine context for this game instance.
+        EngineContext.Current = new EngineContext();
+
         // Use DpiManager for system-level DPI detection before window creation.
         DpiManager.EnsureProcessDpiAware();
         float systemScale = DpiManager.GetSystemScale();

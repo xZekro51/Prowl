@@ -23,8 +23,13 @@ public class Scene : EngineObject, ISerializationCallbackReceiver
     /// For simple games, use Scene.Load() and Scene.Current for automatic scene management.
     /// For advanced use cases (e.g., multiplayer servers with multiple scenes),
     /// create and manage your own Scene instances directly.
+    /// Delegates to <see cref="EngineContext.Current"/>.<see cref="EngineContext.ActiveScene"/>.
     /// </summary>
-    public static Scene? Current { get; private set; }
+    public static Scene? Current
+    {
+        get => EngineContext.Current.ActiveScene;
+        private set => EngineContext.Current.ActiveScene = value;
+    }
 
     /// <summary>
     /// Loads a scene as the current active scene, replacing any previously loaded scene.
@@ -492,8 +497,13 @@ public class Scene : EngineObject, ISerializationCallbackReceiver
     /// <summary>
     /// When false, <see cref="FixedUpdate"/> will skip the physics step.
     /// The editor sets this to false during edit mode and true during play mode.
+    /// Delegates to <see cref="EngineContext.Current"/>.<see cref="EngineContext.SimulatePhysics"/>.
     /// </summary>
-    public static bool SimulatePhysics { get; set; } = true;
+    public static bool SimulatePhysics
+    {
+        get => EngineContext.Current.SimulatePhysics;
+        set => EngineContext.Current.SimulatePhysics = value;
+    }
 
     /// <summary>
     /// When true, all component lifecycle methods (Start, Update, FixedUpdate,
@@ -501,8 +511,13 @@ public class Scene : EngineObject, ISerializationCallbackReceiver
     /// marked with <see cref="ExecuteInEditModeAttribute"/> or implementing
     /// <see cref="IRenderable"/>/<see cref="IRenderableLight"/> will execute.
     /// Defaults to true so standalone (non-editor) games run without changes.
+    /// Delegates to <see cref="EngineContext.Current"/>.<see cref="EngineContext.IsPlayMode"/>.
     /// </summary>
-    public static bool IsPlayMode { get; set; } = true;
+    public static bool IsPlayMode
+    {
+        get => EngineContext.Current.IsPlayMode;
+        set => EngineContext.Current.IsPlayMode = value;
+    }
 
     /// <summary>
     /// Per-type cache for whether a MonoBehaviour subclass should execute in edit mode.
