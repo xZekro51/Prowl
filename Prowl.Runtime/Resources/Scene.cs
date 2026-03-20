@@ -90,8 +90,6 @@ public class Scene : EngineObject, ISerializationCallbackReceiver
     [SerializeIgnore]
     private readonly List<GameObject> _activeGOsBuffer = [];
     [SerializeIgnore]
-    private readonly List<MonoBehaviour> _componentBuffer = [];
-    [SerializeIgnore]
     private readonly List<Camera> _cameraBuffer = [];
 
     [SerializeIgnore]
@@ -215,13 +213,21 @@ public class Scene : EngineObject, ISerializationCallbackReceiver
 
             if (go.EnabledInHierarchy)
             {
-                // Create a copy of components to avoid modification during enumeration
-                MonoBehaviour[] components = [.. go.GetComponents<MonoBehaviour>()];
-                foreach (MonoBehaviour component in components)
+                go.BeginComponentIteration();
+                try
                 {
-                    if (component.IsDisposed) continue;
-                    if (component.Enabled && component.EnabledInHierarchy)
-                        component.InternalOnEnable();
+                    int count = go._components.Count;
+                    for (int i = 0; i < count; i++)
+                    {
+                        MonoBehaviour component = go._components[i];
+                        if (component.IsDisposed) continue;
+                        if (component.Enabled && component.EnabledInHierarchy)
+                            component.InternalOnEnable();
+                    }
+                }
+                finally
+                {
+                    go.EndComponentIteration();
                 }
             }
         }
@@ -245,13 +251,21 @@ public class Scene : EngineObject, ISerializationCallbackReceiver
 
             if (go.EnabledInHierarchy)
             {
-                // Create a copy of components to avoid modification during enumeration
-                MonoBehaviour[] components = [.. go.GetComponents<MonoBehaviour>()];
-                foreach (MonoBehaviour component in components)
+                go.BeginComponentIteration();
+                try
                 {
-                    if (component.IsDisposed) continue;
-                    if (component.Enabled && component.EnabledInHierarchy)
-                        component.OnDisable();
+                    int count = go._components.Count;
+                    for (int i = 0; i < count; i++)
+                    {
+                        MonoBehaviour component = go._components[i];
+                        if (component.IsDisposed) continue;
+                        if (component.Enabled && component.EnabledInHierarchy)
+                            component.OnDisable();
+                    }
+                }
+                finally
+                {
+                    go.EndComponentIteration();
                 }
             }
         }
@@ -327,25 +341,34 @@ public class Scene : EngineObject, ISerializationCallbackReceiver
         {
             obj.Scene = this;
 
-            // Create a copy of components to avoid modification during enumeration
-            MonoBehaviour[] components = [.. obj.GetComponents<MonoBehaviour>()];
-
-            // Call OnAddedToScene for all components
-            foreach (MonoBehaviour component in components)
+            obj.BeginComponentIteration();
+            try
             {
-                if (component.IsDisposed) continue;
-                component.OnAddedToScene();
-            }
+                int count = obj._components.Count;
 
-            // Call OnEnable for enabled components, but only if the scene is active
-            if (IsActive && obj.EnabledInHierarchy)
-            {
-                foreach (MonoBehaviour component in components)
+                // Call OnAddedToScene for all components
+                for (int i = 0; i < count; i++)
                 {
+                    MonoBehaviour component = obj._components[i];
                     if (component.IsDisposed) continue;
-                    if (component.Enabled && component.EnabledInHierarchy)
-                        component.InternalOnEnable();
+                    component.OnAddedToScene();
                 }
+
+                // Call OnEnable for enabled components, but only if the scene is active
+                if (IsActive && obj.EnabledInHierarchy)
+                {
+                    for (int i = 0; i < count; i++)
+                    {
+                        MonoBehaviour component = obj._components[i];
+                        if (component.IsDisposed) continue;
+                        if (component.Enabled && component.EnabledInHierarchy)
+                            component.InternalOnEnable();
+                    }
+                }
+            }
+            finally
+            {
+                obj.EndComponentIteration();
             }
         }
 
@@ -364,25 +387,34 @@ public class Scene : EngineObject, ISerializationCallbackReceiver
 
         if (_allObj.Remove(obj))
         {
-            // Create a copy of components to avoid modification during enumeration
-            MonoBehaviour[] components = [.. obj.GetComponents<MonoBehaviour>()];
-
-            // Call OnDisable for currently enabled components (only if scene is active)
-            if (IsActive && obj.EnabledInHierarchy)
+            obj.BeginComponentIteration();
+            try
             {
-                foreach (MonoBehaviour component in components)
+                int count = obj._components.Count;
+
+                // Call OnDisable for currently enabled components (only if scene is active)
+                if (IsActive && obj.EnabledInHierarchy)
                 {
+                    for (int i = 0; i < count; i++)
+                    {
+                        MonoBehaviour component = obj._components[i];
+                        if (component.IsDisposed) continue;
+                        if (component.Enabled && component.EnabledInHierarchy)
+                            component.OnDisable();
+                    }
+                }
+
+                // Call OnRemovedFromScene for all components
+                for (int i = 0; i < count; i++)
+                {
+                    MonoBehaviour component = obj._components[i];
                     if (component.IsDisposed) continue;
-                    if (component.Enabled && component.EnabledInHierarchy)
-                        component.OnDisable();
+                    component.OnRemovedFromScene();
                 }
             }
-
-            // Call OnRemovedFromScene for all components
-            foreach (MonoBehaviour component in components)
+            finally
             {
-                if (component.IsDisposed) continue;
-                component.OnRemovedFromScene();
+                obj.EndComponentIteration();
             }
 
             obj.Scene = null;
@@ -653,22 +685,29 @@ public class Scene : EngineObject, ISerializationCallbackReceiver
     /// and execute an action on each enabled component.
     /// When <paramref name="editModeFilter"/> is true, only components that pass
     /// <see cref="ShouldRunInEditMode"/> are included.
-    /// Components are snapshot into a reusable buffer to safely handle collection
-    /// modifications during enumeration without per-call allocations.
+    /// Uses the deferred add/remove mechanism on each <see cref="GameObject"/> so
+    /// the underlying component list can be iterated directly without copies.
     /// </summary>
     private void ForeachComponent(List<GameObject> objs, Action<MonoBehaviour> action, bool editModeFilter = false)
     {
         foreach (GameObject go in objs)
         {
-            // Snapshot components into the reusable buffer to guard against
-            // collection modification during callbacks.
-            _componentBuffer.Clear();
-            foreach (MonoBehaviour comp in go.GetComponents<MonoBehaviour>())
-                _componentBuffer.Add(comp);
-
-            foreach (MonoBehaviour comp in _componentBuffer)
-                if (comp.EnabledInHierarchy && (!editModeFilter || ShouldRunInEditMode(comp)))
-                    action.Invoke(comp);
+            go.BeginComponentIteration();
+            try
+            {
+                int count = go._components.Count;
+                for (int i = 0; i < count; i++)
+                {
+                    MonoBehaviour comp = go._components[i];
+                    if (comp.IsDisposed) continue;
+                    if (comp.EnabledInHierarchy && (!editModeFilter || ShouldRunInEditMode(comp)))
+                        action.Invoke(comp);
+                }
+            }
+            finally
+            {
+                go.EndComponentIteration();
+            }
         }
     }
 }

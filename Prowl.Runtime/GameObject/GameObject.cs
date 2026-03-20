@@ -24,6 +24,12 @@ public class GameObject : EngineObject, ISerializable
     internal List<MonoBehaviour> _components = [];
     private MultiValueDictionary<Type, MonoBehaviour> _componentCache = [];
 
+    // Deferred component add/remove during lifecycle iteration to avoid
+    // collection modification and defensive copies in hot paths.
+    private int _lifecycleDepth;
+    private List<MonoBehaviour>? _pendingRemoves;
+    private bool _needsSort;
+
     private Guid _identifier = Guid.NewGuid();
 
     private bool _static = false;
@@ -419,14 +425,25 @@ public class GameObject : EngineObject, ISerializable
     /// </summary>
     internal void PreUpdate(Predicate<MonoBehaviour>? filter = null)
     {
-        foreach (MonoBehaviour component in _components)
+        BeginComponentIteration();
+        try
         {
-            if (!component.HasStarted)
-                if (component.EnabledInHierarchy)
-                {
-                    if (filter == null || filter(component))
-                        component.InternalStart();
-                }
+            int count = _components.Count;
+            for (int i = 0; i < count; i++)
+            {
+                MonoBehaviour component = _components[i];
+                if (component.IsDisposed) continue;
+                if (!component.HasStarted)
+                    if (component.EnabledInHierarchy)
+                    {
+                        if (filter == null || filter(component))
+                            component.InternalStart();
+                    }
+            }
+        }
+        finally
+        {
+            EndComponentIteration();
         }
     }
 
@@ -471,7 +488,10 @@ public class GameObject : EngineObject, ISerializable
         _components.Add(newComponent);
         _componentCache.Add(type, newComponent);
 
-        SortComponents();
+        if (_lifecycleDepth > 0)
+            _needsSort = true;
+        else
+            SortComponents();
 
         return newComponent;
     }
@@ -506,7 +526,10 @@ public class GameObject : EngineObject, ISerializable
         _components.Add(comp);
         _componentCache.Add(comp.GetType(), comp);
 
-        SortComponents();
+        if (_lifecycleDepth > 0)
+            _needsSort = true;
+        else
+            SortComponents();
     }
 
     /// <summary>
@@ -530,9 +553,19 @@ public class GameObject : EngineObject, ISerializable
                 if (c.HasBeenEnabled) // OnDispose is only called if OnEnable was previously called
                     c.Dispose();
 
-                _components.Remove(c);
+                if (_lifecycleDepth > 0)
+                {
+                    if (_pendingRemoves == null || !_pendingRemoves.Contains(c))
+                        (_pendingRemoves ??= []).Add(c);
+                }
+                else
+                {
+                    _components.Remove(c);
+                }
             }
-            _componentCache.Remove(typeof(T));
+
+            if (_lifecycleDepth == 0)
+                _componentCache.Remove(typeof(T));
         }
     }
 
@@ -546,8 +579,17 @@ public class GameObject : EngineObject, ISerializable
         ArgumentNullException.ThrowIfNull(component, nameof(component));
         if (component.CanDestroy() == false) return;
 
-        _components.Remove(component);
-        _componentCache.Remove(component.GetType(), component);
+        if (_lifecycleDepth > 0)
+        {
+            if (_pendingRemoves != null && _pendingRemoves.Contains(component))
+                return;
+            (_pendingRemoves ??= []).Add(component);
+        }
+        else
+        {
+            _components.Remove(component);
+            _componentCache.Remove(component.GetType(), component);
+        }
 
         // OnDisable and OnDispose are only called if OnEnable was previously called
         if (component.HasBeenEnabled)
@@ -565,16 +607,26 @@ public class GameObject : EngineObject, ISerializable
     {
         if (component.CanDestroy() == false) return;
 
-        if (_components.Remove(component))
+        if (_lifecycleDepth > 0)
         {
+            if (_pendingRemoves != null && _pendingRemoves.Contains(component))
+                return;
+            if (!_components.Contains(component))
+                return;
+            (_pendingRemoves ??= []).Add(component);
+        }
+        else
+        {
+            if (!_components.Remove(component))
+                return;
             _componentCache.Remove(component.GetType(), component);
+        }
 
-            // OnDisable and OnDispose are only called if OnEnable was previously called
-            if (component.HasBeenEnabled)
-            {
-                if (component.EnabledInHierarchy) component.OnDisable();
-                component.Dispose();
-            }
+        // OnDisable and OnDispose are only called if OnEnable was previously called
+        if (component.HasBeenEnabled)
+        {
+            if (component.EnabledInHierarchy) component.OnDisable();
+            component.Dispose();
         }
     }
 
@@ -880,6 +932,46 @@ public class GameObject : EngineObject, ISerializable
     }
 
     /// <summary>
+    /// Signals the start of a component lifecycle iteration phase.
+    /// While active, component removals are deferred and sorting is
+    /// postponed to avoid modifying the component list during enumeration.
+    /// </summary>
+    internal void BeginComponentIteration()
+    {
+        _lifecycleDepth++;
+    }
+
+    /// <summary>
+    /// Signals the end of a component lifecycle iteration phase.
+    /// When the last nested phase ends, any deferred removals and
+    /// sorting are flushed.
+    /// </summary>
+    internal void EndComponentIteration()
+    {
+        if (--_lifecycleDepth == 0)
+            FlushPendingComponentChanges();
+    }
+
+    private void FlushPendingComponentChanges()
+    {
+        if (_pendingRemoves is { Count: > 0 })
+        {
+            foreach (MonoBehaviour comp in _pendingRemoves)
+            {
+                _components.Remove(comp);
+                _componentCache.Remove(comp.GetType(), comp);
+            }
+            _pendingRemoves.Clear();
+        }
+
+        if (_needsSort)
+        {
+            _needsSort = false;
+            SortComponents();
+        }
+    }
+
+    /// <summary>
     /// Disposes of the GameObject and its components.
     /// </summary>
     public override void OnDispose()
@@ -929,8 +1021,21 @@ public class GameObject : EngineObject, ISerializable
         if (_enabledInHierarchy != newState)
         {
             _enabledInHierarchy = newState;
-            foreach (MonoBehaviour component in GetComponents<MonoBehaviour>())
-                component.HierarchyStateChanged();
+            BeginComponentIteration();
+            try
+            {
+                int count = _components.Count;
+                for (int i = 0; i < count; i++)
+                {
+                    MonoBehaviour component = _components[i];
+                    if (component.IsDisposed) continue;
+                    component.HierarchyStateChanged();
+                }
+            }
+            finally
+            {
+                EndComponentIteration();
+            }
         }
 
         foreach (GameObject child in Children)
