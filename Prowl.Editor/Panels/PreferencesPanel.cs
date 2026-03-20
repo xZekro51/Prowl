@@ -107,7 +107,8 @@ public sealed class PreferencesPanel : EditorPanel
         // ── External Script Editor ──────────────────────
         ImGui.Text("External Script Editor");
         float refreshWidth = ImGui.CalcTextSize("Refresh").X + ImGui.GetStyle().FramePadding.X * 2 + ImGui.GetStyle().ItemSpacing.X;
-        ImGui.SetNextItemWidth(ImGui.GetContentRegionAvail().X - refreshWidth);
+        float browseWidth = ImGui.CalcTextSize("Browse...").X + ImGui.GetStyle().FramePadding.X * 2 + ImGui.GetStyle().ItemSpacing.X;
+        ImGui.SetNextItemWidth(ImGui.GetContentRegionAvail().X - refreshWidth - browseWidth);
         if (ImGui.Combo("##ExtEditor", ref _selectedEditorIndex, _editorDisplayNames, _editorDisplayNames.Length))
         {
             _externalScriptEditor = _selectedEditorIndex == 0
@@ -119,6 +120,18 @@ public sealed class PreferencesPanel : EditorPanel
         ImGui.SameLine();
         if (ImGui.SmallButton("Refresh"))
             RefreshDetectedEditors();
+        ImGui.SameLine();
+        if (ImGui.SmallButton("Browse..."))
+        {
+            string? path = ExternalEditorUtility.BrowseForExecutable();
+            if (!string.IsNullOrEmpty(path) && File.Exists(path))
+            {
+                _externalScriptEditor = path;
+                ExternalEditor = path;
+                RefreshDetectedEditors();
+                Save();
+            }
+        }
         if (_selectedEditorIndex > 0 && _selectedEditorIndex <= _detectedEditors.Count)
             ImGui.TextColored(new Vector4(0.5f, 0.5f, 0.5f, 1f), _detectedEditors[_selectedEditorIndex - 1].ExecutablePath);
 
@@ -163,6 +176,16 @@ public sealed class PreferencesPanel : EditorPanel
     private void RefreshDetectedEditors()
     {
         _detectedEditors = new List<DetectedEditor>(ExternalEditorUtility.GetDetectedEditors(refresh: true));
+
+        // If the current editor path doesn't match any detected editor, add it as a custom entry.
+        if (!string.IsNullOrEmpty(_externalScriptEditor) &&
+            !_detectedEditors.Any(e => string.Equals(e.ExecutablePath, _externalScriptEditor, StringComparison.OrdinalIgnoreCase)))
+        {
+            var kind = ExternalEditorUtility.ClassifyEditor(_externalScriptEditor);
+            string name = Path.GetFileNameWithoutExtension(_externalScriptEditor);
+            _detectedEditors.Add(new DetectedEditor(kind, $"Custom: {name}", _externalScriptEditor));
+        }
+
         _editorDisplayNames = new string[_detectedEditors.Count + 1];
         _editorDisplayNames[0] = "(Open by file extension)";
         for (int i = 0; i < _detectedEditors.Count; i++)

@@ -212,9 +212,9 @@ public sealed class ConsolePanel : EditorPanel
     {
         bool isSelected = _selectedIndex == index;
         Vector4 textColor = GetSeverityColor(entry.Severity);
-        string prefix = GetSeverityPrefix(entry.Severity);
 
         float lineHeight = ImGui.GetTextLineHeightWithSpacing() + 2 * Game.DpiScale;
+        float iconSize = ImGui.GetTextLineHeight();
         Vector2 cursorPos = ImGui.GetCursorScreenPos();
         float fullWidth = ImGui.GetContentRegionAvail().X;
 
@@ -233,11 +233,12 @@ public sealed class ConsolePanel : EditorPanel
             new Vector2(cursorPos.X + stripW, cursorPos.Y + lineHeight),
             ImGui.ColorConvertFloat4ToU32(GetStripColor(entry.Severity)));
 
-        // ── Build display label ──
+        // ── Build display label (with space reserved for severity icon) ──
         var sb = new StringBuilder(256);
         sb.Append("  ");   // indent past strip
-        sb.Append(prefix);
-        sb.Append(' ');
+        float spaceW = ImGui.CalcTextSize(" ").X;
+        int iconSpaces = Math.Max(1, (int)MathF.Ceiling((iconSize + 4 * Game.DpiScale) / spaceW));
+        sb.Append(' ', iconSpaces);
 
         if (_showTimestamps)
             sb.Append('[').Append(entry.Timestamp.ToString("HH:mm:ss")).Append("] ");
@@ -255,6 +256,7 @@ public sealed class ConsolePanel : EditorPanel
         ImGui.PushStyleColor(ImGuiCol.Text, textColor);
         ImGui.PushStyleColor(ImGuiCol.Header, RowSelectedBg);
         ImGui.PushStyleColor(ImGuiCol.HeaderHovered, new Vector4(0.22f, 0.32f, 0.50f, 0.45f));
+        ImGui.PushStyleVar(ImGuiStyleVar.SelectableTextAlign, new Vector2(0, 0.5f));
 
         if (ImGui.Selectable($"{sb}##log_{index}", isSelected,
                 ImGuiSelectableFlags.SpanAllColumns | ImGuiSelectableFlags.AllowDoubleClick,
@@ -271,7 +273,20 @@ public sealed class ConsolePanel : EditorPanel
             }
         }
 
+        ImGui.PopStyleVar();
         ImGui.PopStyleColor(3);
+
+        // ── Draw severity icon ──
+        nint iconTex = EditorIcons.Get(GetSeverityIconType(entry.Severity));
+        if (iconTex != 0)
+        {
+            float iconY = cursorPos.Y + (lineHeight - iconSize) * 0.5f;
+            float iconX = cursorPos.X + stripW + 4 * Game.DpiScale;
+            drawList.AddImage(iconTex,
+                new Vector2(iconX, iconY),
+                new Vector2(iconX + iconSize, iconY + iconSize),
+                new Vector2(0, 1), new Vector2(1, 0));
+        }
 
         // ── Right-click context menu ──
         if (ImGui.BeginPopupContextItem($"##ctx_{index}"))
@@ -495,10 +510,28 @@ public sealed class ConsolePanel : EditorPanel
     /// Opens a source file at the given line in the configured external editor.
     /// Delegates to <see cref="ExternalEditorUtility"/> which handles per-IDE
     /// arguments and COM automation for Visual Studio line-navigation.
+    /// The project's solution path is resolved so the IDE opens within the
+    /// correct solution context.
     /// </summary>
     private static void OpenFileAtLine(string filePath, int line, int column)
     {
-        ExternalEditorUtility.OpenFileAtLine(PreferencesPanel.ExternalEditor, filePath, line, column);
+        string? solutionPath = ResolveSolutionPath();
+        ExternalEditorUtility.OpenFileAtLine(PreferencesPanel.ExternalEditor, filePath, line, column, solutionPath);
+    }
+
+    /// <summary>
+    /// Resolves the <c>.sln</c> file for the current project, if one exists.
+    /// </summary>
+    private static string? ResolveSolutionPath()
+    {
+        string? projectPath = EditorApplication.ProjectPath;
+        if (string.IsNullOrEmpty(projectPath))
+            return null;
+
+        string projectName = Path.GetFileName(
+            projectPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+        string slnPath = Path.Combine(projectPath, $"{projectName}.sln");
+        return File.Exists(slnPath) ? slnPath : null;
     }
 
     // ── Export helper ──────────────────────────────────────────────
@@ -547,13 +580,12 @@ public sealed class ConsolePanel : EditorPanel
         _ => StripInfo,
     };
 
-    private static string GetSeverityPrefix(LogSeverity severity) => severity switch
+    private static EditorIconType GetSeverityIconType(LogSeverity severity) => severity switch
     {
-        LogSeverity.Success   => "[+]",
-        LogSeverity.Warning   => "[!]",
-        LogSeverity.Error     => "[x]",
-        LogSeverity.Exception => "[!!]",
-        _                     => "[-]",
+        LogSeverity.Success => EditorIconType.Success,
+        LogSeverity.Warning => EditorIconType.Warning,
+        LogSeverity.Error or LogSeverity.Exception => EditorIconType.Error,
+        _ => EditorIconType.Info,
     };
 
     private static string GetSeverityLabel(LogSeverity severity) => severity switch

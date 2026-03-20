@@ -58,8 +58,11 @@ public static class ExternalEditorUtility
     /// Opens <paramref name="filePath"/> at the given line/column in the
     /// editor whose executable is <paramref name="editorPath"/>.
     /// If <paramref name="editorPath"/> is empty the OS default handler is used.
+    /// When <paramref name="solutionOrFolder"/> is provided the IDE is opened
+    /// in the context of that solution/workspace so navigation, IntelliSense,
+    /// and project references work correctly.
     /// </summary>
-    public static void OpenFileAtLine(string editorPath, string filePath, int line, int column)
+    public static void OpenFileAtLine(string editorPath, string filePath, int line, int column, string? solutionOrFolder = null)
     {
         try
         {
@@ -74,15 +77,28 @@ public static class ExternalEditorUtility
             switch (kind)
             {
                 case ExternalEditorKind.VisualStudio:
-                    OpenVisualStudio(editorPath, filePath, line, column);
+                    OpenVisualStudio(editorPath, filePath, line, column, solutionOrFolder);
                     break;
 
                 case ExternalEditorKind.VSCode:
-                    Launch(editorPath, $"--reuse-window --goto \"{filePath}:{line}:{column}\"");
+                    if (!string.IsNullOrEmpty(solutionOrFolder))
+                    {
+                        string folder = File.Exists(solutionOrFolder)
+                            ? Path.GetDirectoryName(solutionOrFolder)!
+                            : solutionOrFolder;
+                        Launch(editorPath, $"--reuse-window \"{folder}\" --goto \"{filePath}:{line}:{column}\"");
+                    }
+                    else
+                    {
+                        Launch(editorPath, $"--reuse-window --goto \"{filePath}:{line}:{column}\"");
+                    }
                     break;
 
                 case ExternalEditorKind.Rider:
-                    Launch(editorPath, $"--line {line} --column {column} \"{filePath}\"");
+                    if (!string.IsNullOrEmpty(solutionOrFolder))
+                        Launch(editorPath, $"\"{solutionOrFolder}\" --line {line} --column {column} \"{filePath}\"");
+                    else
+                        Launch(editorPath, $"--line {line} --column {column} \"{filePath}\"");
                     break;
 
                 case ExternalEditorKind.NotepadPlusPlus:
@@ -121,14 +137,18 @@ public static class ExternalEditorUtility
 
     // ── Visual Studio (COM + fallback) ────────────────────────
 
-    private static void OpenVisualStudio(string devenvPath, string filePath, int line, int column)
+    private static void OpenVisualStudio(string devenvPath, string filePath, int line, int column, string? solutionPath = null)
     {
         // COM automation gives reliable line-navigation in a running VS instance.
         if (OperatingSystem.IsWindows() && TryOpenViaRunningObjectTable(filePath, line, column))
             return;
 
-        // Fallback: open the file in an existing VS instance (no line-nav guarantee).
-        Launch(devenvPath, $"/Edit \"{filePath}\"");
+        // Fallback: launch devenv with the solution so the file opens in the
+        // correct project context (IntelliSense, references, etc.).
+        if (!string.IsNullOrEmpty(solutionPath) && File.Exists(solutionPath))
+            Launch(devenvPath, $"\"{solutionPath}\" /Edit \"{filePath}\"");
+        else
+            Launch(devenvPath, $"/Edit \"{filePath}\"");
     }
 
     // P/Invoke for the COM Running Object Table (Windows only).
@@ -409,5 +429,120 @@ public static class ExternalEditorUtility
                 return;
             }
         }
+    }
+
+    // ── Browse for executable (native file dialog) ────────────
+
+    /// <summary>
+    /// Opens a platform-native file dialog for the user to pick an executable.
+    /// Returns the selected path, or <c>null</c> if cancelled.
+    /// </summary>
+    public static string? BrowseForExecutable()
+    {
+        try
+        {
+            if (OperatingSystem.IsWindows())
+                return BrowseWindows();
+            if (OperatingSystem.IsMacOS())
+                return BrowseMacOS();
+            return BrowseLinux();
+        }
+        catch (Exception ex)
+        {
+            Runtime.Debug.LogWarning($"[ExternalEditor] Browse failed: {ex.Message}");
+            return null;
+        }
+    }
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private struct OPENFILENAME
+    {
+        public int lStructSize;
+        public nint hwndOwner;
+        public nint hInstance;
+        public nint lpstrFilter;
+        public nint lpstrCustomFilter;
+        public int nMaxCustFilter;
+        public int nFilterIndex;
+        public nint lpstrFile;
+        public int nMaxFile;
+        public nint lpstrFileTitle;
+        public int nMaxFileTitle;
+        public nint lpstrInitialDir;
+        public nint lpstrTitle;
+        public int Flags;
+        public short nFileOffset;
+        public short nFileExtension;
+        public nint lpstrDefExt;
+        public nint lCustData;
+        public nint lpfnHook;
+        public nint lpTemplateName;
+        public nint pvReserved;
+        public int dwReserved;
+        public int FlagsEx;
+    }
+
+    [DllImport("comdlg32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern bool GetOpenFileNameW(ref OPENFILENAME ofn);
+
+    private static unsafe string? BrowseWindows()
+    {
+        const int OFN_FILEMUSTEXIST = 0x00001000;
+        const int OFN_NOCHANGEDIR = 0x00000008;
+
+        char* fileBuffer = stackalloc char[1024];
+        fileBuffer[0] = '\0';
+
+        fixed (char* filter = "Executables (*.exe)\0*.exe\0All Files (*.*)\0*.*\0")
+        fixed (char* title = "Select IDE Executable")
+        {
+            var ofn = new OPENFILENAME();
+            ofn.lStructSize = Marshal.SizeOf<OPENFILENAME>();
+            ofn.lpstrFilter = (nint)filter;
+            ofn.lpstrFile = (nint)fileBuffer;
+            ofn.nMaxFile = 1024;
+            ofn.lpstrTitle = (nint)title;
+            ofn.Flags = OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR;
+
+            if (GetOpenFileNameW(ref ofn))
+                return new string(fileBuffer);
+            return null;
+        }
+    }
+
+    private static string? BrowseMacOS()
+    {
+        var psi = new ProcessStartInfo("osascript")
+        {
+            RedirectStandardOutput = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+        };
+        psi.ArgumentList.Add("-e");
+        psi.ArgumentList.Add("POSIX path of (choose file with prompt \"Select IDE executable\")");
+
+        using var proc = Process.Start(psi);
+        if (proc == null) return null;
+        string result = proc.StandardOutput.ReadToEnd().Trim();
+        proc.WaitForExit();
+        return proc.ExitCode == 0 && !string.IsNullOrEmpty(result) ? result : null;
+    }
+
+    private static string? BrowseLinux()
+    {
+        var psi = new ProcessStartInfo("zenity")
+        {
+            RedirectStandardOutput = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+        };
+        psi.ArgumentList.Add("--file-selection");
+        psi.ArgumentList.Add("--title=Select IDE executable");
+
+        using var proc = Process.Start(psi);
+        if (proc == null) return null;
+        string result = proc.StandardOutput.ReadToEnd().Trim();
+        proc.WaitForExit();
+        return proc.ExitCode == 0 && !string.IsNullOrEmpty(result) ? result : null;
     }
 }
