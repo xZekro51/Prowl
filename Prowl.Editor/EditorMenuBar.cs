@@ -129,6 +129,7 @@ public sealed class EditorMenuBar
         serializer!.Save(scene, path);
         sceneSvc.SceneFilePath = path;
         sceneSvc.ClearDirty();
+        EditorApplication.TryDeleteAutoSave();
         Debug.Log($"[Menu] Scene saved: {path}");
     }
 

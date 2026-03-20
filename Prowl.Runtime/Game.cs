@@ -124,7 +124,8 @@ public abstract class Game
         {
             Debug.LogError("An exception occurred during the Update loop:");
             Debug.LogError(e.ToString());
-            throw;
+            if (!HandleFrameException(e, "Update"))
+                throw;
         }
     }
 
@@ -222,9 +223,10 @@ public abstract class Game
             }
             catch (Exception e)
             {
-                Debug.LogError("An exception occurred during the Update loop:");
+                Debug.LogError("An exception occurred during the Render loop:");
                 Debug.LogError(e.ToString());
-                throw;
+                if (!HandleFrameException(e, "Render"))
+                    throw;
             }
         };
 
@@ -272,6 +274,16 @@ public abstract class Game
 
     public virtual void Resize(int width, int height) { }
     public virtual void Closing() { }
+
+    /// <summary>
+    /// Called when an exception is caught during the frame update or render loop.
+    /// Override to swallow exceptions (return <c>true</c>) instead of crashing.
+    /// The default implementation returns <c>false</c>, causing the exception to be re-thrown.
+    /// </summary>
+    /// <param name="e">The caught exception.</param>
+    /// <param name="phase">"Update" or "Render" — indicates which loop threw.</param>
+    /// <returns><c>true</c> if the exception was handled and execution should continue; <c>false</c> to re-throw.</returns>
+    protected virtual bool HandleFrameException(Exception e, string phase) => false;
 
     /// <summary>
     /// Called when the DPI scale changes at runtime (e.g., window moved to another monitor).

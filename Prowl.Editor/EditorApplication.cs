@@ -79,12 +79,29 @@ public sealed class EditorApplication : Game
         _themeApplied = false;
     }
 
+    /// <summary>
+    /// Swallow exceptions in the editor so that a single bad frame or user-script
+    /// error does not crash the entire editor. The error is already logged by the
+    /// base class before this method is called.
+    /// </summary>
+    protected override bool HandleFrameException(Exception e, string phase)
+    {
+        Debug.LogError($"[Editor] Exception in {phase} loop was caught — editor will continue.");
+        return true;
+    }
+
     // Layout persistence
     private string _iniFilePath = "imgui.ini";
     private bool _layoutInitialised;
 
     // Per-project session state
     private ProjectSessionState? _sessionState;
+
+    // ── Auto-save ────────────────────────────────────────────
+    private const float AutoSaveIntervalSeconds = 300f; // 5 minutes
+    private const string AutoSaveFileName = "~AutoSave.scene";
+    private float _autoSaveTimer;
+    private bool _autoSaveRecoveryOffered;
 
     public EditorApplication(string? projectPath = null)
     {
@@ -214,6 +231,9 @@ public sealed class EditorApplication : Game
             EditorServices.Get<ISceneService>().CreateNewScene("Untitled");
         }
 
+        // ── Auto-save recovery ───────────────────────────────────────
+        TryRecoverAutoSave();
+
         // Play mode toolbar
         _playToolbar = new PlayModeToolbar(_playMode);
 
@@ -288,6 +308,7 @@ public sealed class EditorApplication : Game
         _assemblyManager?.ProcessPendingRecompile();
         HandleKeyboardShortcuts();
         UpdateWindowTitle();
+        TickAutoSave(Time.UnscaledDeltaTime);
     }
 
     private void UpdateWindowTitle()
@@ -608,6 +629,116 @@ public sealed class EditorApplication : Game
         ImGuiDockBuilder.Finish(dockspaceId);
     }
 
+    // ── Auto-Save ────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Periodically saves the scene to a temporary auto-save file when dirty.
+    /// Only runs during edit mode (not while playing).
+    /// </summary>
+    private void TickAutoSave(float deltaTime)
+    {
+        if (string.IsNullOrEmpty(ProjectPath)) return;
+        if (_playMode.State != PlayModeState.Stopped) return;
+
+        if (!EditorServices.TryGet<ISceneService>(out var sceneSvc) || !sceneSvc!.IsDirty)
+        {
+            _autoSaveTimer = 0f;
+            return;
+        }
+
+        _autoSaveTimer += deltaTime;
+        if (_autoSaveTimer >= AutoSaveIntervalSeconds)
+        {
+            _autoSaveTimer = 0f;
+            PerformAutoSave();
+        }
+    }
+
+    /// <summary>
+    /// Writes the current scene to the auto-save file if there are unsaved changes.
+    /// </summary>
+    private void PerformAutoSave()
+    {
+        if (string.IsNullOrEmpty(ProjectPath)) return;
+        if (!EditorServices.TryGet<ISceneService>(out var sceneSvc) || !sceneSvc!.IsDirty) return;
+        if (!EditorServices.TryGet<ISceneSerializer>(out var serializer)) return;
+
+        var scene = sceneSvc.CurrentScene;
+        if (scene == null) return;
+
+        try
+        {
+            string autoSavePath = GetAutoSavePath();
+            serializer!.Save(scene, autoSavePath);
+            Debug.Log($"[AutoSave] Scene auto-saved to {autoSavePath}");
+        }
+        catch (Exception ex)
+        {
+            Debug.LogWarning($"[AutoSave] Failed: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// On startup, checks whether an auto-save file exists that is newer than the
+    /// scene file on disk. If so, loads the auto-saved version and marks the scene dirty
+    /// so the user knows it contains recovered changes.
+    /// </summary>
+    private void TryRecoverAutoSave()
+    {
+        if (string.IsNullOrEmpty(ProjectPath)) return;
+        if (_autoSaveRecoveryOffered) return;
+        _autoSaveRecoveryOffered = true;
+
+        string autoSavePath = GetAutoSavePath();
+        if (!File.Exists(autoSavePath)) return;
+
+        if (!EditorServices.TryGet<ISceneSerializer>(out var serializer)) return;
+        var sceneSvc = EditorServices.Get<ISceneService>();
+
+        // Only recover if the auto-save is newer than the last-saved scene file
+        DateTime autoSaveTime = File.GetLastWriteTimeUtc(autoSavePath);
+        string? sceneFile = sceneSvc.SceneFilePath;
+        if (!string.IsNullOrEmpty(sceneFile) && File.Exists(sceneFile))
+        {
+            DateTime sceneTime = File.GetLastWriteTimeUtc(sceneFile);
+            if (autoSaveTime <= sceneTime)
+            {
+                // Auto-save is older than the saved scene — clean it up
+                TryDeleteAutoSave();
+                return;
+            }
+        }
+
+        // Recover the auto-saved scene
+        try
+        {
+            var recovered = serializer!.Load(autoSavePath);
+            if (recovered != null)
+            {
+                sceneSvc.SetScene(recovered);
+                sceneSvc.MarkDirty();
+                Debug.LogWarning("[AutoSave] Recovered unsaved changes from a previous session. Save the scene to keep them.");
+            }
+        }
+        catch (Exception ex)
+        {
+            Debug.LogWarning($"[AutoSave] Failed to recover auto-save: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Removes the auto-save file (e.g. after a successful manual save).
+    /// </summary>
+    internal static void TryDeleteAutoSave()
+    {
+        if (string.IsNullOrEmpty(ProjectPath)) return;
+        string path = Path.Combine(ProjectPath, "ProjectSettings", AutoSaveFileName);
+        try { if (File.Exists(path)) File.Delete(path); } catch { /* best effort */ }
+    }
+
+    private string GetAutoSavePath()
+        => Path.Combine(ProjectPath!, "ProjectSettings", AutoSaveFileName);
+
     // ── Theme ────────────────────────────────────────────────────────
 
     private static void ApplyEditorTheme()
@@ -705,6 +836,9 @@ public sealed class EditorApplication : Game
     {
         // Save the dock layout one final time before shutdown
         ImGui.SaveIniSettingsToDisk(_iniFilePath);
+
+        // ── Auto-save on close if there are unsaved changes ─────
+        PerformAutoSave();
 
         // ── Save per-project session state ─────────────────────
         if (!string.IsNullOrEmpty(ProjectPath))
