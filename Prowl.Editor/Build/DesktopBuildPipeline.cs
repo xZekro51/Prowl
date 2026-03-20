@@ -6,6 +6,7 @@ using System.Security;
 using System.Text;
 
 using Prowl.Runtime;
+using Prowl.Editor.Services;
 
 namespace Prowl.Editor.Build;
 
@@ -152,6 +153,12 @@ public sealed class DesktopBuildPipeline : IBuildPipeline
             string outputAssetsDir = Path.Combine(outputDirectory, "Assets");
             CopyDirectory(assetsDir, outputAssetsDir);
             Runtime.Debug.Log($"[Build] Assets copied to {outputAssetsDir}");
+
+            // ── Convert .scene files to binary for faster load times ──
+            progress?.Log("Converting scenes to binary format...");
+            int converted = ConvertScenesToBinary(outputAssetsDir, progress);
+            if (converted > 0)
+                Runtime.Debug.Log($"[Build] Converted {converted} scene(s) to binary format.");
 
             // ── Copy native libraries (runtimes/) for standalone builds ──
             string editorBaseDir = AppDomain.CurrentDomain.BaseDirectory;
@@ -323,7 +330,11 @@ public sealed class DesktopBuildPipeline : IBuildPipeline
                 public override void Initialize()
                 {
                     string assetsDir = System.IO.Path.Combine(System.AppDomain.CurrentDomain.BaseDirectory, "Assets");
-                    string defaultScene = System.IO.Path.Combine(assetsDir, "DefaultScene.scene");
+
+                    // Prefer binary scene format (produced by the build pipeline) over JSON
+                    string defaultScene = System.IO.Path.Combine(assetsDir, "DefaultScene.bscene");
+                    if (!System.IO.File.Exists(defaultScene))
+                        defaultScene = System.IO.Path.Combine(assetsDir, "DefaultScene.scene");
 
                     if (System.IO.File.Exists(defaultScene))
                     {
@@ -462,6 +473,49 @@ public sealed class DesktopBuildPipeline : IBuildPipeline
         if (line.Contains("Build succeeded", StringComparison.OrdinalIgnoreCase))
             return Runtime.LogSeverity.Success;
         return Runtime.LogSeverity.Normal;
+    }
+
+    /// <summary>
+    /// Converts all <c>.scene</c> (JSON) files in <paramref name="assetsDir"/> to
+    /// the compact binary format (<c>.bscene</c>) for faster load times in
+    /// standalone builds.  The original <c>.scene</c> files are removed from
+    /// the build output afterwards.
+    /// </summary>
+    /// <returns>The number of scenes successfully converted.</returns>
+    internal static int ConvertScenesToBinary(string assetsDir, BuildProgress? progress = null)
+    {
+        int count = 0;
+        if (!Directory.Exists(assetsDir))
+            return count;
+
+        var jsonSerializer = new JsonSceneSerializer();
+        var binarySerializer = new BinarySceneSerializer();
+
+        foreach (string sceneFile in Directory.GetFiles(assetsDir, "*.scene", SearchOption.AllDirectories))
+        {
+            try
+            {
+                var scene = jsonSerializer.Load(sceneFile);
+                if (scene == null)
+                {
+                    progress?.Log($"Skipping (could not load): {sceneFile}", Runtime.LogSeverity.Warning);
+                    continue;
+                }
+
+                string binaryPath = Path.ChangeExtension(sceneFile, binarySerializer.FileExtension);
+                binarySerializer.Save(scene, binaryPath);
+
+                // Remove the original JSON scene from the build output
+                File.Delete(sceneFile);
+                count++;
+            }
+            catch (Exception ex)
+            {
+                progress?.Log($"Failed to convert {sceneFile}: {ex.Message}", Runtime.LogSeverity.Warning);
+            }
+        }
+
+        return count;
     }
 
     private static void CopyDirectory(string sourceDir, string destDir, bool skipCsFiles = true)
