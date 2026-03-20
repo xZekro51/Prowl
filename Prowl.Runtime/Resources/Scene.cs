@@ -681,7 +681,7 @@ public class Scene : EngineObject, ISerializationCallbackReceiver
 
         foreach (Camera cam in _cameraBuffer)
         {
-            RenderPipeline pipeline = cam.Pipeline ?? DefaultRenderPipeline.Default;
+            RenderPipeline pipeline = RenderPipeline.Resolve(cam);
 
             // If we have a target and the Camera doesnt, draw into the target
             if (target.IsValid() && cam.Target.IsNotValid())

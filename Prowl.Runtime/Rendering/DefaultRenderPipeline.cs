@@ -39,40 +39,68 @@ public struct ViewerData
 }
 
 /// <summary>
-/// Default rendering pipeline implementation that handles standard forward rendering,
-/// post-processing effects, shadows, and debug visualization.
+/// Default rendering pipeline implementation that handles deferred rendering
+/// with a forward pass for transparent geometry, post-processing effects,
+/// shadows, and debug visualization.
+/// <para>
+/// Create instances via <see cref="DefaultRenderPipelineAsset"/> rather than
+/// constructing directly.  The asset caches the pipeline and allows
+/// inspector-editable configuration of GBuffer formats, shadow atlas size, etc.
+/// </para>
 /// </summary>
 public class DefaultRenderPipeline : RenderPipeline
 {
-    #region Static Resources
+    #region Pipeline Resources (per-instance)
 
-    private static Mesh s_quadMesh;
-    private static Mesh s_skyDome;
-    private static Material s_defaultMaterial;
-    private static Material s_skybox;
-    private static Material s_gizmo;
-    private static Material s_deferredCompose;
+    private Mesh _quadMesh;
+    private Mesh _skyDome;
+    private Material _defaultMaterial;
+    private Material _skybox;
+    private Material _gizmo;
+    private Material _deferredCompose;
 
-    public static DefaultRenderPipeline Default { get; } = new();
+    #endregion
+
+    #region Configuration
+
+    /// <summary>
+    /// The asset that created and configures this pipeline instance.
+    /// </summary>
+    public DefaultRenderPipelineAsset Asset { get; }
+
+    /// <summary>
+    /// Creates a new <see cref="DefaultRenderPipeline"/> configured by the given asset.
+    /// Prefer using <see cref="DefaultRenderPipelineAsset.Pipeline"/> instead of
+    /// calling this constructor directly.
+    /// </summary>
+    public DefaultRenderPipeline(DefaultRenderPipelineAsset asset)
+    {
+        Asset = asset ?? throw new ArgumentNullException(nameof(asset));
+    }
+
+    /// <summary>
+    /// Creates a new <see cref="DefaultRenderPipeline"/> with default settings.
+    /// </summary>
+    public DefaultRenderPipeline() : this(new DefaultRenderPipelineAsset()) { }
 
     #endregion
 
     #region Resource Management
 
-    private static void ValidateDefaults()
+    private void ValidateDefaults()
     {
-        s_quadMesh ??= Mesh.GetFullscreenQuad();
-        s_defaultMaterial ??= new Material(Shader.LoadDefault(DefaultShader.Standard));
-        s_skybox ??= new Material(Shader.LoadDefault(DefaultShader.ProceduralSkybox));
-        s_gizmo ??= new Material(Shader.LoadDefault(DefaultShader.Gizmos));
+        _quadMesh ??= Mesh.GetFullscreenQuad();
+        _defaultMaterial ??= new Material(Shader.LoadDefault(DefaultShader.Standard));
+        _skybox ??= new Material(Shader.LoadDefault(DefaultShader.ProceduralSkybox));
+        _gizmo ??= new Material(Shader.LoadDefault(DefaultShader.Gizmos));
 
         // Load deferred shaders
-        s_deferredCompose ??= new Material(Shader.LoadDefault(DefaultShader.DeferredCompose));
+        _deferredCompose ??= new Material(Shader.LoadDefault(DefaultShader.DeferredCompose));
 
-        if (s_skyDome.IsNotValid())
+        if (_skyDome.IsNotValid())
         {
             Model skyDomeModel = Model.LoadDefault(DefaultModel.SkyDome) ?? throw new Exception("SkyDome model not found. Please ensure the model is included in the project.");
-            s_skyDome = skyDomeModel.Meshes[0].Mesh;
+            _skyDome = skyDomeModel.Meshes[0].Mesh;
         }
     }
 
@@ -188,10 +216,10 @@ public class DefaultRenderPipeline : RenderPipeline
         // BufferC: R = Roughness, G = Metalness, B = Specular, A = AO
         // BufferD: Custom Data per Shading Mode (e.g., Emissive for Lit mode)
         RenderTexture gBuffer = RenderTexture.GetTemporaryRT((int)css.PixelWidth, (int)css.PixelHeight, true, [
-            TextureImageFormat.Short4, // BufferA - Albedo + Alpha
-            TextureImageFormat.Color4b, // BufferB - Normal + ShadingMode
-            TextureImageFormat.Color4b, // BufferC - Roughness, Metalness, Specular, AO
-            TextureImageFormat.Color4b, // BufferD - Custom Data (Emissive, etc.)
+            Asset.GBufferAlbedoFormat, // BufferA - Albedo + Alpha
+            Asset.GBufferNormalFormat, // BufferB - Normal + ShadingMode
+            Asset.GBufferPBRFormat,    // BufferC - Roughness, Metalness, Specular, AO
+            Asset.GBufferCustomFormat, // BufferD - Custom Data (Emissive, etc.)
             ]);
 
         // Bind GBuffer as the target
@@ -288,11 +316,11 @@ public class DefaultRenderPipeline : RenderPipeline
             ]);
 
         // Set GBuffer and light textures for compose shader
-        s_deferredCompose.SetTexture("_LightAccumulation", lightAccumulation.InternalTextures[0]);
-        s_deferredCompose.SetTexture("_GBufferA", gBuffer.InternalTextures[0]);
-        s_deferredCompose.SetTexture("_GBufferB", gBuffer.InternalTextures[1]);
-        s_deferredCompose.SetTexture("_GBufferD", gBuffer.InternalTextures[3]);
-        s_deferredCompose.SetTexture("_CameraDepthTexture", gBuffer.InternalDepth);
+        _deferredCompose.SetTexture("_LightAccumulation", lightAccumulation.InternalTextures[0]);
+        _deferredCompose.SetTexture("_GBufferA", gBuffer.InternalTextures[0]);
+        _deferredCompose.SetTexture("_GBufferB", gBuffer.InternalTextures[1]);
+        _deferredCompose.SetTexture("_GBufferD", gBuffer.InternalTextures[3]);
+        _deferredCompose.SetTexture("_CameraDepthTexture", gBuffer.InternalDepth);
 
         // Set fog parameters
         Scene.FogParams fog = css.Scene.Fog;
@@ -301,9 +329,9 @@ public class DefaultRenderPipeline : RenderPipeline
         fogParams.Y = fog.Density / 0.693147181f; // ln(2)
         fogParams.Z = -1.0f / (fog.End - fog.Start);
         fogParams.W = fog.End / (fog.End - fog.Start);
-        s_deferredCompose.SetColor("_FogColor", fog.Color);
-        s_deferredCompose.SetVector("_FogParams", fogParams);
-        s_deferredCompose.SetVector("_FogStates", new Float3(
+        _deferredCompose.SetColor("_FogColor", fog.Color);
+        _deferredCompose.SetVector("_FogParams", fogParams);
+        _deferredCompose.SetVector("_FogStates", new Float3(
             fog.Mode == Scene.FogParams.FogMode.Linear ? 1 : 0,
             fog.Mode == Scene.FogParams.FogMode.Exponential ? 1 : 0,
             fog.Mode == Scene.FogParams.FogMode.ExponentialSquared ? 1 : 0
@@ -311,17 +339,17 @@ public class DefaultRenderPipeline : RenderPipeline
 
         // Set ambient lighting parameters
         Scene.AmbientLightParams ambient = css.Scene.Ambient;
-        s_deferredCompose.SetVector("_AmbientMode", new Float2(
+        _deferredCompose.SetVector("_AmbientMode", new Float2(
             ambient.Mode == Scene.AmbientLightParams.AmbientMode.Uniform ? 1 : 0,
             ambient.Mode == Scene.AmbientLightParams.AmbientMode.Hemisphere ? 1 : 0
         ));
-        s_deferredCompose.SetColor("_AmbientColor", ambient.Color);
-        s_deferredCompose.SetColor("_AmbientSkyColor", ambient.SkyColor);
-        s_deferredCompose.SetColor("_AmbientGroundColor", ambient.GroundColor);
-        s_deferredCompose.SetFloat("_AmbientStrength", (float)ambient.Strength);
+        _deferredCompose.SetColor("_AmbientColor", ambient.Color);
+        _deferredCompose.SetColor("_AmbientSkyColor", ambient.SkyColor);
+        _deferredCompose.SetColor("_AmbientGroundColor", ambient.GroundColor);
+        _deferredCompose.SetFloat("_AmbientStrength", (float)ambient.Strength);
 
         // Perform composition
-        Blit(lightAccumulation, composedOutput, s_deferredCompose, 0, false, false);
+        Blit(lightAccumulation, composedOutput, _deferredCompose, 0, false, false);
 
         // Copy depth from GBuffer to composed output for transparent rendering
         Graphics.BindFramebuffer(gBuffer.frameBuffer, FBOTarget.Read);
@@ -439,16 +467,16 @@ public class DefaultRenderPipeline : RenderPipeline
     private void RenderSkybox(CameraSnapshot css)
     {
         // Always set a safe default sun direction to avoid NaN from normalize(vec3(0)) in the shader
-        s_skybox.SetVector("_SunDir", new Float3(0, -1, 0));
+        _skybox.SetVector("_SunDir", new Float3(0, -1, 0));
 
         // Override with the actual directional light direction if one exists
         var sun = css.Scene.Lights.FirstOrDefault(l => l is IRenderableLight rl && rl.GetLightType() == LightType.Directional);
         if (sun != null)
         {
-            s_skybox.SetVector("_SunDir", sun.GetLightDirection());
+            _skybox.SetVector("_SunDir", sun.GetLightDirection());
         }
 
-        DrawMeshNow(s_skyDome, s_skybox);
+        DrawMeshNow(_skyDome, _skybox);
     }
 
     private void RenderGizmos(CameraSnapshot css)
@@ -458,8 +486,8 @@ public class DefaultRenderPipeline : RenderPipeline
 
         if (wire.IsValid() || solid.IsValid())
         {
-            if (wire.IsValid()) DrawMeshNow(wire, s_gizmo);
-            if (solid.IsValid()) DrawMeshNow(solid, s_gizmo);
+            if (wire.IsValid()) DrawMeshNow(wire, _gizmo);
+            if (solid.IsValid()) DrawMeshNow(solid, _gizmo);
         }
 
 #warning TODO: Implement Gizmo Icons rendering

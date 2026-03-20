@@ -98,6 +98,13 @@ public class Camera : MonoBehaviour
     public int Depth = -1;
 
     public RenderPipeline? Pipeline;
+    /// <summary>
+    /// Per-camera render pipeline asset override. When set, this asset's pipeline
+    /// is used instead of the global <see cref="RenderPipeline.ActivePipelineAsset"/>.
+    /// Takes precedence over the global asset but is overridden by an explicit
+    /// <see cref="Pipeline"/> instance.
+    /// </summary>
+    public RenderPipelineAsset? PipelineAsset;
     public RenderTexture? Target;
     public bool HDR = false;
     public float RenderScale = 1.0f;
@@ -155,7 +162,7 @@ public class Camera : MonoBehaviour
 
     public void Render(in RenderingData? data = null)
     {
-        RenderPipeline pipeline = Pipeline ?? DefaultRenderPipeline.Default;
+        RenderPipeline pipeline = RenderPipeline.Resolve(this);
         pipeline.Render(this, data ?? new());
     }
 

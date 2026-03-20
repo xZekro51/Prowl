@@ -75,6 +75,40 @@ public interface IRenderableLight
 
 public abstract class RenderPipeline : EngineObject
 {
+    /// <summary>
+    /// The global default render pipeline asset.
+    /// When a <see cref="Camera"/> has no per-camera <see cref="Camera.PipelineAsset"/>
+    /// or <see cref="Camera.Pipeline"/>, the pipeline created by this asset is used.
+    /// Set to <c>null</c> to fall back to a <see cref="DefaultRenderPipelineAsset"/>
+    /// with default settings.
+    /// </summary>
+    public static RenderPipelineAsset? ActivePipelineAsset { get; set; }
+
+    private static DefaultRenderPipelineAsset? s_fallbackAsset;
+
+    /// <summary>
+    /// Resolves the <see cref="RenderPipeline"/> to use for a camera, checking
+    /// (in order): per-camera pipeline instance, per-camera asset, global asset, fallback default.
+    /// </summary>
+    internal static RenderPipeline Resolve(Camera camera)
+    {
+        // 1. Explicit pipeline instance on the camera
+        if (camera.Pipeline is not null)
+            return camera.Pipeline;
+
+        // 2. Per-camera asset
+        if (camera.PipelineAsset is not null)
+            return camera.PipelineAsset.Pipeline;
+
+        // 3. Global asset
+        if (ActivePipelineAsset is not null)
+            return ActivePipelineAsset.Pipeline;
+
+        // 4. Fallback default
+        s_fallbackAsset ??= new DefaultRenderPipelineAsset();
+        return s_fallbackAsset.Pipeline;
+    }
+
     public struct CameraSnapshot(Camera camera)
     {
         public Scene Scene = camera.Scene;
