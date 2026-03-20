@@ -103,6 +103,14 @@ public sealed class EditorPlayMode
 
     private void EnterPlayMode()
     {
+        // Prevent entering play mode while editing a prefab
+        if (EditorServices.TryGet<Prefabs.PrefabEditMode>(out var prefabMode)
+            && prefabMode!.IsActive)
+        {
+            Debug.LogWarning("[PlayMode] Cannot enter play mode while editing a prefab. Close the prefab first.");
+            return;
+        }
+
         var sceneService = EditorServices.Get<ISceneService>();
         var time = EditorServices.Get<IEditorTime>();
 

@@ -8,6 +8,7 @@ using System.Linq;
 using System.Reflection;
 
 using Prowl.Echo;
+using Prowl.Runtime.Prefabs;
 using Prowl.Runtime.Resources;
 using Prowl.Vector;
 
@@ -46,6 +47,13 @@ public class GameObject : EngineObject, ISerializable
 
     [SerializeIgnore]
     private WeakReference<Scene> _scene;
+
+    /// <summary>
+    /// Optional link to the prefab asset this GameObject was instantiated from.
+    /// Null for GameObjects that are not prefab instances.
+    /// </summary>
+    [SerializeField]
+    private PrefabLink? _prefabLink;
 
     #endregion
 
@@ -123,6 +131,42 @@ public class GameObject : EngineObject, ISerializable
     {
         get => _scene != null && _scene.TryGetTarget(out Scene? scene) ? scene : null;
         internal set => _scene = new(value);
+    }
+
+    /// <summary>
+    /// Gets or sets the prefab link for this GameObject.
+    /// Non-null when this object (or its hierarchy root) was instantiated from a .prefab asset.
+    /// </summary>
+    public PrefabLink? PrefabLink
+    {
+        get => _prefabLink;
+        set => _prefabLink = value;
+    }
+
+    /// <summary>
+    /// Returns true if this GameObject is a prefab instance (has a prefab link).
+    /// </summary>
+    public bool IsPrefabInstance => _prefabLink != null;
+
+    /// <summary>
+    /// Returns true if this GameObject is the root of a prefab instance.
+    /// </summary>
+    public bool IsPrefabRoot => _prefabLink is { IsRoot: true };
+
+    /// <summary>
+    /// Walks up the hierarchy to find the nearest prefab root.
+    /// Returns null if this object is not part of a prefab instance.
+    /// </summary>
+    public GameObject? GetPrefabRoot()
+    {
+        if (_prefabLink is { IsRoot: true }) return this;
+        var p = _parent;
+        while (p.IsValid())
+        {
+            if (p._prefabLink is { IsRoot: true }) return p;
+            p = p._parent;
+        }
+        return null;
     }
 
     #endregion
@@ -1138,6 +1182,9 @@ public class GameObject : EngineObject, ISerializable
 
         compoundTag.Add("HideFlags", new EchoObject((int)HideFlags));
 
+        if (_prefabLink != null)
+            compoundTag.Add("PrefabLink", Serializer.Serialize(_prefabLink, ctx));
+
         compoundTag.Add("Transform", Serializer.Serialize(_transform, ctx));
 
         EchoObject components = EchoObject.NewList();
@@ -1168,6 +1215,11 @@ public class GameObject : EngineObject, ISerializable
         TagIndex = value["TagIndex"]?.IntValue ?? 0;
         LayerIndex = value["LayerIndex"]?.IntValue ?? 0;
         HideFlags = (HideFlags)(value["HideFlags"]?.IntValue ?? 0);
+
+        if (value.TryGet("PrefabLink", out EchoObject? prefabLinkData) && prefabLinkData != null)
+            _prefabLink = Serializer.Deserialize<PrefabLink>(prefabLinkData, ctx);
+        else
+            _prefabLink = null;
 
         _transform = Serializer.Deserialize<Transform>(value["Transform"], ctx);
         _transform.GameObject = this;

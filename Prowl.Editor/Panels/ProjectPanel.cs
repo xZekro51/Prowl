@@ -8,8 +8,9 @@ using Prowl.Runtime;
 using Prowl.Runtime.Resources;
 using Prowl.Editor.Docking;
 using Prowl.Editor.Icons;
-using Prowl.Editor.Services;
 using Prowl.Editor.Prefabs;
+using Prowl.Editor.Services;
+using Prowl.Editor.Undo;
 
 using Material = Prowl.Runtime.Resources.Material;
 using Shader = Prowl.Runtime.Resources.Shader;
@@ -455,12 +456,17 @@ public sealed class ProjectPanel : EditorPanel
             _pendingSelectPath = null;
         }
 
-        // Double-click to open scene files
+        // Double-click to open scene files or open prefabs for editing
         if (ImGui.IsItemHovered() && ImGui.IsMouseDoubleClicked(ImGuiMouseButton.Left))
         {
             if (entry.Extension == ".scene")
             {
                 EditorMenuBar.LoadSceneFromFile(entry.FullPath);
+            }
+            else if (entry.Extension == PrefabManager.PrefabExtension)
+            {
+                if (EditorServices.TryGet<PrefabEditMode>(out var prefabMode))
+                    prefabMode!.Enter(entry.FullPath);
             }
         }
 
@@ -478,6 +484,28 @@ public sealed class ProjectPanel : EditorPanel
                 if (EditorIcons.IconMenuItem(EditorIconType.Scene, "Open Scene"))
                 {
                     EditorMenuBar.LoadSceneFromFile(entry.FullPath);
+                }
+                ImGui.Separator();
+            }
+
+            if (entry.Extension == PrefabManager.PrefabExtension)
+            {
+                if (EditorIcons.IconMenuItem(EditorIconType.Prefab, "Open Prefab"))
+                {
+                    if (EditorServices.TryGet<PrefabEditMode>(out var prefabMode))
+                        prefabMode!.Enter(entry.FullPath);
+                }
+
+                if (EditorIcons.IconMenuItem(EditorIconType.Prefab, "Instantiate in Scene"))
+                {
+                    var sceneService = EditorServices.Get<ISceneService>();
+                    if (EditorServices.TryGet<UndoRedoService>(out var undoPrefab))
+                        undoPrefab!.Execute(new Undo.Commands.InstantiateAssetCommand(entry.FullPath, entry.Name));
+                    else
+                    {
+                        var prefabMgr = new PrefabManager();
+                        prefabMgr.InstantiatePrefabInScene(entry.FullPath, sceneService);
+                    }
                 }
                 ImGui.Separator();
             }
@@ -617,6 +645,11 @@ public sealed class ProjectPanel : EditorPanel
                 {
                     if (entry.Extension == ".scene")
                         EditorMenuBar.LoadSceneFromFile(entry.FullPath);
+                    else if (entry.Extension == PrefabManager.PrefabExtension)
+                    {
+                        if (EditorServices.TryGet<PrefabEditMode>(out var prefabMode))
+                            prefabMode!.Enter(entry.FullPath);
+                    }
                 }
             }
         }

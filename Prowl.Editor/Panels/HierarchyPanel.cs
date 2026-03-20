@@ -14,6 +14,7 @@ using Prowl.Editor.Services;
 using Prowl.Editor.Undo;
 using Prowl.Editor.Undo.Commands;
 using Prowl.Runtime;
+using Prowl.Runtime.Prefabs;
 using Prowl.Runtime.Resources;
 
 namespace Prowl.Editor.Panels;
@@ -71,6 +72,13 @@ public sealed class HierarchyPanel : EditorPanel
         ImGui.TextColored(new Vector4(0.45f, 0.45f, 0.45f, 0.80f), sceneName);*/
 
         ImGui.Separator();
+
+        // ── Prefab edit mode breadcrumb ────────────────────────
+        if (EditorServices.TryGet<PrefabEditMode>(out var prefabMode) && prefabMode!.IsActive)
+        {
+            DrawPrefabEditModeBar(prefabMode);
+            ImGui.Separator();
+        }
 
         // ── Search bar ─────────────────────────────────────────
         ImGui.SetNextItemWidth(ImGui.GetContentRegionAvail().X);
@@ -204,7 +212,7 @@ public sealed class HierarchyPanel : EditorPanel
                 if (EditorDragDrop.Payload is AssetEntry dragEntry)
                     ImGui.SetTooltip($"Drop: {dragEntry.Name}");
 
-                if (ImGui.IsMouseReleased(ImGuiMouseButton.Left))
+                if (EditorDragDrop.WasDropped)
                     AcceptDrop(sceneService);
             }
         }
@@ -236,6 +244,7 @@ public sealed class HierarchyPanel : EditorPanel
     {
         bool isSelected = sel.ActiveObject is GameObject selected && selected.InstanceID == go.InstanceID;
         bool hasChildren = go.Children != null && go.Children.Count > 0;
+        bool isPrefab = go.IsPrefabInstance;
 
         var flags = ImGuiTreeNodeFlags.OpenOnArrow | ImGuiTreeNodeFlags.SpanAvailWidth | ImGuiTreeNodeFlags.FramePadding;
         if (isSelected) flags |= ImGuiTreeNodeFlags.Selected;
@@ -247,17 +256,25 @@ public sealed class HierarchyPanel : EditorPanel
 
         ImGui.PushID(go.InstanceID);
 
+        // Prefab instances use a blue-ish text color (Unity-like)
+        if (isPrefab)
+            ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.40f, 0.65f, 1.0f, 1.0f));
+
         // Determine the best icon for this game object
-        string iconName = IconManager.GetIconNameForGameObject(go);
+        string iconName = isPrefab ? "Prefab" : IconManager.GetIconNameForGameObject(go);
         string displayName = go.Name ?? "Unnamed";
 
         // Draw tree node — icon is rendered via IconManager after the tree node
         bool open = ImGui.TreeNodeEx("##node", flags, $"     {displayName}");
 
+        // Pop prefab text color after tree node rendering
+        if (isPrefab)
+            ImGui.PopStyleColor();
+
         // Overlay the icon over the label area
         {
             Vector4 tint = go.Enabled
-                ? new Vector4(1f, 1f, 1f, 1f)
+                ? (isPrefab ? new Vector4(0.50f, 0.70f, 1.0f, 1.0f) : new Vector4(1f, 1f, 1f, 1f))
                 : new Vector4(0.5f, 0.5f, 0.5f, 0.5f);
             IconManager.DrawIconOverLastItem(iconName, tint);
         }
@@ -340,6 +357,10 @@ public sealed class HierarchyPanel : EditorPanel
                 DuplicateGameObject(go, sceneService, sel);
             }
             ImGui.Separator();
+
+            // ── Prefab operations ──────────────────────────────
+            DrawPrefabContextMenu(go, sceneService);
+
             if (EditorIcons.IconMenuItem(EditorIconType.Delete, "Delete"))
             {
                 sceneService.DestroyGameObject(go);
@@ -715,6 +736,138 @@ public sealed class HierarchyPanel : EditorPanel
         }
     }
 
+    // ────────────────────────────────────────────────────────────
+    // Prefab context menu helpers
+    // ────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Draws prefab-specific context menu items (Create Prefab, Apply, Revert, Unpack, Select Prefab Asset).
+    /// </summary>
+    private static void DrawPrefabContextMenu(GameObject go, ISceneService sceneService)
+    {
+        var prefabRoot = go.GetPrefabRoot();
+        bool isPrefabInstance = prefabRoot != null;
+
+        // Create Prefab from selection (only for non-prefab objects)
+        if (!isPrefabInstance)
+        {
+            if (EditorIcons.IconMenuItem(EditorIconType.Prefab, "Create Prefab"))
+            {
+                if (EditorServices.TryGet<IAssetService>(out var assets) && assets!.HasProject)
+                {
+                    string safeName = (go.Name ?? "Prefab").Replace(" ", "_");
+                    string fname = $"{safeName}{PrefabManager.PrefabExtension}";
+                    string absPath = assets.GetAbsolutePath(fname);
+                    var prefabMgr = new PrefabManager();
+                    prefabMgr.CreatePrefab(go, absPath);
+                    assets.Refresh();
+                }
+                else
+                {
+                    Debug.LogWarning("[Hierarchy] No project open — cannot create prefab.");
+                }
+            }
+            ImGui.Separator();
+            return;
+        }
+
+        // Prefab operations (only when the GO is part of a prefab instance)
+        if (ImGui.BeginMenu("Prefab"))
+        {
+            if (EditorIcons.IconMenuItem(EditorIconType.Save, "Apply Overrides to Prefab"))
+            {
+                if (EditorServices.TryGet<UndoRedoService>(out var undo))
+                    undo!.Execute(new ApplyPrefabCommand(prefabRoot!));
+                else
+                    new PrefabManager().ApplyInstance(prefabRoot!);
+            }
+
+            if (EditorIcons.IconMenuItem(EditorIconType.Refresh, "Revert to Prefab"))
+            {
+                if (EditorServices.TryGet<UndoRedoService>(out var undo))
+                    undo!.Execute(new RevertPrefabCommand(prefabRoot!));
+                else
+                    new PrefabManager().RevertInstance(prefabRoot!);
+            }
+
+            ImGui.Separator();
+
+            if (ImGui.MenuItem("Unpack Prefab"))
+            {
+                if (EditorServices.TryGet<UndoRedoService>(out var undo))
+                    undo!.Execute(new UnpackPrefabCommand(prefabRoot!));
+                else
+                    PrefabManager.UnpackInstance(prefabRoot!);
+            }
+
+            ImGui.Separator();
+
+            if (EditorIcons.IconMenuItem(EditorIconType.Search, "Select Prefab Asset"))
+            {
+                SelectPrefabAsset(prefabRoot!.PrefabLink!);
+            }
+
+            if (EditorIcons.IconMenuItem(EditorIconType.Prefab, "Open Prefab"))
+            {
+                OpenPrefabForEditing(prefabRoot!.PrefabLink!);
+            }
+
+            string prefabName = PrefabManager.GetPrefabName(prefabRoot!.PrefabLink!);
+            ImGui.TextColored(new Vector4(0.5f, 0.5f, 0.5f, 0.8f), $"Source: {prefabName}");
+
+            ImGui.EndMenu();
+        }
+        ImGui.Separator();
+    }
+
+    /// <summary>
+    /// Selects the prefab asset in the Project panel and pings it.
+    /// </summary>
+    private static void SelectPrefabAsset(Runtime.Prefabs.PrefabLink link)
+    {
+        if (!EditorServices.TryGet<IAssetService>(out var assets)) return;
+
+        string? relativePath = null;
+        if (!string.IsNullOrEmpty(link.PrefabAssetGuid))
+            relativePath = assets!.GetAssetPathByGuid(link.PrefabAssetGuid);
+        if (string.IsNullOrEmpty(relativePath))
+            relativePath = link.PrefabAssetPath;
+
+        if (string.IsNullOrEmpty(relativePath)) return;
+
+        string fullPath = assets!.GetAbsolutePath(relativePath);
+        string name = Path.GetFileName(relativePath);
+        string ext = Path.GetExtension(relativePath);
+
+        var entry = new AssetEntry
+        {
+            Name = name,
+            FullPath = fullPath,
+            RelativePath = relativePath,
+            IsDirectory = false,
+            Extension = ext,
+        };
+
+        if (EditorServices.TryGet<ISelectionService>(out var sel))
+            sel!.SelectedAsset = entry;
+    }
+
+    /// <summary>
+    /// Opens the prefab referenced by a <see cref="PrefabLink"/> in prefab edit mode.
+    /// </summary>
+    private static void OpenPrefabForEditing(PrefabLink link)
+    {
+        string absolutePath = PrefabManager.ResolvePrefabAbsolutePath(link);
+        if (string.IsNullOrEmpty(absolutePath) || !File.Exists(absolutePath))
+        {
+            Debug.LogWarning("[Hierarchy] Cannot locate prefab asset for editing.");
+            return;
+        }
+
+        if (EditorServices.TryGet<PrefabEditMode>(out var prefabMode))
+            prefabMode!.Enter(absolutePath);
+    }
+
     /// <summary>
     /// Returns true if the given <see cref="GameObject"/> or any of its
     /// descendants has a name containing <paramref name="filter"/> (case-insensitive).
@@ -730,5 +883,59 @@ public sealed class HierarchyPanel : EditorPanel
                 return true;
         }
         return false;
+    }
+
+    // ────────────────────────────────────────────────────────────
+    // Prefab edit mode bar
+    // ────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Draws a breadcrumb-style bar at the top of the hierarchy when
+    /// editing a prefab in isolation. Shows the prefab name and
+    /// Save / Close buttons.
+    /// </summary>
+    private static void DrawPrefabEditModeBar(PrefabEditMode mode)
+    {
+        var drawList = ImGui.GetWindowDrawList();
+        var cursorPos = ImGui.GetCursorScreenPos();
+        float barW = ImGui.GetContentRegionAvail().X;
+        float barH = ImGui.GetTextLineHeightWithSpacing() + 10 * Game.DpiScale;
+
+        // Background
+        drawList.AddRectFilled(cursorPos, new Vector2(cursorPos.X + barW, cursorPos.Y + barH),
+            ImGui.GetColorU32(new Vector4(0.15f, 0.28f, 0.50f, 0.50f)), 4f);
+        drawList.AddRect(cursorPos, new Vector2(cursorPos.X + barW, cursorPos.Y + barH),
+            ImGui.GetColorU32(new Vector4(0.30f, 0.50f, 0.85f, 0.60f)), 4f, ImDrawFlags.None, 1f);
+
+        ImGui.SetCursorPosY(ImGui.GetCursorPosY() + 4 * Game.DpiScale);
+        ImGui.Indent(6 * Game.DpiScale);
+
+        // Back arrow + prefab name
+        EditorIcons.InlineIcon(EditorIconType.Prefab, new Vector4(0.45f, 0.65f, 1.0f, 1.0f));
+        ImGui.SameLine();
+        ImGui.TextColored(new Vector4(0.45f, 0.65f, 1.0f, 1.0f), mode.PrefabName);
+
+        // Buttons on the right
+        ImGui.SameLine();
+        float btnStart = ImGui.GetContentRegionAvail().X - 130 * Game.DpiScale;
+        if (btnStart > 0)
+            ImGui.SetCursorPosX(ImGui.GetCursorPosX() + btnStart);
+
+        ImGui.PushStyleVar(ImGuiStyleVar.FramePadding, new Vector2(6 * Game.DpiScale, 2 * Game.DpiScale));
+
+        if (ImGui.SmallButton("Save & Close"))
+        {
+            mode.SaveAndClose();
+        }
+
+        ImGui.SameLine();
+        if (ImGui.SmallButton("Close"))
+        {
+            mode.Close();
+        }
+
+        ImGui.PopStyleVar();
+        ImGui.Unindent(6 * Game.DpiScale);
+        ImGui.SetCursorPosY(ImGui.GetCursorPosY() + 4 * Game.DpiScale);
     }
 }

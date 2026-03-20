@@ -90,7 +90,7 @@ public sealed class JsonSceneSerializer : ISceneSerializer
 
     // ── EchoObject → JsonNode bridge ─────────────────────────────
 
-    private static JsonNode? EchoToJson(EchoObject echo)
+    internal static JsonNode? EchoToJson(EchoObject echo)
     {
         switch (echo.TagType)
         {
@@ -166,7 +166,7 @@ public sealed class JsonSceneSerializer : ISceneSerializer
 
     // ── JsonNode → EchoObject bridge ─────────────────────────────
 
-    private static EchoObject JsonToEcho(JsonNode node)
+    internal static EchoObject JsonToEcho(JsonNode node)
     {
         if (node is JsonObject jobj)
         {
@@ -232,7 +232,7 @@ public sealed class JsonSceneSerializer : ISceneSerializer
         return new EchoObject();
     }
 
-    private static EchoObject ReconstructEcho(EchoType type, JsonNode? valueNode)
+    internal static EchoObject ReconstructEcho(EchoType type, JsonNode? valueNode)
     {
         if (valueNode == null)
             return new EchoObject();

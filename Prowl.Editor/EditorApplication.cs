@@ -10,6 +10,7 @@ using Prowl.Editor.Core;
 using Prowl.Editor.Docking;
 using Prowl.Editor.Icons;
 using Prowl.Editor.Panels;
+using Prowl.Editor.Prefabs;
 using Prowl.Editor.Project;
 using Prowl.Editor.Rendering;
 using Prowl.Editor.Services;
@@ -34,6 +35,9 @@ public sealed class EditorApplication : Game
     // Play mode
     private readonly EditorPlayMode _playMode = new();
     private PlayModeToolbar? _playToolbar;
+
+    // Prefab edit mode
+    private readonly PrefabEditMode _prefabEditMode = new();
 
     // Script compilation
     private ProjectAssemblyManager? _assemblyManager;
@@ -169,6 +173,7 @@ public sealed class EditorApplication : Game
         EditorServices.Register<IEditorTime>(new EditorTime());
         EditorServices.Register<ISceneSerializer>(new JsonSceneSerializer());
         EditorServices.Register<UndoRedoService>(new UndoRedoService());
+        EditorServices.Register<PrefabEditMode>(_prefabEditMode);
 
         // Asset database
         var assetDb = new FileSystemAssetDatabase();

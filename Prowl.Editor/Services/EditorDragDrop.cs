@@ -8,7 +8,8 @@ namespace Prowl.Editor.Services;
 /// <summary>
 /// Simple static carrier for drag-drop data between editor panels.
 /// Only one payload can be active at a time.
-/// Automatically clears when the left mouse button is released.
+/// Automatically clears one frame after the left mouse button is released,
+/// giving all panels a chance to see the drop on the release frame.
 /// </summary>
 public static class EditorDragDrop
 {
@@ -21,11 +22,22 @@ public static class EditorDragDrop
     /// <summary> True while a drag operation is in progress. </summary>
     public static bool IsDragging => PayloadType != null;
 
+    /// <summary>
+    /// True on the frame the mouse was released while dragging.
+    /// Panels should check this to know when to accept a drop.
+    /// </summary>
+    public static bool WasDropped { get; private set; }
+
+    // When true, the payload will be cleared on the *next* Update() call.
+    private static bool _pendingClear;
+
     /// <summary> Start a drag operation. </summary>
     public static void BeginDrag(string type, object data)
     {
         PayloadType = type;
         Payload = data;
+        WasDropped = false;
+        _pendingClear = false;
     }
 
     /// <summary> Accept and consume the current drag payload. Returns the data if type matches. </summary>
@@ -44,15 +56,30 @@ public static class EditorDragDrop
     {
         PayloadType = null;
         Payload = null;
+        WasDropped = false;
+        _pendingClear = false;
     }
 
     /// <summary>
     /// Call once per frame (early in the ImGui pass) to automatically end
     /// any active drag when the left mouse button is released.
+    /// The actual clear is deferred by one frame so that all panels
+    /// can detect the drop during the release frame.
     /// </summary>
     public static void Update()
     {
-        if (IsDragging && ImGui.IsMouseReleased(ImGuiMouseButton.Left))
+        // Second frame after release: clear the payload now
+        if (_pendingClear)
+        {
             Clear();
+            return;
+        }
+
+        // First frame of release: mark as dropped but keep the payload alive
+        if (IsDragging && ImGui.IsMouseReleased(ImGuiMouseButton.Left))
+        {
+            WasDropped = true;
+            _pendingClear = true;
+        }
     }
 }

@@ -6,11 +6,13 @@ using System.Reflection;
 using System.Text.Json;
 using ImGuiNET;
 using Prowl.Runtime;
+using Prowl.Runtime.Prefabs;
 using Prowl.Runtime.Utils;
 using Prowl.Runtime.Resources;
 using Prowl.Editor.Docking;
 using Prowl.Editor.Icons;
 using Prowl.Editor.Inspector;
+using Prowl.Editor.Prefabs;
 using Prowl.Editor.Project;
 using Prowl.Editor.Services;
 using Prowl.Editor.Undo;
@@ -172,6 +174,9 @@ public sealed class InspectorPanel : EditorPanel
 
 
         ImGui.Separator();
+
+        // ── Prefab info bar ────────────────────────────────────
+        DrawPrefabBar(go);
 
         // ── Transform section ──────────────────────────────────
         if (ImGui.CollapsingHeader("     Transform", ImGuiTreeNodeFlags.DefaultOpen))
@@ -1493,4 +1498,129 @@ public sealed class InspectorPanel : EditorPanel
 
     private static Vector3 ToNumerics(Prowl.Vector.Float3 v) => new(v.X, v.Y, v.Z);
     private static Prowl.Vector.Float3 FromNumerics(Vector3 v) => new(v.X, v.Y, v.Z);
+
+    // ────────────────────────────────────────────────────────────
+    // Prefab info bar
+    // ────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Draws a compact toolbar for prefab instances showing the prefab
+    /// source name and quick-access buttons: Select, Revert, Apply, Unpack.
+    /// </summary>
+    private static void DrawPrefabBar(GameObject go)
+    {
+        var prefabRoot = go.GetPrefabRoot();
+        if (prefabRoot?.PrefabLink == null) return;
+
+        var link = prefabRoot.PrefabLink;
+        string prefabName = PrefabManager.GetPrefabName(link);
+
+        // Background tint for the prefab bar
+        var drawList = ImGui.GetWindowDrawList();
+        var cursorPos = ImGui.GetCursorScreenPos();
+        float barW = ImGui.GetContentRegionAvail().X;
+        float barH = ImGui.GetTextLineHeightWithSpacing() + 8 * Game.DpiScale;
+        drawList.AddRectFilled(cursorPos, new Vector2(cursorPos.X + barW, cursorPos.Y + barH),
+            ImGui.GetColorU32(new Vector4(0.18f, 0.30f, 0.55f, 0.35f)), 4f);
+        drawList.AddRect(cursorPos, new Vector2(cursorPos.X + barW, cursorPos.Y + barH),
+            ImGui.GetColorU32(new Vector4(0.30f, 0.50f, 0.85f, 0.50f)), 4f, ImDrawFlags.None, 1f);
+
+        ImGui.SetCursorPosY(ImGui.GetCursorPosY() + 3 * Game.DpiScale);
+        ImGui.Indent(6 * Game.DpiScale);
+
+        // Prefab icon + name
+        EditorIcons.InlineIcon(EditorIconType.Prefab, new Vector4(0.45f, 0.65f, 1.0f, 1.0f));
+        ImGui.SameLine();
+        ImGui.TextColored(new Vector4(0.45f, 0.65f, 1.0f, 1.0f), prefabName);
+
+        // Buttons
+        ImGui.SameLine();
+        float btnStart = ImGui.GetContentRegionAvail().X - 260 * Game.DpiScale;
+        if (btnStart > 0)
+            ImGui.SetCursorPosX(ImGui.GetCursorPosX() + btnStart);
+
+        ImGui.PushStyleVar(ImGuiStyleVar.FramePadding, new Vector2(4 * Game.DpiScale, 2 * Game.DpiScale));
+
+        if (ImGui.SmallButton("Select"))
+        {
+            // Navigate to prefab asset in project browser
+            SelectPrefabAssetInProject(link);
+        }
+
+        ImGui.SameLine();
+        if (ImGui.SmallButton("Open"))
+        {
+            // Open the prefab in prefab edit mode
+            string absPath = PrefabManager.ResolvePrefabAbsolutePath(link);
+            if (!string.IsNullOrEmpty(absPath) && File.Exists(absPath))
+            {
+                if (EditorServices.TryGet<PrefabEditMode>(out var prefabMode))
+                    prefabMode!.Enter(absPath);
+            }
+        }
+
+        ImGui.SameLine();
+        if (ImGui.SmallButton("Revert"))
+        {
+            if (EditorServices.TryGet<UndoRedoService>(out var undo))
+                undo!.Execute(new RevertPrefabCommand(prefabRoot));
+            else
+                new PrefabManager().RevertInstance(prefabRoot);
+        }
+
+        ImGui.SameLine();
+        if (ImGui.SmallButton("Apply"))
+        {
+            if (EditorServices.TryGet<UndoRedoService>(out var undo))
+                undo!.Execute(new ApplyPrefabCommand(prefabRoot));
+            else
+                new PrefabManager().ApplyInstance(prefabRoot);
+        }
+
+        ImGui.SameLine();
+        if (ImGui.SmallButton("Unpack"))
+        {
+            if (EditorServices.TryGet<UndoRedoService>(out var undo))
+                undo!.Execute(new UnpackPrefabCommand(prefabRoot));
+            else
+                PrefabManager.UnpackInstance(prefabRoot);
+        }
+
+        ImGui.PopStyleVar();
+        ImGui.Unindent(6 * Game.DpiScale);
+        ImGui.SetCursorPosY(ImGui.GetCursorPosY() + 3 * Game.DpiScale);
+        ImGui.Separator();
+    }
+
+    /// <summary>
+    /// Selects the prefab asset in the Project panel.
+    /// </summary>
+    private static void SelectPrefabAssetInProject(PrefabLink link)
+    {
+        if (!EditorServices.TryGet<IAssetService>(out var assets)) return;
+
+        string? relativePath = null;
+        if (!string.IsNullOrEmpty(link.PrefabAssetGuid))
+            relativePath = assets!.GetAssetPathByGuid(link.PrefabAssetGuid);
+        if (string.IsNullOrEmpty(relativePath))
+            relativePath = link.PrefabAssetPath;
+
+        if (string.IsNullOrEmpty(relativePath)) return;
+
+        string fullPath = assets!.GetAbsolutePath(relativePath);
+        string name = Path.GetFileName(relativePath);
+        string ext = Path.GetExtension(relativePath);
+
+        var entry = new AssetEntry
+        {
+            Name = name,
+            FullPath = fullPath,
+            RelativePath = relativePath,
+            IsDirectory = false,
+            Extension = ext,
+        };
+
+        if (EditorServices.TryGet<ISelectionService>(out var sel))
+            sel!.SelectedAsset = entry;
+    }
 }
