@@ -91,59 +91,6 @@ public sealed class EditorApplication : Game
         ProjectPath = projectPath;
     }
 
-    public override void WindowUpdate(float delta)
-    {
-        try
-        {
-            UpdatePaperInput();
-
-            Prowl.Runtime.Audio.AudioContext.Update();
-
-            time.Update();
-            Time.TimeStack.Clear();
-            Time.TimeStack.Push(time);
-
-            Input.UpdateActions(delta);
-
-            BeginUpdate();
-
-            Scene? currentScene = Scene.Current;
-
-            // Fixed update loop
-            fixedTimeAccumulator += delta;
-            int count = 0;
-            while (fixedTimeAccumulator >= Time.FixedDeltaTime && count++ < 10)
-            {
-                currentScene?.FixedUpdate();
-                fixedTimeAccumulator -= Time.FixedDeltaTime;
-            }
-
-            // Scene.Update handles play/edit mode filtering internally:
-            // In play mode all components execute; in edit mode only
-            // [ExecuteInEditMode] and rendering components run.
-            currentScene?.Update();
-
-            if (ShowComponentGizmos)
-            {
-                currentScene?.DrawGizmos();
-            }
-
-            EndUpdate();
-
-            if (frameCounter++ % 60 == 0)
-            {
-                Console.Title = $"{WindowTitle} - {Window.InternalWindow.FramebufferSize.X}x{Window.InternalWindow.FramebufferSize.Y} - FPS: {1.0 / Time.DeltaTime}";
-            }
-
-        }
-        catch (Exception e)
-        {
-            Debug.LogError("An exception occurred during the Update loop:");
-            Debug.LogError(e.ToString());
-            throw;
-        }
-    }
-
     public override void Initialize()
     {
         // ── Layout persistence ──

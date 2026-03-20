@@ -3,9 +3,6 @@
 
 using System;
 using System.Diagnostics.CodeAnalysis;
-using System.IO;
-using System.Linq;
-using System.Runtime.InteropServices;
 
 using Echo.Logging;
 
@@ -17,8 +14,6 @@ using Prowl.Runtime.Resources;
 using Prowl.UI;
 using Prowl.Vector;
 
-using ImGuiNET;
-using SilkImGui = Silk.NET.OpenGL.Extensions.ImGui;
 using Prowl.Runtime.EventSystem;
 
 namespace Prowl.Runtime;
@@ -43,8 +38,8 @@ public abstract class Game
     private Paper _paper;
     protected int frameCounter;
 
-    private SilkImGui.ImGuiController _imguiController;
-    private ImGuiUIRenderer _imguiRenderer;
+    private readonly WindowManager _windowManager = new();
+    private readonly ImGuiManager _imguiManager = new();
 
     public static EventSystem.EventManager<EventSystem.BaseEvents> BaseEventManager { get; } = new();
 
@@ -57,15 +52,21 @@ public abstract class Game
     public bool DrawGizmos { get; set; }
 
     /// <summary>
+    /// The window manager handling Silk.NET window creation and DPI-aware sizing.
+    /// </summary>
+    protected WindowManager WindowManager => _windowManager;
+
+    /// <summary>
+    /// The ImGui manager handling the Dear ImGui lifecycle.
+    /// </summary>
+    protected ImGuiManager ImGuiManager => _imguiManager;
+
+    /// <summary>
     /// The DPI scale factor for the current monitor (1.0 at 96 DPI, 1.5 at 144 DPI, 2.0 at 192 DPI, etc.).
     /// UI code should multiply hard-coded pixel sizes by this value.
     /// Delegates to <see cref="DpiManager.Scale"/>.
     /// </summary>
     public static float DpiScale => DpiManager.Scale;
-
-    private int _logicalWidth;
-    private int _logicalHeight;
-    private bool _imguiReady;
 
     public virtual void WindowUpdate(float delta)
     {
@@ -119,62 +120,32 @@ public abstract class Game
 
     public virtual void Run(string title, int width, int height)
     {
-        _logicalWidth = width;
-        _logicalHeight = height;
-
         _title = title;
 
         // Create a fresh engine context for this game instance.
         EngineContext.Current = new EngineContext();
 
-        // Use DpiManager for system-level DPI detection before window creation.
-        DpiManager.EnsureProcessDpiAware();
-        float systemScale = DpiManager.GetSystemScale();
-        DpiManager.Initialize(systemScale);
-
-        int scaledW = (int)MathF.Round(width * systemScale);
-        int scaledH = (int)MathF.Round(height * systemScale);
-
-        Window.InitWindow(title, scaledW, scaledH, Silk.NET.Windowing.WindowState.Normal, false);
+        // Create the DPI-aware window.
+        float systemScale = _windowManager.CreateWindow(title, width, height);
 
         Window.Load += () =>
         {
             AudioContext.Initialize(44100, 2, 2048);
 
+            int scaledW = _windowManager.InitialScaledWidth;
+            int scaledH = _windowManager.InitialScaledHeight;
             _paperRenderer = new PaperRenderer();
             _paperRenderer.Initialize(scaledW, scaledH);
             _paper = new Paper(_paperRenderer, scaledW, scaledH, new Prowl.Quill.FontAtlasSettings());
 
             // Refine DPI using per-window detection (handles multi-monitor setups).
-            float windowScale = DpiManager.GetWindowScale();
-            DpiManager.Initialize(windowScale);
-            if (MathF.Abs(windowScale - systemScale) > 0.01f)
-            {
-                int newW = (int)MathF.Round(width * windowScale);
-                int newH = (int)MathF.Round(height * windowScale);
-                Window.InternalWindow.Size = new Silk.NET.Maths.Vector2D<int>(newW, newH);
-            }
+            _windowManager.RefineWindowDpi(systemScale);
 
             // Initialize Dear ImGui (Silk.NET controller handles GL backend + input)
-            string? systemFont = FindSystemFont();
-            int baseFontSize = (int)MathF.Round(14 * DpiScale);
-            _imguiController = new SilkImGui.ImGuiController(
-                Graphics.GL,
-                Window.InternalWindow,
-                Window.InternalInput,
-                systemFont != null ? new SilkImGui.ImGuiFontConfig(systemFont, baseFontSize) : null,
-                () =>
-                {
-                    var io = ImGui.GetIO();
-                    io.ConfigFlags |= ImGuiConfigFlags.DockingEnable;
-                    if (systemFont != null)
-                        ImGuiUIRenderer.LoadFonts(systemFont, DpiScale);
-                });
-            _imguiRenderer = new ImGuiUIRenderer();
+            _imguiManager.Initialize();
 
             // Subscribe to dynamic DPI changes
             DpiManager.DpiChanged += OnDpiChangedInternal;
-            _imguiReady = true;
 
             Initialize();
         };
@@ -223,13 +194,13 @@ public abstract class Game
                 _paper.EndFrame();
 
                 // Dear ImGui frame (editor / launcher UI)
-                _imguiController.Update((float)delta);
-                _imguiRenderer.BeginFrame();
+                _imguiManager.Update((float)delta);
+                _imguiManager.BeginFrame();
 
-                BeginImGui(_imguiRenderer);
-                EndImGui(_imguiRenderer);
+                BeginImGui(_imguiManager.Renderer!);
+                EndImGui(_imguiManager.Renderer!);
 
-                _imguiController.Render();
+                _imguiManager.Render();
 
                 // === End Graphics ===
 
@@ -255,15 +226,15 @@ public abstract class Game
         };
 
         // Monitor DPI changes when the window moves between monitors or framebuffer resizes.
-        Window.Move += (_) => { if (_imguiReady) DpiManager.CheckForChange(); };
-        Window.FramebufferResize += (_) => { if (_imguiReady) DpiManager.CheckForChange(); };
+        Window.Move += (_) => { if (_imguiManager.IsReady) DpiManager.CheckForChange(); };
+        Window.FramebufferResize += (_) => { if (_imguiManager.IsReady) DpiManager.CheckForChange(); };
 
         Window.Closing += () =>
         {
             DpiManager.DpiChanged -= OnDpiChangedInternal;
             Closing();
 
-            _imguiController?.Dispose();
+            _imguiManager.Dispose();
 
             // Unload the current scene
             Scene.Unload();
@@ -301,15 +272,12 @@ public abstract class Game
     private void OnDpiChangedInternal(float oldScale, float newScale)
     {
         // Adjust ImGui font rendering to match the new DPI without rebuilding the font atlas.
-        var io = ImGui.GetIO();
-        io.FontGlobalScale = newScale / DpiManager.BaseFontScale;
+        _imguiManager.OnDpiChanged(newScale);
 
         // Resize the window to maintain the same logical size (based on monitor DPI only).
-        int newW = (int)MathF.Round(_logicalWidth * DpiManager.MonitorScale);
-        int newH = (int)MathF.Round(_logicalHeight * DpiManager.MonitorScale);
-        Window.InternalWindow.Size = new Silk.NET.Maths.Vector2D<int>(newW, newH);
+        _windowManager.ResizeForDpi();
 
-        Debug.Log($"DPI changed: {oldScale:F2} → {newScale:F2} (FontGlobalScale={io.FontGlobalScale:F2})");
+        Debug.Log($"DPI changed: {oldScale:F2} → {newScale:F2}");
 
         // Let subclasses react (e.g., reset theme scaling).
         OnDpiChanged(oldScale, newScale);
@@ -403,20 +371,6 @@ public abstract class Game
     {
         Window.Stop();
         Debug.Log("Is terminating...");
-    }
-
-    private static string? FindSystemFont()
-    {
-        string[] candidates =
-        [
-            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Fonts), "segoeui.ttf"),
-            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Fonts), "arial.ttf"),
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-            "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
-            "/System/Library/Fonts/SFNS.ttf",
-            "/System/Library/Fonts/Helvetica.ttc",
-        ];
-        return candidates.FirstOrDefault(File.Exists);
     }
 
     }
