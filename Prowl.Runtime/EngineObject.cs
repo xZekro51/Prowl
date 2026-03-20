@@ -25,7 +25,17 @@ public abstract class EngineObject : IDisposable
     /// </summary>
     public Guid AssetID = Guid.Empty;
 
-    public string Name;
+    /// <summary>
+    /// Backing field for <see cref="Name"/>. Protected so subclasses such as
+    /// <see cref="MonoBehaviour"/> can delegate to their owning object's name.
+    /// </summary>
+    protected string _name;
+
+    /// <summary>
+    /// The display name of this object. Virtual so that <see cref="MonoBehaviour"/>
+    /// can delegate to its <see cref="GameObject"/>'s name.
+    /// </summary>
+    public virtual string Name { get => _name; set => _name = value; }
 
     public bool IsDisposed { get; private set; }
 

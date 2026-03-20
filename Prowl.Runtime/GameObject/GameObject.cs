@@ -456,6 +456,7 @@ public class GameObject : EngineObject, ISerializable
         if (newComponent.IsNotValid()) return null;
 
         newComponent.AttachToGameObject(this);
+        newComponent.Name = this.Name;
         _components.Add(newComponent);
         _componentCache.Add(type, newComponent);
 

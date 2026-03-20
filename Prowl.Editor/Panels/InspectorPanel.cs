@@ -37,12 +37,16 @@ public sealed class InspectorPanel : EditorPanel
     private string _nameEditBuffer = string.Empty;
     private int _nameEditGoId;
 
-    // Internal field names that should never appear in the inspector
+    // Internal field names that should never appear in the normal inspector
     private static readonly HashSet<string> InternalFields = new(StringComparer.Ordinal)
     {
         "_identifier", "_go", "_enabled", "_enabledInHierarchy",
-        "_hasStarted", "_hasBeenEnabled", "HideFlags",
+        "_hasStarted", "_hasBeenEnabled", "HideFlags", "_name",
     };
+
+    /// <summary> When true the inspector shows every serializable field including
+    /// those marked with <see cref="HideInInspectorAttribute"/> and internal fields. </summary>
+    private bool _debugMode;
 
     /// <summary> Label column width ratio (0–1). </summary>
     private const float LabelRatio = 0.3f;
@@ -65,6 +69,19 @@ public sealed class InspectorPanel : EditorPanel
 
     protected override void DrawContent()
     {
+        // ── Debug mode toggle (top-right corner) ──────────────
+        {
+            float toggleAvail = ImGui.GetContentRegionAvail().X;
+            float toggleW = 60 * Game.DpiScale;
+            ImGui.SameLine(toggleAvail - toggleW);
+            if (_debugMode)
+                ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.55f, 0.35f, 0.15f, 1f));
+            if (ImGui.SmallButton(_debugMode ? "Debug" : "Normal"))
+                _debugMode = !_debugMode;
+            if (_debugMode)
+                ImGui.PopStyleColor();
+        }
+
         var sel = EditorServices.Get<ISelectionService>();
 
         // ── Asset inspection (from project selection) ──────────
@@ -234,7 +251,9 @@ public sealed class InspectorPanel : EditorPanel
         ImGui.SetCursorPosX((avail - btnW) * 0.5f + ImGui.GetCursorPosX());
 
         if (ImGui.Button("Add Component", new Vector2(btnW, 0)))
+        {
             ImGui.OpenPopup("##AddComponent");
+        }
 
         DrawAddComponentPopup(go);
     }
@@ -499,7 +518,18 @@ public sealed class InspectorPanel : EditorPanel
 
         foreach (var field in fields)
         {
-            if (IsInternalField(field.Name)) continue;
+            // In normal mode, skip internal fields and [HideInInspector] fields
+            if (!_debugMode)
+            {
+                if (IsInternalField(field.Name)) continue;
+                if (field.GetCustomAttribute<HideInInspectorAttribute>() != null) continue;
+            }
+
+            // In debug mode, dim fields that are normally hidden
+            bool isHiddenField = _debugMode &&
+                (IsInternalField(field.Name) || field.GetCustomAttribute<HideInInspectorAttribute>() != null);
+            if (isHiddenField)
+                ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.55f, 0.55f, 0.55f, 0.70f));
 
             string label = FormatLabel(field.Name);
             object? value = field.GetValue(target);
@@ -609,6 +639,9 @@ public sealed class InspectorPanel : EditorPanel
                     ImGui.TextDisabled(text);
                 });
             }
+
+            if (isHiddenField)
+                ImGui.PopStyleColor();
 
             ImGui.PopID();
         }

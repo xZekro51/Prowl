@@ -6,6 +6,7 @@ using System.Reflection.Metadata;
 
 using ImGuiNET;
 
+using Prowl.Echo;
 using Prowl.Editor.Docking;
 using Prowl.Editor.Icons;
 using Prowl.Editor.Prefabs;
@@ -37,6 +38,9 @@ public sealed class HierarchyPanel : EditorPanel
     // Scene rename state
     private bool _renamingScene;
     private string _sceneRenameBuffer = string.Empty;
+
+    // Clipboard: stores a serialized snapshot of the copied GameObject hierarchy
+    private static EchoObject? _clipboard;
 
     public HierarchyPanel() : base("Hierarchy") { }
 
@@ -208,6 +212,10 @@ public sealed class HierarchyPanel : EditorPanel
         if (_draggedInstanceId != 0 && !ImGui.IsMouseDown(ImGuiMouseButton.Left))
             _draggedInstanceId = 0;
 
+        // ── Keyboard shortcuts (only when hierarchy window is focused) ──
+        if (ImGui.IsWindowFocused(ImGuiFocusedFlags.RootAndChildWindows))
+            HandleKeyboardShortcuts(selService, sceneService);
+
         ImGui.EndChild();
     }
 
@@ -286,7 +294,7 @@ public sealed class HierarchyPanel : EditorPanel
         // ── Context menu ───────────────────────────────────────
         if (ImGui.BeginPopupContextItem())
         {
-            if (ImGui.MenuItem("Rename"))
+            if (ImGui.MenuItem("Rename", "F2"))
             {
                 _renamingInstanceId = go.InstanceID;
                 _renameBuffer = go.Name ?? "Unnamed";
@@ -305,11 +313,18 @@ public sealed class HierarchyPanel : EditorPanel
                     child.SetParent(go);
                 }
             }
-            if (ImGui.MenuItem("Duplicate"))
+            ImGui.Separator();
+            if (ImGui.MenuItem("Copy", "Ctrl+C"))
             {
-                // Simple clone: create GO with same name
-                var clone = sceneService.CreateGameObject(go.Name + " (Clone)");
-                if (go.Parent != null) clone.SetParent(go.Parent);
+                CopyGameObject(go);
+            }
+            if (ImGui.MenuItem("Paste", "Ctrl+V", false, _clipboard != null))
+            {
+                PasteGameObject(sceneService, sel, go);
+            }
+            if (ImGui.MenuItem("Duplicate", "Ctrl+D"))
+            {
+                DuplicateGameObject(go, sceneService, sel);
             }
             ImGui.Separator();
             if (EditorIcons.IconMenuItem(EditorIconType.Delete, "Delete"))
@@ -530,6 +545,130 @@ public sealed class HierarchyPanel : EditorPanel
             var renderer = go.AddComponent<MeshRenderer>();
             if (renderer != null)
                 renderer.Mesh = mesh;
+        }
+    }
+
+    // ────────────────────────────────────────────────────────────
+    // Keyboard shortcuts
+    // ────────────────────────────────────────────────────────────
+
+    private void HandleKeyboardShortcuts(ISelectionService sel, ISceneService sceneService)
+    {
+        bool ctrl = ImGui.GetIO().KeyCtrl;
+        GameObject? selected = sel.ActiveObject as GameObject;
+
+        // Delete — remove selected GO
+        if (ImGui.IsKeyPressed(ImGuiKey.Delete) && selected != null)
+        {
+            sceneService.DestroyGameObject(selected);
+            sel.ActiveObject = null;
+        }
+
+        // F2 — rename selected GO
+        if (ImGui.IsKeyPressed(ImGuiKey.F2) && selected != null)
+        {
+            _renamingInstanceId = selected.InstanceID;
+            _renameBuffer = selected.Name ?? "Unnamed";
+        }
+
+        // Ctrl+C — copy
+        if (ctrl && ImGui.IsKeyPressed(ImGuiKey.C) && selected != null)
+        {
+            CopyGameObject(selected);
+        }
+
+        // Ctrl+V — paste
+        if (ctrl && ImGui.IsKeyPressed(ImGuiKey.V) && _clipboard != null)
+        {
+            PasteGameObject(sceneService, sel, selected);
+        }
+
+        // Ctrl+D — duplicate
+        if (ctrl && ImGui.IsKeyPressed(ImGuiKey.D) && selected != null)
+        {
+            DuplicateGameObject(selected, sceneService, sel);
+        }
+    }
+
+    /// <summary>
+    /// Serializes the given <see cref="GameObject"/> (and its full hierarchy
+    /// including components) into the static clipboard.
+    /// </summary>
+    private static void CopyGameObject(GameObject go)
+    {
+        try
+        {
+            var ctx = new SerializationContext();
+            AssetDatabase.ConfigureContext(ctx);
+            _clipboard = Serializer.Serialize(typeof(GameObject), go, ctx);
+        }
+        catch (Exception ex)
+        {
+            Debug.LogWarning($"[Hierarchy] Copy failed: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Deserializes the clipboard into a new <see cref="GameObject"/> and adds
+    /// it to the scene. If <paramref name="parent"/> is not null the pasted
+    /// object becomes a child of that object.
+    /// </summary>
+    private static void PasteGameObject(ISceneService sceneService, ISelectionService sel, GameObject? parent)
+    {
+        if (_clipboard == null) return;
+
+        try
+        {
+            var ctx = new SerializationContext();
+            AssetDatabase.ConfigureContext(ctx);
+            GameObject? pasted = Serializer.Deserialize<GameObject>(_clipboard, ctx);
+            if (pasted == null) return;
+
+            pasted.Name += " (Copy)";
+
+            var scene = sceneService.CurrentScene;
+            if (scene == null) return;
+
+            scene.Add(pasted);
+            if (parent != null)
+                pasted.SetParent(parent);
+
+            sel.ActiveObject = pasted;
+        }
+        catch (Exception ex)
+        {
+            Debug.LogWarning($"[Hierarchy] Paste failed: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Duplicates the given <see cref="GameObject"/> via serialize → deserialize
+    /// round-trip, preserving all component data.
+    /// </summary>
+    private static void DuplicateGameObject(GameObject source, ISceneService sceneService, ISelectionService sel)
+    {
+        try
+        {
+            var ctx = new SerializationContext();
+            AssetDatabase.ConfigureContext(ctx);
+            EchoObject data = Serializer.Serialize(typeof(GameObject), source, ctx);
+            GameObject? clone = Serializer.Deserialize<GameObject>(data, ctx);
+            if (clone == null) return;
+
+            clone.Name += " (Clone)";
+
+            var scene = sceneService.CurrentScene;
+            if (scene == null) return;
+
+            scene.Add(clone);
+            if (source.Parent != null)
+                clone.SetParent(source.Parent);
+
+            sel.ActiveObject = clone;
+        }
+        catch (Exception ex)
+        {
+            Debug.LogWarning($"[Hierarchy] Duplicate failed: {ex.Message}");
         }
     }
 }

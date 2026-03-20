@@ -46,6 +46,16 @@ public abstract class MonoBehaviour : EngineObject
     public Guid Identifier { get => _identifier; set => _identifier = value; }
 
     /// <summary>
+    /// A component's name always matches its owning <see cref="GameObject"/>'s name.
+    /// Before the component is attached, falls back to the base backing field.
+    /// </summary>
+    public override string Name
+    {
+        get => _go?.Name ?? _name;
+        set { if (_go != null) _go.Name = value; else _name = value; }
+    }
+
+    /// <summary>
     /// Gets the GameObject this MonoBehaviour is attached to.
     /// </summary>
     public GameObject GameObject => _go;
