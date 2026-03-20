@@ -24,6 +24,7 @@ public sealed class JsonSceneSerializer : ISceneSerializer
         {
             // Serialize the scene through Echo (handles ISerializationCallbackReceiver)
             var ctx = new SerializationContext();
+            AssetDatabase.ConfigureContext(ctx);
             EchoObject echoData = Serializer.Serialize(typeof(Scene), scene, ctx);
 
             // Wrap in a versioned envelope
@@ -71,6 +72,8 @@ public sealed class JsonSceneSerializer : ISceneSerializer
             if (sceneData == null) return null;
 
             var ctx = new SerializationContext();
+            AssetDatabase.ConfigureContext(ctx);
+
             Scene? scene = Serializer.Deserialize<Scene>(sceneData, ctx);
 
             if (scene != null)

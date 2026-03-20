@@ -156,7 +156,7 @@ public sealed class PrefabManager
             {
                 if (string.IsNullOrEmpty(compData.TypeName)) continue;
 
-                Type? compType = Type.GetType(compData.TypeName);
+                Type? compType = RuntimeUtils.FindType(compData.TypeName);
                 if (compType == null || !typeof(MonoBehaviour).IsAssignableFrom(compType))
                     continue;
 

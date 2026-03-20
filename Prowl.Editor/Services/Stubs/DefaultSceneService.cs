@@ -1,6 +1,7 @@
 // This file is part of the Prowl Game Engine
 // Licensed under the MIT License. See the LICENSE file in the project root for details.
 
+using Prowl.Echo;
 using Prowl.Runtime;
 using Prowl.Runtime.Rendering;
 using Prowl.Runtime.Resources;
@@ -11,13 +12,12 @@ namespace Prowl.Editor.Services;
 /// <summary>
 /// Default scene service backed by Prowl's built-in Scene class.
 /// Populates new scenes with sample GameObjects for development/testing.
+/// Uses Echo serialization for full-fidelity play-mode snapshot/restore.
 /// </summary>
 public sealed class DefaultSceneService : ISceneService
 {
-    /// <summary> Stores root-object snapshots for play-mode save/restore. </summary>
-    private List<SnapshotEntry>? _snapshot;
-
-    private record SnapshotEntry(string Name, Prowl.Vector.Float3 Position, Prowl.Vector.Float3 Rotation, Prowl.Vector.Float3 Scale);
+    /// <summary> Full scene data serialized via Echo for play-mode save/restore. </summary>
+    private EchoObject? _snapshot;
 
     public Scene? CurrentScene => Scene.Current;
 
@@ -102,34 +102,39 @@ public sealed class DefaultSceneService : ISceneService
     {
         if (CurrentScene == null) return null;
 
-        var entries = new List<SnapshotEntry>();
-        foreach (var go in CurrentScene.AllObjects)
+        try
         {
-            entries.Add(new SnapshotEntry(
-                go.Name,
-                go.Transform.LocalPosition,
-                go.Transform.LocalEulerAngles,
-                go.Transform.LocalScale));
+            var ctx = new SerializationContext();
+            AssetDatabase.ConfigureContext(ctx);
+            _snapshot = Serializer.Serialize(typeof(Scene), CurrentScene, ctx);
+            return _snapshot;
         }
-        _snapshot = entries;
-        return _snapshot;
+        catch (Exception ex)
+        {
+            Debug.LogError($"[PlayMode] Failed to snapshot scene: {ex.Message}");
+            return null;
+        }
     }
 
     public void RestoreScene(object? snapshot)
     {
-        if (snapshot is not List<SnapshotEntry> entries) return;
-        if (CurrentScene == null) return;
+        if (snapshot is not EchoObject echoData) return;
 
-        // Restore transforms of existing objects by matching name+order
-        var allObjects = CurrentScene.AllObjects.ToList();
-        for (int i = 0; i < Math.Min(entries.Count, allObjects.Count); i++)
+        try
         {
-            var go = allObjects[i];
-            var e = entries[i];
-            go.Name = e.Name;
-            go.Transform.LocalPosition = e.Position;
-            go.Transform.LocalEulerAngles = e.Rotation;
-            go.Transform.LocalScale = e.Scale;
+            var ctx = new SerializationContext();
+            AssetDatabase.ConfigureContext(ctx);
+            Scene? restored = Serializer.Deserialize<Scene>(echoData, ctx);
+
+            if (restored != null)
+            {
+                Scene.Load(restored);
+                SceneLoaded?.Invoke(restored);
+            }
+        }
+        catch (Exception ex)
+        {
+            Debug.LogError($"[PlayMode] Failed to restore scene: {ex.Message}");
         }
 
         _snapshot = null;
@@ -137,33 +142,10 @@ public sealed class DefaultSceneService : ISceneService
 
     public Scene? CloneCurrentScene()
     {
-        if (CurrentScene == null) return null;
-
-        // Create a new scene and duplicate root objects with their hierarchy
-        var clone = new Scene { Name = CurrentScene.Name + " (Play)" };
-        foreach (var rootGo in CurrentScene.RootObjects)
-        {
-            CloneGameObjectHierarchy(rootGo, clone, null);
-        }
-        return clone;
-    }
-
-    private static void CloneGameObjectHierarchy(GameObject source, Scene targetScene, GameObject? parent)
-    {
-        var clone = new GameObject(source.Name);
-        clone.Transform.LocalPosition = source.Transform.LocalPosition;
-        clone.Transform.LocalEulerAngles = source.Transform.LocalEulerAngles;
-        clone.Transform.LocalScale = source.Transform.LocalScale;
-
-        if (parent != null)
-            clone.SetParent(parent, false);
-        else
-            targetScene.Add(clone);
-
-        foreach (var child in source.Children)
-        {
-            CloneGameObjectHierarchy(child, targetScene, clone);
-        }
+        // Cloning is no longer needed — the editor plays the current scene
+        // directly and restores from the serialized snapshot on exit.
+        // Kept for interface compliance; returns null.
+        return null;
     }
 
     private static void PopulateSampleScene(Scene scene)

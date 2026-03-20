@@ -30,9 +30,11 @@ public static class MaterialSerializer
     {
         var root = new JsonObject();
 
-        // Shader reference
+        // Shader reference — prefer GUID, keep path for readability / fallback
         string shaderPath = material.Shader?.AssetPath ?? string.Empty;
         root["shader"] = shaderPath;
+        if (material.Shader != null && material.Shader.AssetID != Guid.Empty)
+            root["shaderGuid"] = material.Shader.AssetID.ToString("N");
 
         // Material name
         root["name"] = material.Name ?? "New Material";
@@ -68,13 +70,22 @@ public static class MaterialSerializer
             if (root is not JsonObject obj)
                 return null;
 
-            // Resolve shader
-            string shaderPath = obj["shader"]?.GetValue<string>() ?? string.Empty;
-            Shader? shader = ResolveShader(shaderPath, filePath);
+            // Resolve shader — try GUID first, fall back to path
+            Shader? shader = null;
+            string shaderPathStr = obj["shader"]?.GetValue<string>() ?? string.Empty;
+            string? shaderGuid = obj["shaderGuid"]?.GetValue<string>();
+            if (!string.IsNullOrEmpty(shaderGuid) && Guid.TryParse(shaderGuid, out Guid shaderAssetId))
+            {
+                shader = AssetDatabase.Get(shaderAssetId) as Shader;
+            }
+            if (shader == null)
+            {
+                shader = ResolveShader(shaderPathStr, filePath);
+            }
 
             if (shader == null)
             {
-                Debug.LogWarning($"[MaterialSerializer] Could not resolve shader '{shaderPath}' for material '{filePath}'. Using default.");
+                Debug.LogWarning($"[MaterialSerializer] Could not resolve shader '{shaderPathStr}' for material '{filePath}'. Using default.");
                 shader = Shader.LoadDefault(DefaultShader.Standard);
             }
 
@@ -196,13 +207,21 @@ public static class MaterialSerializer
         }
         if (vec4s.Count > 0) obj["vectors4"] = vec4s;
 
-        // Texture paths (store the AssetPath so they can be re-resolved)
+        // Texture references — prefer GUID, keep path for readability / fallback
         var textures = new JsonObject();
         foreach (string name in props.GetTextureNames())
         {
             Texture2D? tex = props.GetTexture(name);
-            if (tex != null && !string.IsNullOrEmpty(tex.AssetPath))
-                textures[name] = tex.AssetPath;
+            if (tex == null) continue;
+
+            var texRef = new JsonObject();
+            if (!string.IsNullOrEmpty(tex.AssetPath))
+                texRef["path"] = tex.AssetPath;
+            if (tex.AssetID != Guid.Empty)
+                texRef["guid"] = tex.AssetID.ToString("N");
+
+            if (texRef.Count > 0)
+                textures[name] = texRef;
         }
         if (textures.Count > 0) obj["textures"] = textures;
 
@@ -275,6 +294,39 @@ public static class MaterialSerializer
                     mat.SetVector(kvp.Key, new Float4(
                         arr[0]!.GetValue<float>(), arr[1]!.GetValue<float>(),
                         arr[2]!.GetValue<float>(), arr[3]!.GetValue<float>()));
+            }
+        }
+
+        // Textures — resolve via GUID first, then fall back to path
+        if (propsObj["textures"] is JsonObject textures)
+        {
+            foreach (var kvp in textures)
+            {
+                Texture2D? tex = null;
+
+                if (kvp.Value is JsonObject texRef)
+                {
+                    // New format: { "guid": "...", "path": "..." }
+                    string? guid = texRef["guid"]?.GetValue<string>();
+                    if (!string.IsNullOrEmpty(guid) && Guid.TryParse(guid, out Guid texAssetId))
+                        tex = AssetDatabase.Get(texAssetId) as Texture2D;
+
+                    if (tex == null)
+                    {
+                        string? path = texRef["path"]?.GetValue<string>();
+                        if (!string.IsNullOrEmpty(path) && File.Exists(path))
+                            tex = Texture2D.FromFile(path);
+                    }
+                }
+                else if (kvp.Value is JsonValue jv && jv.TryGetValue<string>(out string? legacyPath))
+                {
+                    // Legacy format: plain path string
+                    if (!string.IsNullOrEmpty(legacyPath) && File.Exists(legacyPath))
+                        tex = Texture2D.FromFile(legacyPath);
+                }
+
+                if (tex != null)
+                    mat.SetTexture(kvp.Key, tex);
             }
         }
     }

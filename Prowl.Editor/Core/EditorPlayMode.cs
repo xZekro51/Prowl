@@ -24,14 +24,13 @@ public enum PlayModeState
 
 /// <summary>
 /// Manages the editor's play/pause/stop lifecycle.
-/// On Play: snapshots the scene, starts simulation time, enables physics.
+/// On Play: snapshots the scene via serialization, enables simulation.
 /// On Pause/Step: freezes/advances the simulation.
-/// On Stop: restores the pre-play scene state, disables physics.
+/// On Stop: restores the pre-play scene state from the snapshot, disables simulation.
 /// </summary>
 public sealed class EditorPlayMode
 {
     private object? _sceneSnapshot;
-    private Scene? _playScene;
 
     /// <summary> Current play mode state. </summary>
     public PlayModeState State { get; private set; } = PlayModeState.Stopped;
@@ -40,12 +39,13 @@ public sealed class EditorPlayMode
     public event Action<PlayModeState>? StateChanged;
 
     /// <summary>
-    /// Ensures physics is disabled in edit mode at startup.
+    /// Ensures physics and gameplay are disabled in edit mode at startup.
     /// Call this once during editor initialization.
     /// </summary>
     public void InitEditMode()
     {
         Scene.SimulatePhysics = false;
+        Scene.IsPlayMode = false;
     }
 
     /// <summary>
@@ -90,18 +90,15 @@ public sealed class EditorPlayMode
     }
 
     /// <summary>
-    /// Called each editor frame to advance the simulation if playing.
+    /// Called each editor frame to manage simulation time.
+    /// Scene updates are driven by the main loop; this only ticks the clock.
     /// </summary>
     public void Update(float realDelta)
     {
         if (State == PlayModeState.Stopped) return;
 
         var time = EditorServices.Get<IEditorTime>();
-        if (time.Tick(realDelta))
-        {
-            // Advance the play-mode scene simulation
-            _playScene?.Update();
-        }
+        time.Tick(realDelta);
     }
 
     private void EnterPlayMode()
@@ -109,13 +106,11 @@ public sealed class EditorPlayMode
         var sceneService = EditorServices.Get<ISceneService>();
         var time = EditorServices.Get<IEditorTime>();
 
-        // Snapshot the current scene for later restoration
+        // Snapshot the current scene for later restoration (full serialization)
         _sceneSnapshot = sceneService.SnapshotScene();
 
-        // Clone the scene for play-mode simulation
-        _playScene = sceneService.CloneCurrentScene();
-
-        // Enable physics simulation
+        // Enable gameplay simulation
+        Scene.IsPlayMode = true;
         Scene.SimulatePhysics = true;
 
         // Start the simulation clock
@@ -135,17 +130,11 @@ public sealed class EditorPlayMode
         // Stop the simulation clock
         time.Stop();
 
-        // Disable physics simulation
+        // Disable gameplay simulation
+        Scene.IsPlayMode = false;
         Scene.SimulatePhysics = false;
 
-        // Dispose the play scene
-        if (_playScene != null)
-        {
-            _playScene.Dispose();
-            _playScene = null;
-        }
-
-        // Restore the original scene state
+        // Restore the original scene state from the serialized snapshot
         sceneService.RestoreScene(_sceneSnapshot);
         _sceneSnapshot = null;
 

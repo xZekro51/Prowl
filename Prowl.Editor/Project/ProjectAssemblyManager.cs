@@ -4,7 +4,9 @@
 using System.Reflection;
 using System.Runtime.Loader;
 
+using Prowl.Echo;
 using Prowl.Runtime;
+using Prowl.Runtime.Resources;
 
 namespace Prowl.Editor.Project;
 
@@ -70,6 +72,12 @@ public sealed class ProjectAssemblyManager : IDisposable, IProjectTypeResolver
         // Unload any previously loaded assembly
         Unload();
 
+        // Clear Echo's type-resolution caches so that stale entries
+        // (including types from the old assembly or null entries cached
+        // before the assembly was loaded) are purged before we load
+        // the new assembly.
+        InvalidateTypeCaches();
+
         Debug.Log("[Scripts] Compiling project scripts...");
         CompilationResult result = ProjectScriptCompiler.Compile(_projectPath);
 
@@ -78,6 +86,7 @@ public sealed class ProjectAssemblyManager : IDisposable, IProjectTypeResolver
             Debug.LogWarning($"[Scripts] {warning}");
         foreach (string error in result.Errors)
             Debug.LogError($"[Scripts] {error}");
+
 
         if (result.Success && result.OutputAssemblyPath != null)
         {
@@ -94,6 +103,10 @@ public sealed class ProjectAssemblyManager : IDisposable, IProjectTypeResolver
                 using var asmStream = new MemoryStream(asmBytes);
                 using var pdbStream = pdbBytes != null ? new MemoryStream(pdbBytes) : null;
                 _loadedAssembly = _loadContext.LoadFromStream(asmStream, pdbStream);
+
+                // Bridge assembly resolution so that Type.GetType(assemblyQualifiedName)
+                // can find types in the collectible ALC via the default context.
+                AssemblyLoadContext.Default.Resolving += Default_Resolving;
 
                 int typeCount = 0;
                 try { typeCount = _loadedAssembly.GetTypes().Length; }
@@ -115,9 +128,25 @@ public sealed class ProjectAssemblyManager : IDisposable, IProjectTypeResolver
         }
 
 
-        ProjectAssembly.Register(this);   // ← one line!
+        ProjectAssembly.Register(this);
+
+        // Now that the new assembly is registered, clear caches again
+        // so that any lookups performed during the Unload() phase
+        // (which may have cached null for user types) are purged.
+        InvalidateTypeCaches();
+
         OnAssemblyChanged?.Invoke();
         return result;
+    }
+
+    private Assembly? Default_Resolving(AssemblyLoadContext context, AssemblyName assemblyName)
+    {
+        // Forward assembly resolution requests to the collectible ALC so that
+        // Type.GetType(assemblyQualifiedName) and Echo's TypeNameRegistry
+        // can find user-script types without needing them in the default ALC.
+        if (_loadContext == null) return null;
+        return _loadContext.Assemblies
+            .FirstOrDefault(a => a.GetName().Name == assemblyName.Name);
     }
 
     /// <summary>
@@ -130,8 +159,14 @@ public sealed class ProjectAssemblyManager : IDisposable, IProjectTypeResolver
         if (_loadContext != null)
         {
             _loadedAssembly = null;
+            AssemblyLoadContext.Default.Resolving -= Default_Resolving;
             _loadContext.Unload();
             _loadContext = null;
+
+            // Purge cached type metadata that referenced the now-unloaded
+            // assembly to prevent stale Type handles from lingering.
+            InvalidateTypeCaches();
+
             Debug.Log("[Scripts] Previous script assembly unloaded.");
         }
     }
@@ -231,6 +266,22 @@ public sealed class ProjectAssemblyManager : IDisposable, IProjectTypeResolver
     {
         StopWatching();
         Unload();
+    }
+
+    /// <summary>
+    /// Clears all cached type-resolution data in Echo, the runtime utilities,
+    /// and the project assembly bridge. This must be called whenever the user
+    /// script assembly is loaded, unloaded, or reloaded to prevent:
+    /// <list type="bullet">
+    ///   <item>Stale <c>null</c> entries cached before the assembly was available.</item>
+    ///   <item>Dangling <see cref="Type"/> handles from an unloaded assembly.</item>
+    ///   <item>Serialization format caches that reference old field layouts.</item>
+    /// </list>
+    /// </summary>
+    private static void InvalidateTypeCaches()
+    {
+        Serializer.ClearCache();
+        RuntimeUtils.ClearCache();
     }
 
     private void OnSourceChanged(object sender, FileSystemEventArgs e)

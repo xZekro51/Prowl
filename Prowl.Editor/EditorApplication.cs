@@ -112,15 +112,10 @@ public sealed class EditorApplication : Game
                 fixedTimeAccumulator -= Time.FixedDeltaTime;
             }
 
-            if (_playMode.State == PlayModeState.Playing)
-            {
-                currentScene?.Update();
-            }
-            else
-            {
-                // Update only the cameras
-                currentScene?.UpdateCameras();
-            }
+            // Scene.Update handles play/edit mode filtering internally:
+            // In play mode all components execute; in edit mode only
+            // [ExecuteInEditMode] and rendering components run.
+            currentScene?.Update();
 
             if (DrawGizmos)
             {
@@ -171,7 +166,8 @@ public sealed class EditorApplication : Game
         if (_layoutInitialised)
             ImGui.LoadIniSettingsFromDisk(_iniFilePath);
 
-        Prowl.Echo.Serializer.OnResolveCustomType += Serializer_OnResolveCustomType;
+        // Prowl.Echo.Serializer.OnResolveCustomType += Serializer_OnResolveCustomType;
+
 
         // Initialize the editor console logger (hooks into Debug.OnLog)
         EditorConsoleLogger.Initialize();
@@ -203,6 +199,11 @@ public sealed class EditorApplication : Game
             assetDb.SetAssetRoot(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Assets"));
         }
         EditorServices.Register<IAssetService>(assetDb);
+
+        // Bridge the editor's asset service to the runtime AssetDatabase
+        // so that serialization contexts can resolve $assetId references.
+        var editorAssetDb = new EditorAssetDatabase(assetDb);
+        AssetDatabase.Current = editorAssetDb;
 
         // ── Script compilation ─────────────────────────────────
         // Compile user scripts BEFORE loading scenes so that custom
@@ -305,10 +306,10 @@ public sealed class EditorApplication : Game
         Debug.LogSuccess("Editor initialized.");
     }
 
-    private void Serializer_OnResolveCustomType(string typeName, ref Type type)
+    /*private void Serializer_OnResolveCustomType(string typeName, ref Type type)
     {
         if (type == null) type = ProjectAssembly.GetType(typeName);
-    }
+    }*/
 
     public override void BeginUpdate()
     {

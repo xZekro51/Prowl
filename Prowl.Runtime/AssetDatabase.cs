@@ -18,6 +18,12 @@ public interface IAssetDatabase
     /// Returns null if the asset is not found.
     /// </summary>
     EngineObject? Get(Guid assetId);
+
+    /// <summary>
+    /// Attempts to resolve an asset ID for an object given its asset path.
+    /// Returns <see cref="Guid.Empty"/> if the path is not known to the database.
+    /// </summary>
+    Guid ResolveAssetId(string assetPath) => Guid.Empty;
 }
 
 /// <summary>
@@ -49,11 +55,25 @@ public static class AssetDatabase
     {
         ctx.OnSerialize = (obj, c) =>
         {
-            if (obj is EngineObject eo && eo.AssetID != Guid.Empty)
+            if (obj is EngineObject eo)
             {
-                var compound = EchoObject.NewCompound();
-                compound["$assetId"] = new EchoObject(eo.AssetID.ToString());
-                return compound; // serialize as just a reference
+                Guid id = eo.AssetID;
+
+                // If the object has no AssetID yet but does have a path,
+                // ask the database to resolve the GUID from the meta system.
+                if (id == Guid.Empty && !string.IsNullOrEmpty(eo.AssetPath) && Current != null)
+                {
+                    id = Current.ResolveAssetId(eo.AssetPath);
+                    if (id != Guid.Empty)
+                        eo.AssetID = id; // stamp for future use
+                }
+
+                if (id != Guid.Empty)
+                {
+                    var compound = EchoObject.NewCompound();
+                    compound["$assetId"] = new EchoObject(id.ToString());
+                    return compound; // serialize as just a reference
+                }
             }
             return null; // normal serialization
         };

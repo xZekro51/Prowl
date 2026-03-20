@@ -403,15 +403,18 @@ public class GameObject : EngineObject, ISerializable
 
     /// <summary>
     /// Performs pre-update operations on the GameObject's components.
+    /// When <paramref name="filter"/> is provided, Start is only called
+    /// on components that pass the filter (used in edit mode).
     /// </summary>
-    internal void PreUpdate()
+    internal void PreUpdate(Predicate<MonoBehaviour>? filter = null)
     {
         foreach (MonoBehaviour component in _components)
         {
             if (!component.HasStarted)
                 if (component.EnabledInHierarchy)
                 {
-                    component.InternalStart();
+                    if (filter == null || filter(component))
+                        component.InternalStart();
                 }
         }
     }
@@ -1066,14 +1069,22 @@ public class GameObject : EngineObject, ISerializable
         _components = [];
         foreach (EchoObject compTag in comps.List)
         {
-            // Fallback for Missing Type
+            // Check the $type tag to detect unresolvable types early and
+            // store them as MissingMonobehaviour so they can be recovered
+            // later (e.g. after a script assembly is reloaded).
             EchoObject? typeProperty = compTag.Get("$type");
-            // If the type is missing or string null/whitespace something is wrong, so just let the Deserializer handle it, maybe it knows what to do
+
+            // Pre-resolve the type ourselves because Echo's internal
+            // TypeNameRegistry.ResolveFullTypeName uses Type.GetType()
+            // which cannot find types loaded in a non-default
+            // AssemblyLoadContext. When Echo's resolution fails it
+            // falls back to the targetType we pass to Deserialize,
+            // so we pass the correctly resolved type here.
+            Type resolvedType = typeof(MonoBehaviour);
+
             if (typeProperty != null && !string.IsNullOrWhiteSpace(typeProperty.StringValue))
             {
-                // Look for Monobehaviour Type
-                Type oType = RuntimeUtils.FindType(typeProperty.StringValue);
-                Debug.Log(oType);
+                Type? oType = RuntimeUtils.FindType(typeProperty.StringValue);
                 if (oType == null)
                 {
                     Debug.LogWarning("Missing Monobehaviour Type: " + typeProperty.StringValue + " On " + Name);
@@ -1089,22 +1100,11 @@ public class GameObject : EngineObject, ISerializable
                     HandleMissingComponent(compTag, ctx);
                     continue;
                 }
+
+                resolvedType = oType;
             }
-            Debug.Log("Value");
-            if (compTag.Value is Dictionary<string, EchoObject> valueDict)
-            {
-                foreach(var kvp in valueDict)
-                {
-                    Debug.Log($"Key: {kvp.Key}, Value: {kvp.Value}");
-                }
-            }
-            else
-            {
-                Debug.Log(compTag.Value);
-            }
-            Debug.Log(compTag.TagType);
-            MonoBehaviour? component = Serializer.Deserialize<MonoBehaviour>(compTag, ctx);
-            Debug.Log($"Final Component result: {component == null}");
+
+            MonoBehaviour? component = Serializer.Deserialize(compTag, resolvedType, ctx) as MonoBehaviour;
             if (component.IsNotValid()) continue;
             _components.Add(component);
             _componentCache.Add(component.GetType(), component);
@@ -1127,11 +1127,12 @@ public class GameObject : EngineObject, ISerializable
         // Try to recover the component
         if (oldData.TryGet("$type", out EchoObject? typeProp))
         {
-            Type oType = RuntimeUtils.FindType(typeProp.StringValue);
+            Type? oType = RuntimeUtils.FindType(typeProp.StringValue);
             if (oType != null)
             {
-                // We have the type! Deserialize it and add it to the components
-                MonoBehaviour? component = Serializer.Deserialize<MonoBehaviour>(oldData);
+                // We have the type! Deserialize it with the resolved type
+                // so Echo's fallback uses the correct type.
+                MonoBehaviour? component = Serializer.Deserialize(oldData, oType, ctx) as MonoBehaviour;
                 if (component.IsValid())
                 {
                     _components.Add(component);
@@ -1163,8 +1164,9 @@ public class GameObject : EngineObject, ISerializable
             if (oType == null || oType == typeof(MissingMonobehaviour))
                 continue;
 
-            // Type is now available — deserialize the original data
-            MonoBehaviour? component = Serializer.Deserialize<MonoBehaviour>(data);
+            // Type is now available — deserialize with the resolved type
+            // so Echo's fallback uses the correct user type.
+            MonoBehaviour? component = Serializer.Deserialize(data, oType, new SerializationContext()) as MonoBehaviour;
             if (component.IsValid())
             {
                 _components[i] = component;

@@ -2,8 +2,10 @@
 // Licensed under the MIT License. See the LICENSE file in the project root for details.
 
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
+using System.Reflection;
 
 using Prowl.Echo;
 using Prowl.PaperUI;
@@ -462,52 +464,26 @@ public class Scene : EngineObject, ISerializationCallbackReceiver
     /// <summary>
     /// Updates all active GameObjects and their components in this scene.
     /// Calls PreUpdate, Update, and LateUpdate.
+    /// In edit mode (<see cref="IsPlayMode"/> == false), only components that
+    /// qualify via <see cref="ShouldRunInEditMode"/> are executed.
     /// </summary>
     public void Update()
     {
         // Clear render tracking at the start of each update
         ClearRenderTracking();
 
-        List<GameObject> activeGOs = [.. ActiveObjects];
-        foreach (GameObject go in activeGOs)
-            go.PreUpdate();
-
-        Game.BaseEventManager.InvokeEvent(EventSystem.BaseEvents.OnBeforeUpdate);
-        ForeachComponent(activeGOs, (x) => x.Update());
-        Game.BaseEventManager.InvokeEvent(EventSystem.BaseEvents.OnAfterUpdate);
-
-        Game.BaseEventManager.InvokeEvent(EventSystem.BaseEvents.OnBeforeLateUpdate);
-        ForeachComponent(activeGOs, (x) => x.LateUpdate());
-        Game.BaseEventManager.InvokeEvent(EventSystem.BaseEvents.OnAfterLateUpdate);
-
-        Flush();
-    }
-
-    /// <summary>
-    /// Updates all active GameObjects and their components in this scene.
-    /// Calls PreUpdate, Update, and LateUpdate.
-    /// </summary>
-    public void UpdateCameras()
-    {
-        // Clear render tracking at the start of each update
-        ClearRenderTracking();
+        bool editFilter = !IsPlayMode;
 
         List<GameObject> activeGOs = [.. ActiveObjects];
         foreach (GameObject go in activeGOs)
-            go.PreUpdate();
+            go.PreUpdate(editFilter ? ShouldRunInEditMode : null);
 
         Game.BaseEventManager.InvokeEvent(EventSystem.BaseEvents.OnBeforeUpdate);
-        ForeachComponent(activeGOs, (x) => {
-            if (x is IRenderable || x is IRenderableLight)
-                x.Update();
-        });
+        ForeachComponent(activeGOs, (x) => x.Update(), editFilter);
         Game.BaseEventManager.InvokeEvent(EventSystem.BaseEvents.OnAfterUpdate);
 
         Game.BaseEventManager.InvokeEvent(EventSystem.BaseEvents.OnBeforeLateUpdate);
-        ForeachComponent(activeGOs, (x) => {
-            if (x is IRenderable || x is IRenderableLight)
-                x.LateUpdate();
-        });
+        ForeachComponent(activeGOs, (x) => x.LateUpdate(), editFilter);
         Game.BaseEventManager.InvokeEvent(EventSystem.BaseEvents.OnAfterLateUpdate);
 
         Flush();
@@ -520,16 +496,49 @@ public class Scene : EngineObject, ISerializationCallbackReceiver
     public static bool SimulatePhysics { get; set; } = true;
 
     /// <summary>
+    /// When true, all component lifecycle methods (Start, Update, FixedUpdate,
+    /// LateUpdate) execute normally. When false (edit mode), only components
+    /// marked with <see cref="ExecuteInEditModeAttribute"/> or implementing
+    /// <see cref="IRenderable"/>/<see cref="IRenderableLight"/> will execute.
+    /// Defaults to true so standalone (non-editor) games run without changes.
+    /// </summary>
+    public static bool IsPlayMode { get; set; } = true;
+
+    /// <summary>
+    /// Per-type cache for whether a MonoBehaviour subclass should execute in edit mode.
+    /// </summary>
+    private static readonly ConcurrentDictionary<Type, bool> _editModeTypeCache = new();
+
+    /// <summary>
+    /// Returns true if the component should execute its lifecycle methods while
+    /// in edit mode. A component qualifies if its type has the
+    /// <see cref="ExecuteInEditModeAttribute"/> or if it implements
+    /// <see cref="IRenderable"/> or <see cref="IRenderableLight"/>.
+    /// </summary>
+    internal static bool ShouldRunInEditMode(MonoBehaviour comp)
+    {
+        Type type = comp.GetType();
+        return _editModeTypeCache.GetOrAdd(type, static t =>
+            t.IsDefined(typeof(ExecuteInEditModeAttribute), true)
+            || typeof(IRenderable).IsAssignableFrom(t)
+            || typeof(IRenderableLight).IsAssignableFrom(t));
+    }
+
+    /// <summary>
     /// Executes physics update on all active GameObjects and their components.
-    /// Calls Physics.Update and FixedUpdate.
+    /// Physics only steps when <see cref="SimulatePhysics"/> is true.
+    /// In edit mode, only <see cref="ExecuteInEditModeAttribute"/> components
+    /// receive FixedUpdate calls.
     /// </summary>
     public void FixedUpdate()
     {
         if (SimulatePhysics)
             Physics.Update();
 
+        bool editFilter = !IsPlayMode;
+
         List<GameObject> activeGOs = [.. ActiveObjects];
-        ForeachComponent(activeGOs, (x) => x.FixedUpdate());
+        ForeachComponent(activeGOs, (x) => x.FixedUpdate(), editFilter);
 
         Flush();
     }
@@ -601,14 +610,16 @@ public class Scene : EngineObject, ISerializationCallbackReceiver
     /// <summary>
     /// Helper method to iterate over all MonoBehaviour components in a collection of GameObjects
     /// and execute an action on each enabled component.
+    /// When <paramref name="editModeFilter"/> is true, only components that pass
+    /// <see cref="ShouldRunInEditMode"/> are included.
     /// </summary>
-    public void ForeachComponent(IEnumerable<GameObject> objs, Action<MonoBehaviour> action)
+    public void ForeachComponent(IEnumerable<GameObject> objs, Action<MonoBehaviour> action, bool editModeFilter = false)
     {
         foreach (GameObject go in objs)
         {
             MonoBehaviour[] components = [.. go.GetComponents<MonoBehaviour>()];
             foreach (MonoBehaviour? comp in components)
-                if (comp.EnabledInHierarchy)
+                if (comp.EnabledInHierarchy && (!editModeFilter || ShouldRunInEditMode(comp)))
                     action.Invoke(comp);
         }
     }

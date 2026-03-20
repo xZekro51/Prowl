@@ -70,28 +70,38 @@ public static class RuntimeUtils
 
     public static Type? FindType(string qualifiedTypeName)
     {
-        //Type? t = Type.GetType(qualifiedTypeName);
+        // 1) Try the project assembly resolver first (handles the custom ALC).
         Type? t = ProjectAssembly.GetType(qualifiedTypeName);
-
         if (t != null)
-        {
             return t;
-        }
-        else
-        {
-            foreach (Assembly asm in AppDomain.CurrentDomain.GetAssemblies())
-            {
-                t = asm.GetType(qualifiedTypeName);
-                if (t != null)
-                    return t;
 
-                // If not found, try to find by name without namespace
-                t = asm.GetTypes().FirstOrDefault(t => t.Name.Equals(qualifiedTypeName, StringComparison.OrdinalIgnoreCase));
-                if (t != null)
-                    return t;
-            }
-            return null;
+        // 2) Strip assembly qualification so Assembly.GetType works
+        //    (it expects "Namespace.Type", not "Namespace.Type, Asm, Version=...").
+        string shortName = qualifiedTypeName;
+        int commaIdx = qualifiedTypeName.IndexOf(',');
+        if (commaIdx > 0)
+            shortName = qualifiedTypeName.Substring(0, commaIdx).Trim();
+
+        foreach (Assembly asm in AppDomain.CurrentDomain.GetAssemblies())
+        {
+            t = asm.GetType(shortName);
+            if (t != null)
+                return t;
         }
+
+        // 3) Fallback: match by unqualified type name (class name only).
+        foreach (Assembly asm in AppDomain.CurrentDomain.GetAssemblies())
+        {
+            Type[] types;
+            try { types = asm.GetTypes(); }
+            catch (ReflectionTypeLoadException ex) { types = ex.Types.Where(x => x != null).ToArray()!; }
+
+            t = types.FirstOrDefault(x => x.Name.Equals(shortName, StringComparison.OrdinalIgnoreCase));
+            if (t != null)
+                return t;
+        }
+
+        return null;
     }
 
     public static PropertyInfo GetInstanceProperty(this Type type, string name)

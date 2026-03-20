@@ -2,11 +2,7 @@
 // Licensed under the MIT License. See the LICENSE file in the project root for details.
 
 using System;
-using System.Collections.Generic;
-using System.Linq;
 using System.Reflection;
-using System.Text;
-using System.Threading.Tasks;
 
 namespace Prowl.Runtime
 {
@@ -17,7 +13,7 @@ namespace Prowl.Runtime
     public interface IProjectTypeResolver
     {
         Assembly? LoadedAssembly { get; }
-        global::System.Type? GetType(string typeName);   // ← the method we already discussed
+        global::System.Type? GetType(string typeName);
     }
 
     /// <summary>
@@ -31,7 +27,6 @@ namespace Prowl.Runtime
         public static void Register(IProjectTypeResolver? resolver)
         {
             _resolver = resolver;
-            // Optional: clear any internal caches here if you add them
         }
 
         public static IProjectTypeResolver? Instance => _resolver;
