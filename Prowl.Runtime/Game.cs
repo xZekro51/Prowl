@@ -3,6 +3,7 @@
 
 using System;
 using System.Diagnostics.CodeAnalysis;
+using System.Text;
 
 using Echo.Logging;
 
@@ -40,6 +41,7 @@ public abstract class Game
 
     private readonly WindowManager _windowManager = new();
     private readonly ImGuiManager _imguiManager = new();
+    private readonly StringBuilder _titleBuilder = new();
 
     public static EventSystem.EventManager<EventSystem.BaseEvents> BaseEventManager { get; } = new();
 
@@ -106,7 +108,15 @@ public abstract class Game
 
             if (frameCounter++ % 60 == 0)
             {
-                Console.Title = $"{_title} - {Window.InternalWindow.FramebufferSize.X}x{Window.InternalWindow.FramebufferSize.Y} - FPS: {1.0 / Time.DeltaTime}";
+                _titleBuilder.Clear();
+                _titleBuilder.Append(_title);
+                _titleBuilder.Append(" - ");
+                _titleBuilder.Append(Window.InternalWindow.FramebufferSize.X);
+                _titleBuilder.Append('x');
+                _titleBuilder.Append(Window.InternalWindow.FramebufferSize.Y);
+                _titleBuilder.Append(" - FPS: ");
+                _titleBuilder.Append(1.0 / Time.DeltaTime);
+                Console.Title = _titleBuilder.ToString();
             }
 
         }
