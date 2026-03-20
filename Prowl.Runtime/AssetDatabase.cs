@@ -35,8 +35,13 @@ public static class AssetDatabase
     /// <summary>
     /// The current asset database implementation. Set this before serializing/deserializing
     /// objects that contain asset references.
+    /// Delegates to <see cref="EngineContext.Current"/>.<see cref="EngineContext.AssetDatabase"/>.
     /// </summary>
-    public static IAssetDatabase? Current { get; set; }
+    public static IAssetDatabase? Current
+    {
+        get => EngineContext.Current.AssetDatabase;
+        set => EngineContext.Current.AssetDatabase = value;
+    }
 
     /// <summary>
     /// Resolves an <see cref="EngineObject"/> by asset ID from the current database.
