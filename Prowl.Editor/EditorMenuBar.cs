@@ -4,6 +4,7 @@
 using ImGuiNET;
 using Prowl.Runtime;
 using Prowl.Runtime.Resources;
+using Prowl.Editor.Build;
 using Prowl.Editor.Project;
 using Prowl.Editor.Services;
 using Prowl.Editor.Undo;
@@ -25,6 +26,8 @@ public sealed class EditorMenuBar
     public Action? OnToggleGameView { get; set; }
     public Action? OnToggleConsole { get; set; }
     public Action? OnTogglePreferences { get; set; }
+    public Action? OnToggleProjectSettings { get; set; }
+    public Action? OnToggleBuildWindow { get; set; }
 
     // Cached scene file list for the "Load Scene" popup
     private string[] _sceneFiles = [];
@@ -39,6 +42,10 @@ public sealed class EditorMenuBar
             if (ImGui.MenuItem("New Scene"))            OnNewScene();
             if (ImGui.MenuItem("Save Scene", "Ctrl+S")) OnSaveScene();
             if (ImGui.MenuItem("Load Scene"))           OnRequestLoadScene();
+            ImGui.Separator();
+            bool hasProjectFile = EditorApplication.ScriptAssemblyManager != null;
+            if (ImGui.MenuItem("Build Project...", "", false, hasProjectFile))
+                OnToggleBuildWindow?.Invoke();
             ImGui.Separator();
             if (ImGui.MenuItem("Exit"))                 OnExit();
             ImGui.EndMenu();
@@ -59,6 +66,7 @@ public sealed class EditorMenuBar
             if (ImGui.MenuItem(redoLabel, "Ctrl+Y")) OnRedo();
             ImGui.Separator();
             if (ImGui.MenuItem("Preferences..."))    OnTogglePreferences?.Invoke();
+            if (ImGui.MenuItem("Project Settings...")) OnToggleProjectSettings?.Invoke();
             ImGui.EndMenu();
         }
 

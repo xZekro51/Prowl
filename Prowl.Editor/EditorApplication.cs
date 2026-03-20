@@ -46,10 +46,12 @@ public sealed class EditorApplication : Game
     private GamePanel? _gamePanel;
     private PreferencesPanel? _preferencesPanel;
     private ConsolePanel? _consolePanel;
+    private ProjectSettingsPanel? _projectSettingsPanel;
+    private BuildPanel? _buildPanel;
 
     // Maximize state for scene panel
     private bool _sceneMaximized;
-    private bool[] _savedOpenStates = new bool[6]; // hierarchy, inspector, project, game, prefs, console
+    private bool[] _savedOpenStates = new bool[8]; // hierarchy, inspector, project, game, prefs, console, projSettings, build
 
     /// <summary> The project folder path passed via --project, or null. </summary>
     public static string? ProjectPath { get; private set; }
@@ -248,6 +250,8 @@ public sealed class EditorApplication : Game
         _gamePanel = new GamePanel();
         _preferencesPanel = new PreferencesPanel();
         _consolePanel = new ConsolePanel();
+        _projectSettingsPanel = new ProjectSettingsPanel();
+        _buildPanel = new BuildPanel();
 
         // Register ProjectPanel so other panels can find it for cross-panel features
         EditorServices.Register<ProjectPanel>(_projectPanel);
@@ -260,6 +264,8 @@ public sealed class EditorApplication : Game
         _menuBar.OnToggleGameView = () => _gamePanel.IsOpen = !_gamePanel.IsOpen;
         _menuBar.OnTogglePreferences = () => _preferencesPanel.IsOpen = !_preferencesPanel.IsOpen;
         _menuBar.OnToggleConsole = () => _consolePanel.IsOpen = !_consolePanel.IsOpen;
+        _menuBar.OnToggleProjectSettings = () => _projectSettingsPanel.IsOpen = !_projectSettingsPanel.IsOpen;
+        _menuBar.OnToggleBuildWindow = () => _buildPanel.IsOpen = !_buildPanel.IsOpen;
 
         // Initialise the icon system (registers all built-in icons)
         IconManager.Load();
@@ -485,6 +491,8 @@ public sealed class EditorApplication : Game
                 _savedOpenStates[3] = _gamePanel?.IsOpen ?? false;
                 _savedOpenStates[4] = _preferencesPanel?.IsOpen ?? false;
                 _savedOpenStates[5] = _consolePanel?.IsOpen ?? false;
+                _savedOpenStates[6] = _projectSettingsPanel?.IsOpen ?? false;
+                _savedOpenStates[7] = _buildPanel?.IsOpen ?? false;
 
                 if (_hierarchyPanel != null) _hierarchyPanel.IsOpen = false;
                 if (_inspectorPanel != null) _inspectorPanel.IsOpen = false;
@@ -492,6 +500,8 @@ public sealed class EditorApplication : Game
                 if (_gamePanel != null) _gamePanel.IsOpen = false;
                 if (_preferencesPanel != null) _preferencesPanel.IsOpen = false;
                 if (_consolePanel != null) _consolePanel.IsOpen = false;
+                if (_projectSettingsPanel != null) _projectSettingsPanel.IsOpen = false;
+                if (_buildPanel != null) _buildPanel.IsOpen = false;
             }
             else if (!wantMax && _sceneMaximized)
             {
@@ -503,6 +513,8 @@ public sealed class EditorApplication : Game
                 if (_gamePanel != null) _gamePanel.IsOpen = _savedOpenStates[3];
                 if (_preferencesPanel != null) _preferencesPanel.IsOpen = _savedOpenStates[4];
                 if (_consolePanel != null) _consolePanel.IsOpen = _savedOpenStates[5];
+                if (_projectSettingsPanel != null) _projectSettingsPanel.IsOpen = _savedOpenStates[6];
+                if (_buildPanel != null) _buildPanel.IsOpen = _savedOpenStates[7];
             }
         }
 
@@ -513,6 +525,8 @@ public sealed class EditorApplication : Game
         _gamePanel?.Draw();
         _preferencesPanel?.Draw();
         _consolePanel?.Draw();
+        _projectSettingsPanel?.Draw();
+        _buildPanel?.Draw();
 
         // Persist layout whenever ImGui marks it dirty
         if (ImGui.GetIO().WantSaveIniSettings)
@@ -818,6 +832,8 @@ public sealed class EditorApplication : Game
         if (_gamePanel != null) state.OpenPanels["Game"] = _gamePanel.IsOpen;
         if (_preferencesPanel != null) state.OpenPanels["Preferences"] = _preferencesPanel.IsOpen;
         if (_consolePanel != null) state.OpenPanels["Console"] = _consolePanel.IsOpen;
+        if (_projectSettingsPanel != null) state.OpenPanels["ProjectSettings"] = _projectSettingsPanel.IsOpen;
+        if (_buildPanel != null) state.OpenPanels["Build"] = _buildPanel.IsOpen;
     }
 
     private void RestorePanelStates(ProjectSessionState state)
@@ -830,6 +846,8 @@ public sealed class EditorApplication : Game
         if (state.OpenPanels.TryGetValue("Game", out var g) && _gamePanel != null) _gamePanel.IsOpen = g;
         if (state.OpenPanels.TryGetValue("Preferences", out var pr) && _preferencesPanel != null) _preferencesPanel.IsOpen = pr;
         if (state.OpenPanels.TryGetValue("Console", out var c) && _consolePanel != null) _consolePanel.IsOpen = c;
+        if (state.OpenPanels.TryGetValue("ProjectSettings", out var ps) && _projectSettingsPanel != null) _projectSettingsPanel.IsOpen = ps;
+        if (state.OpenPanels.TryGetValue("Build", out var bp) && _buildPanel != null) _buildPanel.IsOpen = bp;
     }
 
     public override void Closing()

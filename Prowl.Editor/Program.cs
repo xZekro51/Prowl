@@ -1,14 +1,20 @@
 ﻿// This file is part of the Prowl Game Engine
 // Licensed under the MIT License. See the LICENSE file in the project root for details.
 
+using Prowl.Editor.Build;
 using Prowl.Runtime;
 
 namespace Prowl.Editor;
 
 internal class Program
 {
-    static void Main(string[] args)
+    static int Main(string[] args)
     {
+        // ── Headless build mode (no editor window) ─────────────
+        if (HasFlag(args, "--build"))
+            return BuildManager.RunFromCommandLine(args);
+
+        // ── Normal editor mode ─────────────────────────────────
         DpiManager.EnsureProcessDpiAware();
 
         string? projectPath = ParseProjectPath(args);
@@ -18,6 +24,7 @@ internal class Program
             ? $"Prowl Editor — {Path.GetFileName(projectPath)}"
             : "Prowl Editor";
         editor.Run(title, (int)(1600 * Game.DpiScale), (int)(900 * Game.DpiScale));
+        return 0;
     }
 
     /// <summary>
@@ -34,5 +41,15 @@ internal class Program
             }
         }
         return null;
+    }
+
+    private static bool HasFlag(string[] args, string flag)
+    {
+        for (int i = 0; i < args.Length; i++)
+        {
+            if (args[i].Equals(flag, StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+        return false;
     }
 }

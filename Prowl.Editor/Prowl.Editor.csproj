@@ -27,6 +27,7 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.12.0" />
+    <PackageReference Include="Microsoft.Maui.Core" Version="10.0.50" />
   </ItemGroup>
 
   <ItemGroup>

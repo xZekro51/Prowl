@@ -86,22 +86,29 @@ public abstract class Game
 
             BeginUpdate();
 
-            Scene? currentScene = Scene.Current;
-
-            // Fixed update loop
+            // Fixed update loop — update all loaded scenes
             fixedTimeAccumulator += delta;
             int count = 0;
             while (fixedTimeAccumulator >= Time.FixedDeltaTime && count++ < 10)
             {
-                currentScene?.FixedUpdate();
+                if (SceneManager.LoadedSceneCount > 0)
+                    SceneManager.FixedUpdateAll();
+                else
+                    Scene.Current?.FixedUpdate();
                 fixedTimeAccumulator -= Time.FixedDeltaTime;
             }
 
-            currentScene?.Update();
+            if (SceneManager.LoadedSceneCount > 0)
+                SceneManager.UpdateAll();
+            else
+                Scene.Current?.Update();
 
             if (DrawGizmos)
             {
-                currentScene?.DrawGizmos();
+                if (SceneManager.LoadedSceneCount > 0)
+                    SceneManager.DrawGizmosAll();
+                else
+                    Scene.Current?.DrawGizmos();
             }
 
             EndUpdate();
@@ -169,8 +176,6 @@ public abstract class Game
                 return;
             try
             {
-                Scene? currentScene = Scene.Current;
-
                 // === Start Graphics ===
 
                 Graphics.UnbindFramebuffer();
@@ -187,7 +192,10 @@ public abstract class Game
 
                 BeginRender();
 
-                currentScene?.Render();
+                if (SceneManager.LoadedSceneCount > 0)
+                    SceneManager.RenderAll();
+                else
+                    Scene.Current?.Render();
 
                 EndRender();
 
@@ -198,7 +206,16 @@ public abstract class Game
 
                 BeginGui(_paper);
 
-                currentScene?.OnGui(_paper);
+                // OnGui runs on all loaded scenes, or just the current scene
+                if (SceneManager.LoadedSceneCount > 0)
+                {
+                    foreach (var scene in SceneManager.LoadedScenes)
+                        if (scene.IsActive) scene.OnGui(_paper);
+                }
+                else
+                {
+                    Scene.Current?.OnGui(_paper);
+                }
 
                 EndGui(_paper);
 
@@ -248,8 +265,10 @@ public abstract class Game
 
             _imguiManager.Dispose();
 
-            // Unload the current scene
+            // Unload all scenes (additive + primary)
+            SceneManager.UnloadAllExcept();
             Scene.Unload();
+            SceneManager.Clear();
 
             AudioContext.Deinitialize();
 

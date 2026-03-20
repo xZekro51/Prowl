@@ -32,8 +32,19 @@ public class Scene : EngineObject, ISerializationCallbackReceiver
     }
 
     /// <summary>
+    /// Sets <see cref="Current"/> without triggering enable/disable or SceneManager sync.
+    /// Used internally by <see cref="SceneManager"/> to avoid re-entrant calls.
+    /// </summary>
+    internal static void SetCurrentDirect(Scene? scene)
+    {
+        EngineContext.Current.ActiveScene = scene;
+    }
+
+    /// <summary>
     /// Loads a scene as the current active scene, replacing any previously loaded scene.
     /// The previous scene will be disabled and disposed.
+    /// Also kept in sync with <see cref="SceneManager"/> so additively loaded scenes
+    /// are tracked correctly.
     /// </summary>
     /// <param name="scene">The scene to load as the current scene.</param>
     public static void Load(Scene scene)
@@ -41,16 +52,21 @@ public class Scene : EngineObject, ISerializationCallbackReceiver
         if (scene == null)
             throw new ArgumentNullException(nameof(scene));
 
+        Scene? oldScene = Current;
+
         // Disable and dispose the current scene if one exists
-        if (Current != null)
+        if (oldScene != null)
         {
-            if (Current.IsActive)
-                Current.Disable();
-            Current.Dispose();
+            if (oldScene.IsActive)
+                oldScene.Disable();
+            oldScene.Dispose();
         }
 
         Current = scene;
         Current.Enable();
+
+        // Keep SceneManager in sync
+        SceneManager.OnPrimarySceneLoaded(oldScene, scene);
     }
 
     /// <summary>
@@ -61,10 +77,14 @@ public class Scene : EngineObject, ISerializationCallbackReceiver
     {
         if (Current != null)
         {
-            if (Current.IsActive)
-                Current.Disable();
-            Current.Dispose();
+            Scene toUnload = Current;
+            if (toUnload.IsActive)
+                toUnload.Disable();
+            toUnload.Dispose();
             Current = null;
+
+            // Keep SceneManager in sync
+            SceneManager.OnPrimarySceneUnloaded(toUnload);
         }
     }
 
