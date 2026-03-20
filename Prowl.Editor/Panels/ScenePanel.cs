@@ -42,6 +42,9 @@ public sealed class ScenePanel : EditorPanel
     // Fullscreen toggle
     private bool _isMaximized;
 
+    // Gizmo visibility toggle
+    private bool _showGizmos = true;
+
     /// <summary> True when the scene view is maximized (other panels should be hidden). </summary>
     public bool IsMaximized => _isMaximized;
 
@@ -137,7 +140,7 @@ public sealed class ScenePanel : EditorPanel
         // ── Click-to-select (raycast picking) ──────────────────
         HandleClickToSelect(input, selService);
 
-        // Draw gizmo handles over the viewport using ImGui DrawList
+        // Draw transform gizmo handles (always visible; the toggle controls component gizmos)
         var selectedGo = selService.ActiveObject as GameObject;
         Gizmo.Draw(selectedGo, Camera, ViewportRect, input);
 
@@ -153,6 +156,8 @@ public sealed class ScenePanel : EditorPanel
         DrawMaximizeButton();
         ImGui.SameLine(0, 8 * Game.DpiScale);
         DrawViewModeDropdown();
+        ImGui.SameLine(0, 8 * Game.DpiScale);
+        DrawGizmoToggle();
 
         // ── Drag-drop target: accept assets from the Project panel ──
         AcceptAssetDrop();
@@ -291,6 +296,26 @@ public sealed class ScenePanel : EditorPanel
         {
             ViewMode = (SceneViewMode)current;
         }
+    }
+
+    private void DrawGizmoToggle()
+    {
+        var icon = _showGizmos ? EditorIconType.Eye : EditorIconType.EyeOff;
+
+        if (!_showGizmos)
+        {
+            ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.40f, 0.20f, 0.20f, 1f));
+            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.50f, 0.25f, 0.25f, 1f));
+        }
+
+        if (EditorIcons.ImageButtonWithLabel("GizmoToggle", icon, "Gizmos"))
+        {
+            _showGizmos = !_showGizmos;
+            EditorApplication.ShowComponentGizmos = _showGizmos;
+        }
+
+        if (!_showGizmos)
+            ImGui.PopStyleColor(2);
     }
 
     // ── Drop position for asset drag-drop ──────────────────────

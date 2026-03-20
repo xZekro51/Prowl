@@ -60,6 +60,12 @@ public sealed class EditorApplication : Game
     /// </summary>
     public static ProjectAssemblyManager? ScriptAssemblyManager { get; private set; }
 
+    /// <summary>
+    /// Controls whether component gizmos (<see cref="MonoBehaviour.DrawGizmos"/>) are rendered.
+    /// The transform gizmo (translate/rotate/scale handles) is always drawn regardless of this flag.
+    /// </summary>
+    public static bool ShowComponentGizmos { get; set; } = true;
+
     private bool _themeApplied;
     private float _lastAppliedUserScale = 1.0f;
     private bool _firstFrame = true;
@@ -117,7 +123,7 @@ public sealed class EditorApplication : Game
             // [ExecuteInEditMode] and rendering components run.
             currentScene?.Update();
 
-            if (DrawGizmos)
+            if (ShowComponentGizmos)
             {
                 currentScene?.DrawGizmos();
             }

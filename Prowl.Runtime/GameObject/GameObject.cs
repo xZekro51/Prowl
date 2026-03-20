@@ -88,6 +88,17 @@ public class GameObject : EngineObject, ISerializable
     /// <summary> The Identifier of this GameObject </summary>
     public Guid Identifier => _identifier;
 
+    /// <summary>
+    /// Recursively generates new GUIDs for this GameObject and all its children.
+    /// Used after copy/paste/duplicate to ensure unique identifiers.
+    /// </summary>
+    public void RegenerateIdentifiers()
+    {
+        _identifier = Guid.NewGuid();
+        foreach (var child in Children)
+            child.RegenerateIdentifiers();
+    }
+
     /// <summary> The Parent of this GameObject, Can be null </summary>
     public GameObject? Parent => _parent;
 

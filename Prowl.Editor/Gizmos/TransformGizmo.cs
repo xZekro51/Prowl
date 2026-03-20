@@ -46,7 +46,7 @@ public sealed class TransformGizmo
     public bool IsActive => _activeAxis >= 0;
 
     // Drag state
-    private int _activeAxis = -1;        // -1 = none, 0=X, 1=Y, 2=Z
+    private int _activeAxis = -1;        // -1=none, 0=X, 1=Y, 2=Z, 3=XY, 4=XZ, 5=YZ, 6=Uniform
     private Float2 _dragStart;
     private Float3 _dragStartValue;
 
@@ -60,6 +60,13 @@ public sealed class TransformGizmo
 
     // Axis direction captured at drag start (prevents drift when in Local orientation)
     private Float3 _dragStartAxisDir;
+
+    // Second axis direction for plane drag
+    private Float3 _dragStartAxisDir2;
+
+    // Screen-space directions captured at drag start (for plane drags)
+    private Float2 _dragStartScreenDir;
+    private Float2 _dragStartScreenDir2;
 
     // Start angle of mouse around gizmo center (for rotation mode)
     private float _dragStartAngle;
@@ -150,6 +157,17 @@ public sealed class TransformGizmo
             screenDirs[i] = l < 1f ? Float2.Zero : d / l;
         }
 
+        // Sort axes by depth so back-facing axes draw first (behind)
+        // and front-facing axes draw last (on top). Active axis always draws on top.
+        int[] drawOrder = [0, 1, 2];
+        Array.Sort(drawOrder, (a, b) =>
+        {
+            bool aActive = _activeAxis == a;
+            bool bActive = _activeAxis == b;
+            if (aActive != bActive) return aActive ? 1 : -1;
+            return Float3.Dot(axisDirs[a], toCamera).CompareTo(Float3.Dot(axisDirs[b], toCamera));
+        });
+
         Float2 mouseLocal = input.MousePosition - vpRect.Min;
         var drawList = ImGui.GetWindowDrawList();
 
@@ -166,10 +184,12 @@ public sealed class TransformGizmo
                     camera, vpW, vpH, 48);
         }
 
-        // Determine which axis is hovered (for dimming others)
+        // Determine which axis is hovered — iterate front-to-back so the
+        // visually topmost axis gets hover priority.
         int hoveredAxis = -1;
-        for (int i = 0; i < 3; i++)
+        for (int idx = 2; idx >= 0; idx--)
         {
+            int i = drawOrder[idx];
             if (screenLens[i] < 1f) continue;
             bool hovered = Mode == GizmoMode.Rotate
                 ? IsNearProjectedCircle(mouseLocal, circlePoints[i], HandleHitSize)
@@ -177,12 +197,46 @@ public sealed class TransformGizmo
             if (hovered) { hoveredAxis = i; break; }
         }
 
+        // Check plane handle hovers (Translate mode only, when no single axis is hovered/active)
+        float planeFrac = 0.28f;
+        if (hoveredAxis == -1 && _activeAxis == -1 && Mode == GizmoMode.Translate)
+        {
+            int[,] planePairs = { {0,1}, {0,2}, {1,2} };
+            for (int p = 0; p < 3; p++)
+            {
+                int pi = planePairs[p,0], pj = planePairs[p,1];
+                if (screenLens[pi] < 1f || screenLens[pj] < 1f) continue;
+
+                Float2 dI = screenDirs[pi] * screenLens[pi] * planeFrac;
+                Float2 dJ = screenDirs[pj] * screenLens[pj] * planeFrac;
+                Float2 q0 = center;
+                Float2 q1 = center + dI;
+                Float2 q2 = center + dI + dJ;
+                Float2 q3 = center + dJ;
+
+                if (IsPointInQuad(mouseLocal, q0, q1, q2, q3))
+                {
+                    hoveredAxis = 3 + p;
+                    break;
+                }
+            }
+        }
+
+        // Check uniform scale hover (Scale mode only)
+        if (hoveredAxis == -1 && _activeAxis == -1 && Mode == GizmoMode.Scale)
+        {
+            float dist = Float2.Length(mouseLocal - center);
+            if (dist < HandleHitSize * 1.5f)
+                hoveredAxis = 6;
+        }
+
         // Draw center circle (white dot)
         drawList.AddCircleFilled(new Vector2(cx, cy), 4f * Game.DpiScale,
             ImGui.GetColorU32(new Vector4(0.90f, 0.90f, 0.90f, 0.80f)));
 
-        for (int i = 0; i < 3; i++)
+        for (int idx = 0; idx < 3; idx++)
         {
+            int i = drawOrder[idx];
             if (screenLens[i] < 1f) continue;
 
             float endX = ox + tipVp[i].X;
@@ -197,13 +251,17 @@ public sealed class TransformGizmo
                 : IsNearSegment(mouseLocal, center, tipVp[i], HandleHitSize);
             bool active = _activeAxis == i;
 
+            // Check if this axis is part of a hovered/active plane or uniform group
+            bool groupActive = _activeAxis >= 3 && IsAxisPartOfGroup(_activeAxis, i);
+            bool groupHovered = hoveredAxis >= 3 && IsAxisPartOfGroup(hoveredAxis, i);
+
             // Color selection with transparency for non-hovered axes
             Vector4 colVec;
-            if (hovered || active)
+            if (hovered || active || groupActive || groupHovered)
             {
                 colVec = hiColors[i];
             }
-            else if (_activeAxis >= 0 || (hoveredAxis >= 0 && hoveredAxis != i))
+            else if (_activeAxis >= 0 || hoveredAxis >= 0)
             {
                 // Dim non-active axes when one axis is being manipulated or hovered
                 colVec = DimAlpha(colors[i], 0.35f);
@@ -214,7 +272,8 @@ public sealed class TransformGizmo
             }
 
             uint col = ImGui.GetColorU32(colVec);
-            float thick = (hovered || active) ? HandleThick * 1.5f : HandleThick;
+            bool isHighlighted = hovered || active || groupActive || groupHovered;
+            float thick = isHighlighted ? HandleThick * 1.5f : HandleThick;
 
             if (Mode == GizmoMode.Rotate)
             {
@@ -244,6 +303,96 @@ public sealed class TransformGizmo
 
             // Handle interaction
             HandleDrag(input, selected, i, hovered, screenDirs[i], mouseLocal, camDist, axisDirs[i]);
+        }
+
+        // ── Plane handles (Translate mode only) ────────────────────
+        if (Mode == GizmoMode.Translate)
+        {
+            int[,] planePairs = { {0,1}, {0,2}, {1,2} };
+            for (int p = 0; p < 3; p++)
+            {
+                int pi = planePairs[p,0], pj = planePairs[p,1];
+                if (screenLens[pi] < 1f || screenLens[pj] < 1f) continue;
+
+                Float2 dI = screenDirs[pi] * screenLens[pi] * planeFrac;
+                Float2 dJ = screenDirs[pj] * screenLens[pj] * planeFrac;
+                Float2 q0 = center;
+                Float2 q1 = center + dI;
+                Float2 q2 = center + dI + dJ;
+                Float2 q3 = center + dJ;
+
+                int handleIdx = 3 + p;
+                bool planeHovered = hoveredAxis == handleIdx;
+                bool planeActive = _activeAxis == handleIdx;
+
+                // Blend colors of the two participating axes
+                Vector4 blendNorm = new(
+                    (colors[pi].X + colors[pj].X) * 0.5f,
+                    (colors[pi].Y + colors[pj].Y) * 0.5f,
+                    (colors[pi].Z + colors[pj].Z) * 0.5f, 1f);
+                Vector4 blendHi = new(
+                    (hiColors[pi].X + hiColors[pj].X) * 0.5f,
+                    (hiColors[pi].Y + hiColors[pj].Y) * 0.5f,
+                    (hiColors[pi].Z + hiColors[pj].Z) * 0.5f, 1f);
+
+                Vector4 planeColor;
+                if (planeHovered || planeActive)
+                    planeColor = DimAlpha(blendHi, 0.50f);
+                else if (_activeAxis >= 0 || hoveredAxis >= 0)
+                    planeColor = DimAlpha(blendNorm, 0.08f);
+                else
+                    planeColor = DimAlpha(blendNorm, 0.22f);
+
+                uint planeFill = ImGui.GetColorU32(planeColor);
+
+                // Draw filled quad as two triangles
+                Vector2 sp0 = new(ox + q0.X, oy + q0.Y);
+                Vector2 sp1 = new(ox + q1.X, oy + q1.Y);
+                Vector2 sp2 = new(ox + q2.X, oy + q2.Y);
+                Vector2 sp3 = new(ox + q3.X, oy + q3.Y);
+                drawList.AddTriangleFilled(sp0, sp1, sp2, planeFill);
+                drawList.AddTriangleFilled(sp0, sp2, sp3, planeFill);
+
+                // Draw outline when hovered/active
+                if (planeHovered || planeActive)
+                {
+                    uint outlineCol = ImGui.GetColorU32(DimAlpha(blendHi, 0.80f));
+                    drawList.AddLine(sp0, sp1, outlineCol, HandleThick);
+                    drawList.AddLine(sp1, sp2, outlineCol, HandleThick);
+                    drawList.AddLine(sp2, sp3, outlineCol, HandleThick);
+                    drawList.AddLine(sp3, sp0, outlineCol, HandleThick);
+                }
+
+                // Handle plane drag interaction
+                HandlePlaneDrag(input, selected, handleIdx, planeHovered,
+                    screenDirs[pi], screenDirs[pj], mouseLocal, camDist,
+                    axisDirs[pi], axisDirs[pj]);
+            }
+        }
+
+        // ── Uniform scale handle (Scale mode only) ─────────────────
+        if (Mode == GizmoMode.Scale)
+        {
+            float uniformRadius = 8f * Game.DpiScale;
+            bool uniformHovered = hoveredAxis == 6;
+            bool uniformActive = _activeAxis == 6;
+
+            Vector4 uniformColor;
+            if (uniformHovered || uniformActive)
+                uniformColor = new Vector4(1f, 1f, 1f, 0.90f);
+            else if (_activeAxis >= 0 || hoveredAxis >= 0)
+                uniformColor = new Vector4(0.6f, 0.6f, 0.6f, 0.30f);
+            else
+                uniformColor = new Vector4(0.85f, 0.85f, 0.85f, 0.65f);
+
+            drawList.AddCircleFilled(new Vector2(cx, cy), uniformRadius,
+                ImGui.GetColorU32(uniformColor));
+
+            if (uniformHovered || uniformActive)
+                drawList.AddCircle(new Vector2(cx, cy), uniformRadius,
+                    ImGui.GetColorU32(new Vector4(1f, 1f, 1f, 0.80f)), 0, HandleThick);
+
+            HandleUniformScaleDrag(input, selected, uniformHovered, mouseLocal);
         }
 
         // Draw the axis indicator in the corner
@@ -531,37 +680,137 @@ public sealed class TransformGizmo
 
         if (_activeAxis == axis && input.IsMouseButtonUp(0))
         {
-            // Push an undo command if the transform actually changed
-            Float3 newLocalPos   = selected.Transform.LocalPosition;
-            Float3 newLocalEuler = selected.Transform.LocalEulerAngles;
-            Float3 newLocalScale = selected.Transform.LocalScale;
-
-            bool changed = _undoLocalPos != newLocalPos ||
-                           _undoLocalEuler != newLocalEuler ||
-                           _undoLocalScale != newLocalScale;
-
-            if (changed && EditorServices.TryGet<UndoRedoService>(out var undoSvc))
+            string modeName = Mode switch
             {
-                string desc = Mode switch
-                {
-                    GizmoMode.Translate => "Move",
-                    GizmoMode.Rotate => "Rotate",
-                    GizmoMode.Scale => "Scale",
-                    _ => "Transform"
-                };
-
-                // Push without Execute — the transform is already at the new value.
-                var cmd = new TransformChangeCommand(
-                    selected.Transform,
-                    _undoLocalPos, _undoLocalEuler, _undoLocalScale,
-                    newLocalPos, newLocalEuler, newLocalScale,
-                    $"{desc} {selected.Name}");
-
-                undoSvc!.Push(cmd);
-            }
-
+                GizmoMode.Translate => "Move",
+                GizmoMode.Rotate => "Rotate",
+                GizmoMode.Scale => "Scale",
+                _ => "Transform"
+            };
+            CommitUndoIfChanged(selected, modeName);
             _activeAxis = -1;
         }
+    }
+
+    private void HandlePlaneDrag(IEditorInput input, GameObject selected, int planeIndex,
+        bool hovered, Float2 screenDirI, Float2 screenDirJ,
+        Float2 mouseLocal, float cameraDistance, Float3 axisDirI, Float3 axisDirJ)
+    {
+        if (_activeAxis == -1 && hovered && input.IsMouseButtonDown(0))
+        {
+            _activeAxis = planeIndex;
+            _dragStart = mouseLocal;
+            _dragStartValue = selected.Transform.Position;
+            _dragStartAxisDir = axisDirI;
+            _dragStartAxisDir2 = axisDirJ;
+            _dragStartScreenDir = screenDirI;
+            _dragStartScreenDir2 = screenDirJ;
+            _undoLocalPos = selected.Transform.LocalPosition;
+            _undoLocalEuler = selected.Transform.LocalEulerAngles;
+            _undoLocalScale = selected.Transform.LocalScale;
+            _dragCameraDistance = cameraDistance;
+        }
+
+        if (_activeAxis == planeIndex && input.IsMouseButton(0))
+        {
+            Float2 diff = mouseLocal - _dragStart;
+            float sensitivity = 0.02f * Math.Max(_dragCameraDistance * 0.1f, 0.1f);
+            float projI = Float2.Dot(diff, _dragStartScreenDir) * sensitivity;
+            float projJ = Float2.Dot(diff, _dragStartScreenDir2) * sensitivity;
+            selected.Transform.Position = _dragStartValue
+                + _dragStartAxisDir * projI
+                + _dragStartAxisDir2 * projJ;
+        }
+
+        if (_activeAxis == planeIndex && input.IsMouseButtonUp(0))
+        {
+            CommitUndoIfChanged(selected, "Move");
+            _activeAxis = -1;
+        }
+    }
+
+    private void HandleUniformScaleDrag(IEditorInput input, GameObject selected,
+        bool hovered, Float2 mouseLocal)
+    {
+        if (_activeAxis == -1 && hovered && input.IsMouseButtonDown(0))
+        {
+            _activeAxis = 6;
+            _dragStart = mouseLocal;
+            _dragStartValue = selected.Transform.LocalScale;
+            _undoLocalPos = selected.Transform.LocalPosition;
+            _undoLocalEuler = selected.Transform.LocalEulerAngles;
+            _undoLocalScale = selected.Transform.LocalScale;
+        }
+
+        if (_activeAxis == 6 && input.IsMouseButton(0))
+        {
+            Float2 diff = mouseLocal - _dragStart;
+            float amount = (diff.X - diff.Y) * 0.005f;
+            Float3 uniform = new(amount, amount, amount);
+            selected.Transform.LocalScale = _dragStartValue + uniform;
+        }
+
+        if (_activeAxis == 6 && input.IsMouseButtonUp(0))
+        {
+            CommitUndoIfChanged(selected, "Scale");
+            _activeAxis = -1;
+        }
+    }
+
+    private void CommitUndoIfChanged(GameObject selected, string modeName)
+    {
+        Float3 newLocalPos   = selected.Transform.LocalPosition;
+        Float3 newLocalEuler = selected.Transform.LocalEulerAngles;
+        Float3 newLocalScale = selected.Transform.LocalScale;
+
+        bool changed = _undoLocalPos != newLocalPos ||
+                       _undoLocalEuler != newLocalEuler ||
+                       _undoLocalScale != newLocalScale;
+
+        if (changed && EditorServices.TryGet<UndoRedoService>(out var undoSvc))
+        {
+            var cmd = new TransformChangeCommand(
+                selected.Transform,
+                _undoLocalPos, _undoLocalEuler, _undoLocalScale,
+                newLocalPos, newLocalEuler, newLocalScale,
+                $"{modeName} {selected.Name}");
+            undoSvc!.Push(cmd);
+        }
+    }
+
+    /// <summary>
+    /// Returns true if the given single axis (0=X, 1=Y, 2=Z) participates
+    /// in the specified group handle.
+    /// </summary>
+    private static bool IsAxisPartOfGroup(int group, int axis)
+    {
+        return group switch
+        {
+            3 => axis == 0 || axis == 1, // XY
+            4 => axis == 0 || axis == 2, // XZ
+            5 => axis == 1 || axis == 2, // YZ
+            6 => true,                   // Uniform (all axes)
+            _ => false
+        };
+    }
+
+    private static bool IsPointInTriangle(Float2 p, Float2 a, Float2 b, Float2 c)
+    {
+        Float2 v0 = c - a, v1 = b - a, v2 = p - a;
+        float d00 = Float2.Dot(v0, v0);
+        float d01 = Float2.Dot(v0, v1);
+        float d02 = Float2.Dot(v0, v2);
+        float d11 = Float2.Dot(v1, v1);
+        float d12 = Float2.Dot(v1, v2);
+        float inv = 1.0f / Math.Max(d00 * d11 - d01 * d01, 0.0001f);
+        float u = (d11 * d02 - d01 * d12) * inv;
+        float v = (d00 * d12 - d01 * d02) * inv;
+        return u >= 0 && v >= 0 && (u + v) <= 1;
+    }
+
+    private static bool IsPointInQuad(Float2 p, Float2 a, Float2 b, Float2 c, Float2 d)
+    {
+        return IsPointInTriangle(p, a, b, c) || IsPointInTriangle(p, a, c, d);
     }
 
     private static bool IsNearSegment(Float2 point, Float2 a, Float2 b, float threshold)

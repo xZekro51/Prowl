@@ -3,6 +3,7 @@
 
 using System.Numerics;
 using System.Reflection;
+using System.Text.Json;
 using ImGuiNET;
 using Prowl.Runtime;
 using Prowl.Runtime.Utils;
@@ -48,6 +49,10 @@ public sealed class InspectorPanel : EditorPanel
     /// those marked with <see cref="HideInInspectorAttribute"/> and internal fields. </summary>
     private bool _debugMode;
 
+    // Component collapse state persistence (editor-only, not stored in scene)
+    private readonly Dictionary<string, bool> _collapseState = new();
+    private bool _collapseStateLoaded;
+
     /// <summary> Label column width ratio (0–1). </summary>
     private const float LabelRatio = 0.3f;
 
@@ -69,6 +74,16 @@ public sealed class InspectorPanel : EditorPanel
 
     protected override void DrawContent()
     {
+        var sel = EditorServices.Get<ISelectionService>();
+
+        if (sel.ActiveObject is GameObject gameObject)
+        {
+            bool enabled = gameObject.Enabled;
+            if (ImGui.Checkbox("Active", ref enabled))
+                gameObject.Enabled = enabled;
+            ImGui.SameLine();
+        }
+
         // ── Debug mode toggle (top-right corner) ──────────────
         {
             float toggleAvail = ImGui.GetContentRegionAvail().X;
@@ -82,7 +97,6 @@ public sealed class InspectorPanel : EditorPanel
                 ImGui.PopStyleColor();
         }
 
-        var sel = EditorServices.Get<ISelectionService>();
 
         // ── Asset inspection (from project selection) ──────────
         if (sel.SelectedAsset is AssetEntry asset)
@@ -97,6 +111,7 @@ public sealed class InspectorPanel : EditorPanel
             return;
         }
 
+
         // ── GameObject header ──────────────────────────────────
         // Draw a header row with the GO icon + name
         {
@@ -104,8 +119,8 @@ public sealed class InspectorPanel : EditorPanel
             var icon = IconManager.GetIcon(goIconName);
             var cursorPos = ImGui.GetCursorScreenPos();
             float iconSz = ImGui.GetTextLineHeight();
-            ImGui.Dummy(new Vector2(iconSz, iconSz));
-            icon.Draw(cursorPos, iconSz);
+            ImGui.Dummy(new Vector2(iconSz * 2, iconSz*2));
+            icon.Draw(cursorPos, iconSz * 2);
             ImGui.SameLine();
         }
         DrawFieldRow("Name", () =>
@@ -155,9 +170,6 @@ public sealed class InspectorPanel : EditorPanel
             }
         });
 
-        bool enabled = go.Enabled;
-        if (ImGui.Checkbox("Active", ref enabled))
-            go.Enabled = enabled;
 
         ImGui.Separator();
 
@@ -181,7 +193,7 @@ public sealed class InspectorPanel : EditorPanel
 
             string typeName = comp.GetType().Name;
             string compIconName = IconManager.GetIconNameForComponent(comp);
-            ImGui.PushID(comp.GetHashCode());
+            ImGui.PushID(comp.Identifier.ToString());
 
             // Enabled checkbox on the left, before the foldout header
             bool compEnabled = comp.Enabled;
@@ -190,7 +202,20 @@ public sealed class InspectorPanel : EditorPanel
 
             ImGui.SameLine();
 
-            bool headerOpen = ImGui.CollapsingHeader($"     {typeName}", ImGuiTreeNodeFlags.DefaultOpen);
+            // Restore persisted collapse state for this component
+            EnsureCollapseStateLoaded();
+            string collapseKey = comp.Identifier.ToString();
+            bool storedOpen = _collapseState.TryGetValue(collapseKey, out bool savedOpen) ? savedOpen : true;
+            ImGui.SetNextItemOpen(storedOpen, ImGuiCond.Once);
+
+            bool headerOpen = ImGui.CollapsingHeader($"     {typeName}");
+
+            // Persist collapse state changes
+            if (headerOpen != storedOpen)
+            {
+                _collapseState[collapseKey] = headerOpen;
+                SaveCollapseState();
+            }
 
             // Overlay component icon on the header
             IconManager.DrawIconOverLastItem(compIconName);
@@ -256,6 +281,50 @@ public sealed class InspectorPanel : EditorPanel
         }
 
         DrawAddComponentPopup(go);
+    }
+
+    // ────────────────────────────────────────────────────────────
+    // Component collapse state persistence
+    // ────────────────────────────────────────────────────────────
+
+    private void EnsureCollapseStateLoaded()
+    {
+        if (_collapseStateLoaded) return;
+        _collapseStateLoaded = true;
+
+        string? path = GetCollapseStatePath();
+        if (path == null || !File.Exists(path)) return;
+
+        try
+        {
+            string json = File.ReadAllText(path);
+            var dict = JsonSerializer.Deserialize<Dictionary<string, bool>>(json);
+            if (dict != null)
+                foreach (var kv in dict)
+                    _collapseState[kv.Key] = kv.Value;
+        }
+        catch { /* corrupted or inaccessible — start fresh */ }
+    }
+
+    private void SaveCollapseState()
+    {
+        string? path = GetCollapseStatePath();
+        if (path == null) return;
+
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            string json = JsonSerializer.Serialize(_collapseState,
+                new JsonSerializerOptions { WriteIndented = true });
+            File.WriteAllText(path, json);
+        }
+        catch { /* best-effort persistence */ }
+    }
+
+    private static string? GetCollapseStatePath()
+    {
+        if (EditorApplication.ProjectPath == null) return null;
+        return Path.Combine(EditorApplication.ProjectPath, "ProjectSettings", "InspectorState.json");
     }
 
     // ────────────────────────────────────────────────────────────
@@ -1097,6 +1166,9 @@ public sealed class InspectorPanel : EditorPanel
     {
         if (!ImGui.BeginPopup("##AddComponent")) return;
 
+        if (ImGui.IsWindowFocused(ImGuiFocusedFlags.RootAndChildWindows) && !ImGui.IsAnyItemActive() && !ImGui.IsMouseClicked(0))
+            ImGui.SetKeyboardFocusHere(0);
+
         ImGui.Text("Add Component");
         ImGui.Separator();
 
@@ -1168,8 +1240,8 @@ public sealed class InspectorPanel : EditorPanel
 
         // Reserve space for the icon and draw it
         var cursorPos = ImGui.GetCursorScreenPos();
-        ImGui.Dummy(new Vector2(32, 32));
-        icon.Draw(cursorPos, 32f);
+        ImGui.Dummy(new Vector2(40, 32));
+        icon.Draw(cursorPos, 40f);
         ImGui.SameLine();
 
         ImGui.BeginGroup();

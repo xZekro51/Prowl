@@ -42,6 +42,9 @@ public sealed class HierarchyPanel : EditorPanel
     // Clipboard: stores a serialized snapshot of the copied GameObject hierarchy
     private static EchoObject? _clipboard;
 
+    // Search filter for the hierarchy tree
+    private string _searchFilter = string.Empty;
+
     public HierarchyPanel() : base("Hierarchy") { }
 
     protected override void DrawContent()
@@ -68,6 +71,10 @@ public sealed class HierarchyPanel : EditorPanel
         ImGui.TextColored(new Vector4(0.45f, 0.45f, 0.45f, 0.80f), sceneName);*/
 
         ImGui.Separator();
+
+        // ── Search bar ─────────────────────────────────────────
+        ImGui.SetNextItemWidth(ImGui.GetContentRegionAvail().X);
+        ImGui.InputTextWithHint("##HierSearch", "Search hierarchy...", ref _searchFilter, 256);
 
         // ── Scrollable hierarchy tree ──────────────────────────
         ImGui.BeginChild("##HierTree");
@@ -117,6 +124,8 @@ public sealed class HierarchyPanel : EditorPanel
                 bool any = false;
                 foreach (var go in roots)
                 {
+                    if (!string.IsNullOrEmpty(_searchFilter) && !MatchesSearch(go, _searchFilter))
+                        continue;
                     any = true;
                     DrawGameObject(go, selService, sceneService, 0);
                 }
@@ -231,6 +240,10 @@ public sealed class HierarchyPanel : EditorPanel
         var flags = ImGuiTreeNodeFlags.OpenOnArrow | ImGuiTreeNodeFlags.SpanAvailWidth | ImGuiTreeNodeFlags.FramePadding;
         if (isSelected) flags |= ImGuiTreeNodeFlags.Selected;
         if (!hasChildren) flags |= ImGuiTreeNodeFlags.Leaf | ImGuiTreeNodeFlags.NoTreePushOnOpen;
+
+        // Force nodes open when search filter is active
+        if (!string.IsNullOrEmpty(_searchFilter))
+            ImGui.SetNextItemOpen(true, ImGuiCond.Always);
 
         ImGui.PushID(go.InstanceID);
 
@@ -388,6 +401,8 @@ public sealed class HierarchyPanel : EditorPanel
         {
             foreach (var child in go.Children)
             {
+                if (!string.IsNullOrEmpty(_searchFilter) && !MatchesSearch(child, _searchFilter))
+                    continue;
                 DrawGameObject(child, sel, sceneService, depth + 1);
             }
             ImGui.TreePop();
@@ -611,7 +626,7 @@ public sealed class HierarchyPanel : EditorPanel
     /// <summary>
     /// Deserializes the clipboard into a new <see cref="GameObject"/> and adds
     /// it to the scene. If <paramref name="parent"/> is not null the pasted
-    /// object becomes a child of that object.
+    /// object becomes a child of that object. Supports undo.
     /// </summary>
     private static void PasteGameObject(ISceneService sceneService, ISelectionService sel, GameObject? parent)
     {
@@ -619,21 +634,32 @@ public sealed class HierarchyPanel : EditorPanel
 
         try
         {
-            var ctx = new SerializationContext();
-            AssetDatabase.ConfigureContext(ctx);
-            GameObject? pasted = Serializer.Deserialize<GameObject>(_clipboard, ctx);
-            if (pasted == null) return;
+            if (EditorServices.TryGet<UndoRedoService>(out var undo))
+            {
+                var cmd = new PasteGameObjectCommand(_clipboard, parent, "Paste GameObject", " (Copy)");
+                undo!.Execute(cmd);
+                if (cmd.PastedObject != null)
+                    sel.ActiveObject = cmd.PastedObject;
+            }
+            else
+            {
+                var ctx = new SerializationContext();
+                AssetDatabase.ConfigureContext(ctx);
+                GameObject? pasted = Serializer.Deserialize<GameObject>(_clipboard, ctx);
+                if (pasted == null) return;
 
-            pasted.Name += " (Copy)";
+                pasted.Name += " (Copy)";
+                pasted.RegenerateIdentifiers();
 
-            var scene = sceneService.CurrentScene;
-            if (scene == null) return;
+                var scene = sceneService.CurrentScene;
+                if (scene == null) return;
 
-            scene.Add(pasted);
-            if (parent != null)
-                pasted.SetParent(parent);
+                scene.Add(pasted);
+                if (parent != null)
+                    pasted.SetParent(parent);
 
-            sel.ActiveObject = pasted;
+                sel.ActiveObject = pasted;
+            }
         }
         catch (Exception ex)
         {
@@ -643,32 +669,66 @@ public sealed class HierarchyPanel : EditorPanel
 
     /// <summary>
     /// Duplicates the given <see cref="GameObject"/> via serialize → deserialize
-    /// round-trip, preserving all component data.
+    /// round-trip, preserving all component data. Uses separate serialization
+    /// contexts to avoid reference-identity issues. Supports undo.
     /// </summary>
     private static void DuplicateGameObject(GameObject source, ISceneService sceneService, ISelectionService sel)
     {
         try
         {
-            var ctx = new SerializationContext();
-            AssetDatabase.ConfigureContext(ctx);
-            EchoObject data = Serializer.Serialize(typeof(GameObject), source, ctx);
-            GameObject? clone = Serializer.Deserialize<GameObject>(data, ctx);
-            if (clone == null) return;
+            // Serialize with one context
+            var serCtx = new SerializationContext();
+            AssetDatabase.ConfigureContext(serCtx);
+            EchoObject data = Serializer.Serialize(typeof(GameObject), source, serCtx);
 
-            clone.Name += " (Clone)";
+            if (EditorServices.TryGet<UndoRedoService>(out var undo))
+            {
+                var cmd = new PasteGameObjectCommand(data, source.Parent, $"Duplicate '{source.Name}'", " (Clone)");
+                undo!.Execute(cmd);
+                if (cmd.PastedObject != null)
+                    sel.ActiveObject = cmd.PastedObject;
+            }
+            else
+            {
+                // Deserialize with a FRESH context to avoid reference identity issues
+                var desCtx = new SerializationContext();
+                AssetDatabase.ConfigureContext(desCtx);
+                GameObject? clone = Serializer.Deserialize<GameObject>(data, desCtx);
+                if (clone == null) return;
 
-            var scene = sceneService.CurrentScene;
-            if (scene == null) return;
+                clone.Name += " (Clone)";
+                clone.RegenerateIdentifiers();
 
-            scene.Add(clone);
-            if (source.Parent != null)
-                clone.SetParent(source.Parent);
+                var scene = sceneService.CurrentScene;
+                if (scene == null) return;
 
-            sel.ActiveObject = clone;
+                scene.Add(clone);
+                if (source.Parent != null)
+                    clone.SetParent(source.Parent);
+
+                sel.ActiveObject = clone;
+            }
         }
         catch (Exception ex)
         {
             Debug.LogWarning($"[Hierarchy] Duplicate failed: {ex.Message}");
         }
+    }
+
+    /// <summary>
+    /// Returns true if the given <see cref="GameObject"/> or any of its
+    /// descendants has a name containing <paramref name="filter"/> (case-insensitive).
+    /// </summary>
+    private static bool MatchesSearch(GameObject go, string filter)
+    {
+        if (string.IsNullOrEmpty(filter)) return true;
+        if (go.Name != null && go.Name.Contains(filter, StringComparison.OrdinalIgnoreCase))
+            return true;
+        foreach (var child in go.Children)
+        {
+            if (MatchesSearch(child, filter))
+                return true;
+        }
+        return false;
     }
 }
