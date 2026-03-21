@@ -4,6 +4,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
+using System.Runtime.CompilerServices;
 
 using Prowl.Echo;
 using Prowl.PaperUI;
@@ -58,12 +59,20 @@ public abstract class MonoBehaviour : EngineObject
     /// <summary>
     /// Gets the GameObject this MonoBehaviour is attached to.
     /// </summary>
-    public GameObject GameObject => _go;
+    public GameObject GameObject
+    {
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        get => _go;
+    }
 
     /// <summary>
     /// Gets the Transform component of the GameObject this MonoBehaviour is attached to.
     /// </summary>
-    public Transform Transform => _go.Transform;
+    public Transform Transform
+    {
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        get => _go.Transform;
+    }
 
     /// <summary>
     /// Gets whether the Start method has been called.
@@ -86,6 +95,7 @@ public abstract class MonoBehaviour : EngineObject
     /// </summary>
     public bool Enabled
     {
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         get { return _enabled; }
         set
         {
@@ -100,7 +110,11 @@ public abstract class MonoBehaviour : EngineObject
     /// <summary>
     /// Gets whether the MonoBehaviour is enabled in the hierarchy (considering parent objects).
     /// </summary>
-    public bool EnabledInHierarchy => _enabledInHierarchy;
+    public bool EnabledInHierarchy
+    {
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        get => _enabledInHierarchy;
+    }
 
     /// <summary>
     /// The parent <see cref="Prowl.Runtime.Scene"/> to which this <see cref="Prowl.Runtime.MonoBehaviour"/> belongs.
@@ -109,7 +123,11 @@ public abstract class MonoBehaviour : EngineObject
     /// <see cref="Prowl.Runtime.MonoBehaviour"/> itself cannot be part of a <see cref="Prowl.Runtime.Scene"/> without a 
     /// <see cref="GameObject"/>.
     /// </summary>
-    public Scene? Scene => GameObject?.Scene ?? null;
+    public Scene? Scene
+    {
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        get => GameObject?.Scene ?? null;
+    }
 
     public MonoBehaviour() : base() { }
 

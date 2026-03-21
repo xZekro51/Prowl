@@ -14,7 +14,11 @@ public abstract class EngineObject : IDisposable
     private static int s_nextID = 1;
 
     protected int _instanceID;
-    public int InstanceID => _instanceID;
+    public int InstanceID
+    {
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        get => _instanceID;
+    }
 
     // Asset path if we have one
     public string AssetPath = string.Empty;
