@@ -112,6 +112,12 @@ public class Scene : EngineObject, ISerializationCallbackReceiver
     [SerializeIgnore]
     private readonly List<Camera> _cameraBuffer = [];
 
+    // Indexed lookups for O(1) FindObjectByID / FindObjectByIdentifier (§4.2.3)
+    [SerializeIgnore]
+    private readonly Dictionary<int, EngineObject> _idLookup = [];
+    [SerializeIgnore]
+    private readonly Dictionary<Guid, EngineObject> _identifierLookup = [];
+
     [SerializeIgnore]
     private bool _isActive = false;
 
@@ -361,10 +367,23 @@ public class Scene : EngineObject, ISerializationCallbackReceiver
         {
             obj.Scene = this;
 
+            // Populate indexed lookups
+            _idLookup[obj.InstanceID] = obj;
+            _identifierLookup[obj.Identifier] = obj;
+
             obj.BeginComponentIteration();
             try
             {
                 int count = obj._components.Count;
+
+                // Index components in lookup dictionaries
+                for (int i = 0; i < count; i++)
+                {
+                    MonoBehaviour component = obj._components[i];
+                    if (component.IsDisposed) continue;
+                    _idLookup[component.InstanceID] = component;
+                    _identifierLookup[component.Identifier] = component;
+                }
 
                 // Call OnAddedToScene for all components
                 for (int i = 0; i < count; i++)
@@ -431,11 +450,23 @@ public class Scene : EngineObject, ISerializationCallbackReceiver
                     if (component.IsDisposed) continue;
                     component.OnRemovedFromScene();
                 }
+
+                // Remove components from indexed lookups
+                for (int i = 0; i < count; i++)
+                {
+                    MonoBehaviour component = obj._components[i];
+                    _idLookup.Remove(component.InstanceID);
+                    _identifierLookup.Remove(component.Identifier);
+                }
             }
             finally
             {
                 obj.EndComponentIteration();
             }
+
+            // Remove the GO itself from indexed lookups
+            _idLookup.Remove(obj.InstanceID);
+            _identifierLookup.Remove(obj.Identifier);
 
             obj.Scene = null;
         }
@@ -458,27 +489,15 @@ public class Scene : EngineObject, ISerializationCallbackReceiver
 
     public T? FindObjectByID<T>(int id) where T : EngineObject
     {
-        foreach (GameObject go in AllObjects)
-        {
-            if (go.InstanceID == id)
-                return go as T;
-            foreach (MonoBehaviour comp in go.GetComponents<MonoBehaviour>())
-                if (comp.InstanceID == id)
-                    return comp as T;
-        }
+        if (_idLookup.TryGetValue(id, out EngineObject? obj) && obj is T t && !obj.IsDisposed)
+            return t;
         return null;
     }
 
     public T? FindObjectByIdentifier<T>(Guid identifier) where T : EngineObject
     {
-        foreach (GameObject go in AllObjects)
-        {
-            if (go.Identifier == identifier)
-                return go as T;
-            foreach (MonoBehaviour comp in go.GetComponents<MonoBehaviour>())
-                if (comp.Identifier == identifier)
-                    return comp as T;
-        }
+        if (_identifierLookup.TryGetValue(identifier, out EngineObject? obj) && obj is T t && !obj.IsDisposed)
+            return t;
         return null;
     }
 
@@ -500,7 +519,11 @@ public class Scene : EngineObject, ISerializationCallbackReceiver
         foreach (GameObject obj in _allObj)
         {
             if (obj.IsDisposed)
+            {
                 removed.Add(obj);
+                _idLookup.Remove(obj.InstanceID);
+                _identifierLookup.Remove(obj.Identifier);
+            }
         }
 
         _allObj.RemoveWhere(obj => obj.IsDisposed);
@@ -527,6 +550,8 @@ public class Scene : EngineObject, ISerializationCallbackReceiver
 
         // Clear any remaining references
         _allObj.Clear();
+        _idLookup.Clear();
+        _identifierLookup.Clear();
     }
 
     public void OnBeforeSerialize()

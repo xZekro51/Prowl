@@ -14,8 +14,6 @@ using Prowl.Editor.Undo;
 using Prowl.Editor.Undo.Commands;
 using Prowl.Editor.Utilities;
 
-using Silk.NET.Assimp;
-
 namespace Prowl.Editor.Panels;
 
 /// <summary>
@@ -168,52 +166,42 @@ public sealed class ScenePanel : EditorPanel
 
     private void AcceptAssetDrop()
     {
-        if (ImGui.BeginDragDropTarget())
+        if (!EditorDragDrop.IsDragging || EditorDragDrop.PayloadType != "AssetEntry")
+            return;
+
+        // Manual mouse-in-rect check — ImGui's IsItemHovered() is unreliable
+        // during cross-panel drags because the drag tooltip captures g.HoveredWindow.
+        var mousePos = ImGui.GetMousePos();
+        bool mouseOverViewport = mousePos.X >= ViewportRect.Min.X && mousePos.X <= ViewportRect.Max.X &&
+                                 mousePos.Y >= ViewportRect.Min.Y && mousePos.Y <= ViewportRect.Max.Y;
+
+        if (!mouseOverViewport) return;
+
+        // Visual feedback: highlight the viewport border
+        var drawList = ImGui.GetWindowDrawList();
+        uint highlightCol = ImGui.GetColorU32(new System.Numerics.Vector4(0.28f, 0.56f, 1.0f, 0.35f));
+        drawList.AddRectFilled(
+            new System.Numerics.Vector2(ViewportRect.Min.X, ViewportRect.Min.Y),
+            new System.Numerics.Vector2(ViewportRect.Max.X, ViewportRect.Max.Y),
+            highlightCol);
+
+        if (EditorDragDrop.WasDropped)
         {
-            var payload = ImGui.AcceptDragDropPayload("ASSET_ENTRY");
-            unsafe
+            var entry = EditorDragDrop.AcceptDrop<AssetEntry>("AssetEntry");
+            if (entry != null)
             {
-                if (payload.NativePtr != null && payload.DataSize > 0)
-                {
-                    string data = System.Text.Encoding.UTF8.GetString(
-                        (byte*)payload.Data, payload.DataSize).TrimEnd('\0');
+                string absPath = entry.FullPath;
+                string name = Path.GetFileNameWithoutExtension(absPath);
 
-                    // Resolve path: data may be a GUID or a relative path
-                    string? relativePath = data;
-                    if (EditorServices.TryGet<IAssetService>(out var assets))
-                    {
-                        string? resolved = assets!.GetAssetPathByGuid(data);
-                        if (resolved != null)
-                            relativePath = resolved;
+                Float3 dropPos = ComputeDropPosition();
 
-                        string absPath = assets.GetAbsolutePath(relativePath);
-                        string name = Path.GetFileNameWithoutExtension(absPath);
+                if (EditorServices.TryGet<UndoRedoService>(out var undo))
+                    undo!.Execute(new InstantiateAssetCommand(absPath, name, dropPos));
+                else
+                    new InstantiateAssetCommand(absPath, name, dropPos).Execute();
 
-                        // Compute a drop position: raycast from mouse, fall back to
-                        // a point 5 units in front of the camera.
-                        Float3 dropPos = ComputeDropPosition();
-
-                        if (EditorServices.TryGet<UndoRedoService>(out var undo))
-                            undo!.Execute(new InstantiateAssetCommand(absPath, name, dropPos));
-                        else
-                            new InstantiateAssetCommand(absPath, name, dropPos).Execute();
-
-                        Debug.Log($"[Scene] Dropped asset: {name}");
-                    }
-                }
+                Debug.Log($"[Scene] Dropped asset: {name}");
             }
-            ImGui.EndDragDropTarget();
-        }
-
-        // Visual feedback: highlight the viewport border when a valid drag is hovering
-        if (IsHovered && EditorDragDrop.IsDragging && EditorDragDrop.PayloadType == "AssetEntry")
-        {
-            var drawList = ImGui.GetWindowDrawList();
-            uint highlightCol = ImGui.GetColorU32(new System.Numerics.Vector4(0.28f, 0.56f, 1.0f, 0.35f));
-            drawList.AddRectFilled(
-                new System.Numerics.Vector2(ViewportRect.Min.X, ViewportRect.Min.Y),
-                new System.Numerics.Vector2(ViewportRect.Max.X, ViewportRect.Max.Y),
-                highlightCol);
         }
     }
 

@@ -322,6 +322,9 @@ public sealed class ProjectPanel : EditorPanel
             else
                 DrawContentFileItem(entry, assets);
         }
+
+        // ── Drop zone: accept hierarchy GameObjects to create prefabs ──
+        AcceptHierarchyDrop(assets, dir);
     }
 
     private void DrawContentFolderItem(AssetEntry entry, IAssetService assets)
@@ -595,6 +598,69 @@ public sealed class ProjectPanel : EditorPanel
         }
 
         }
+
+    // ── Hierarchy → Project drop (create prefab) ──────────────
+
+    private void AcceptHierarchyDrop(IAssetService assets, string targetDir)
+    {
+        bool hasDrag = EditorDragDrop.IsDragging && EditorDragDrop.PayloadType == "HierarchyGO";
+        if (!hasDrag) return;
+
+        // Use the entire child window rect as the drop target
+        var winPos = ImGui.GetWindowPos();
+        var winSize = ImGui.GetWindowSize();
+        var winMin = winPos;
+        var winMax = new Vector2(winPos.X + winSize.X, winPos.Y + winSize.Y);
+
+        var drawList = ImGui.GetWindowDrawList();
+        drawList.AddRectFilled(winMin, winMax, ImGui.GetColorU32(new Vector4(0.30f, 0.70f, 0.30f, 0.06f)));
+        drawList.AddRect(winMin, winMax, ImGui.GetColorU32(new Vector4(0.30f, 0.70f, 0.30f, 0.40f)), 3f, ImDrawFlags.None, 1.5f);
+
+        // Visual hint at bottom
+        ImGui.Spacing(); ImGui.Spacing();
+        EditorIcons.InlineIcon(EditorIconType.Prefab, new Vector4(0.60f, 0.80f, 0.60f, 1f));
+        ImGui.SameLine();
+        ImGui.TextColored(new Vector4(0.60f, 0.80f, 0.60f, 1f), "Drop here to create prefab");
+
+        // Manual mouse-in-rect check — ImGui hover is unreliable during cross-panel drags
+        var mousePos = ImGui.GetMousePos();
+        bool isOverWindow = mousePos.X >= winMin.X && mousePos.X <= winMax.X &&
+                            mousePos.Y >= winMin.Y && mousePos.Y <= winMax.Y;
+        if (isOverWindow)
+        {
+            if (EditorDragDrop.Payload is GameObject dragGo)
+                ImGui.SetTooltip($"Create prefab from: {dragGo.Name}");
+
+            if (EditorDragDrop.WasDropped)
+            {
+                var go = EditorDragDrop.AcceptDrop<GameObject>("HierarchyGO");
+                if (go != null)
+                {
+                    string safeName = (go.Name ?? "Prefab").Replace(" ", "_");
+                    string fname = $"{safeName}{PrefabManager.PrefabExtension}";
+                    string relPath = Path.Combine(targetDir == "." ? "" : targetDir, fname);
+                    string absPath = assets.GetAbsolutePath(relPath);
+
+                    // Ensure unique file name
+                    if (File.Exists(absPath))
+                    {
+                        for (int i = 1; ; i++)
+                        {
+                            string candidate = Path.Combine(
+                                Path.GetDirectoryName(absPath) ?? ".",
+                                $"{safeName} ({i}){PrefabManager.PrefabExtension}");
+                            if (!File.Exists(candidate)) { absPath = candidate; break; }
+                        }
+                    }
+
+                    var prefabMgr = new PrefabManager();
+                    prefabMgr.CreatePrefab(go, absPath);
+                    assets.Refresh();
+                    Runtime.Debug.Log($"[Project] Created prefab from '{go.Name}': {absPath}");
+                }
+            }
+        }
+    }
 
     private void DrawSearchResults(IAssetService assets)
     {

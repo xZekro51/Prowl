@@ -191,23 +191,30 @@ public sealed class HierarchyPanel : EditorPanel
             }
         }
 
-        // Asset drop zone from the project browser
+        // Asset drop zone from the project browser (accepts drop anywhere in the child window)
         bool hasDrag = EditorDragDrop.IsDragging && EditorDragDrop.PayloadType == "AssetEntry";
         if (hasDrag)
         {
-            var drawList = ImGui.GetWindowDrawList();
-            var cursorPos = ImGui.GetCursorScreenPos();
-            float w = ImGui.GetContentRegionAvail().X;
-            float h = ImGui.GetTextLineHeightWithSpacing() + 6;
-            var rectMin = cursorPos;
-            var rectMax = new Vector2(cursorPos.X + w, cursorPos.Y + h);
-            drawList.AddRectFilled(rectMin, rectMax, ImGui.GetColorU32(new Vector4(0.30f, 0.70f, 0.30f, 0.10f)));
-            drawList.AddRect(rectMin, rectMax, ImGui.GetColorU32(new Vector4(0.30f, 0.70f, 0.30f, 0.50f)), 3f, ImDrawFlags.None, 1.5f);
+            // Use the entire child window rect as the drop target
+            var winPos = ImGui.GetWindowPos();
+            var winSize = ImGui.GetWindowSize();
+            var winMin = winPos;
+            var winMax = new Vector2(winPos.X + winSize.X, winPos.Y + winSize.Y);
 
+            var drawList = ImGui.GetWindowDrawList();
+            drawList.AddRectFilled(winMin, winMax, ImGui.GetColorU32(new Vector4(0.30f, 0.70f, 0.30f, 0.06f)));
+            drawList.AddRect(winMin, winMax, ImGui.GetColorU32(new Vector4(0.30f, 0.70f, 0.30f, 0.40f)), 3f, ImDrawFlags.None, 1.5f);
+
+            // Visual hint at bottom
             EditorIcons.InlineIcon(EditorIconType.Dropdown, new Vector4(0.60f, 0.80f, 0.60f, 1f));
             ImGui.SameLine();
             ImGui.TextColored(new Vector4(0.60f, 0.80f, 0.60f, 1f), "Drop asset here to instantiate");
-            if (ImGui.IsItemHovered())
+
+            // Manual mouse-in-rect check — ImGui hover is unreliable during cross-panel drags
+            var mousePos = ImGui.GetMousePos();
+            bool isOverWindow = mousePos.X >= winMin.X && mousePos.X <= winMax.X &&
+                                mousePos.Y >= winMin.Y && mousePos.Y <= winMax.Y;
+            if (isOverWindow)
             {
                 if (EditorDragDrop.Payload is AssetEntry dragEntry)
                     ImGui.SetTooltip($"Drop: {dragEntry.Name}");

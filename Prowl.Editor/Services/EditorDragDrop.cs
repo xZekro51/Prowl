@@ -75,8 +75,10 @@ public static class EditorDragDrop
             return;
         }
 
-        // First frame of release: mark as dropped but keep the payload alive
-        if (IsDragging && ImGui.IsMouseReleased(ImGuiMouseButton.Left))
+        // First frame of release: mark as dropped but keep the payload alive.
+        // Check both IsMouseReleased (edge-triggered) and !IsMouseDown (level-triggered)
+        // to handle cases where the release event is consumed by ImGui's native drag-drop.
+        if (IsDragging && (ImGui.IsMouseReleased(ImGuiMouseButton.Left) || !ImGui.IsMouseDown(ImGuiMouseButton.Left)))
         {
             WasDropped = true;
             _pendingClear = true;
