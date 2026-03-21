@@ -90,6 +90,10 @@ public sealed class DesktopBuildPipeline : IBuildPipeline
 
         // ── Resolve output directory ───────────────────────────
         outputDirectory ??= Path.Combine(projectPath, "Builds", target.ToString());
+
+        // Clean destination so previous build artefacts don't linger
+        if (Directory.Exists(outputDirectory))
+            Directory.Delete(outputDirectory, recursive: true);
         Directory.CreateDirectory(outputDirectory);
 
         string rid = GetRuntimeIdentifier(target);
@@ -99,6 +103,9 @@ public sealed class DesktopBuildPipeline : IBuildPipeline
         string tempDir = Path.Combine(projectPath, "Library", "BuildTemp");
         Directory.CreateDirectory(tempDir);
 
+        // Publish into a staging folder so we can reorganize before the final output
+        string stagingDir = Path.Combine(tempDir, "staging");
+
         string csprojPath = Path.Combine(tempDir, "PlayerBuild.csproj");
         string programCsPath = Path.Combine(tempDir, "Program.cs");
 
@@ -106,7 +113,8 @@ public sealed class DesktopBuildPipeline : IBuildPipeline
         {
             progress?.Log("Generating player project...");
             GeneratePlayerCsProj(csprojPath, projectPath, settings, target);
-            GeneratePlayerProgramCs(programCsPath, settings.ProductName);
+            bool isDebug = string.Equals(configuration, "Debug", StringComparison.OrdinalIgnoreCase);
+            GeneratePlayerProgramCs(programCsPath, settings.ProductName, settings.StartupScenePath, isDebug, settings.RenderingBackend);
 
             // ── Run dotnet publish ─────────────────────────────
             var defines = BuildDefineString(settings, target);
@@ -114,7 +122,7 @@ public sealed class DesktopBuildPipeline : IBuildPipeline
             args.Append($"publish \"{csprojPath}\"");
             args.Append($" -c {configuration}");
             args.Append($" -r {rid}");
-            args.Append($" -o \"{outputDirectory}\"");
+            args.Append($" -o \"{stagingDir}\"");
             args.Append($" --self-contained {settings.SelfContained.ToString().ToLowerInvariant()}");
             if (!string.IsNullOrEmpty(defines))
                 args.Append($" -p:DefineConstants=\"{defines}\"");
@@ -148,6 +156,21 @@ public sealed class DesktopBuildPipeline : IBuildPipeline
             if (!string.IsNullOrWhiteSpace(stderr))
                 warnings.Add(stderr);
 
+            // ── Copy publish output to final directory ────────
+            // With PublishSingleFile all managed DLLs and NuGet native
+            // libraries are bundled inside the executable, so the staging
+            // directory typically contains just the exe (and PDB).
+            progress?.Log("Copying publish output...");
+            foreach (string srcFile in Directory.GetFiles(stagingDir, "*", SearchOption.TopDirectoryOnly))
+            {
+                File.Copy(srcFile, Path.Combine(outputDirectory, Path.GetFileName(srcFile)), overwrite: true);
+            }
+            // Copy any remaining subdirectories from staging (rare)
+            foreach (string srcSubDir in Directory.GetDirectories(stagingDir))
+            {
+                CopyDirectory(srcSubDir, Path.Combine(outputDirectory, Path.GetFileName(srcSubDir)), skipCsFiles: false);
+            }
+
             // ── Copy assets to output ──────────────────────────
             progress?.Log("Copying assets...");
             string outputAssetsDir = Path.Combine(outputDirectory, "Assets");
@@ -160,15 +183,22 @@ public sealed class DesktopBuildPipeline : IBuildPipeline
             if (converted > 0)
                 Runtime.Debug.Log($"[Build] Converted {converted} scene(s) to binary format.");
 
-            // ── Copy native libraries (runtimes/) for standalone builds ──
+            // ── Copy engine-bundled native libraries ────────────
+            // Native libraries shipped with the engine (e.g. miniaudioex)
+            // are not part of any NuGet package and therefore not bundled
+            // by PublishSingleFile.  Copy the target platform's native
+            // libs beside the executable so the P/Invoke loader finds them.
             string editorBaseDir = AppDomain.CurrentDomain.BaseDirectory;
-            string editorRuntimesDir = Path.Combine(editorBaseDir, "runtimes");
-            if (Directory.Exists(editorRuntimesDir))
+            string targetNativeDir = Path.Combine(editorBaseDir, "runtimes", rid, "native");
+            if (Directory.Exists(targetNativeDir))
             {
-                progress?.Log("Bundling native libraries...");
-                string outputRuntimesDir = Path.Combine(outputDirectory, "runtimes");
-                CopyDirectory(editorRuntimesDir, outputRuntimesDir, skipCsFiles: false);
-                Runtime.Debug.Log($"[Build] Native libraries copied to {outputRuntimesDir}");
+                progress?.Log("Copying engine native libraries...");
+                foreach (string nativeLib in Directory.GetFiles(targetNativeDir))
+                {
+                    string destFile = Path.Combine(outputDirectory, Path.GetFileName(nativeLib));
+                    File.Copy(nativeLib, destFile, overwrite: true);
+                }
+                Runtime.Debug.Log($"[Build] Engine native libraries copied to output root");
             }
 
             Runtime.Debug.LogSuccess($"[Build] Build succeeded — output: {outputDirectory}");
@@ -256,13 +286,20 @@ public sealed class DesktopBuildPipeline : IBuildPipeline
         sb.AppendLine("""<Project Sdk="Microsoft.NET.Sdk">""");
         sb.AppendLine();
         sb.AppendLine("  <PropertyGroup>");
-        sb.AppendLine("    <OutputType>Exe</OutputType>");
+        // Use WinExe to hide the console window unless the user explicitly wants one.
+        string outputType = (settings.ShowConsole || target == BuildTarget.Linux) ? "Exe" : "WinExe";
+        sb.AppendLine($"    <OutputType>{outputType}</OutputType>");
         sb.AppendLine("    <TargetFramework>net9.0</TargetFramework>");
         sb.AppendLine("    <LangVersion>13</LangVersion>");
         sb.AppendLine("    <ImplicitUsings>enable</ImplicitUsings>");
         sb.AppendLine("    <Nullable>enable</Nullable>");
         sb.AppendLine("    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>");
         sb.AppendLine($"    <AssemblyName>{SecurityElement.Escape(settings.ProductName)}</AssemblyName>");
+        // Bundle all managed DLLs and NuGet native libraries into a single
+        // executable so the output directory stays tidy and there are no
+        // assembly-probing issues.
+        sb.AppendLine("    <PublishSingleFile>true</PublishSingleFile>");
+        sb.AppendLine("    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>");
         sb.AppendLine("  </PropertyGroup>");
         sb.AppendLine();
 
@@ -305,9 +342,37 @@ public sealed class DesktopBuildPipeline : IBuildPipeline
     /// <summary>
     /// Generates a minimal <c>Program.cs</c> entry point for the player.
     /// </summary>
-    internal static void GeneratePlayerProgramCs(string outputPath, string productName)
+    internal static void GeneratePlayerProgramCs(
+        string outputPath,
+        string productName,
+        string startupScenePath,
+        bool isDebug,
+        Runtime.RenderingBackend renderingBackend = Runtime.RenderingBackend.OpenGL)
     {
         string escaped = productName.Replace("\"", "\\\"");
+        string sceneEscaped = (string.IsNullOrWhiteSpace(startupScenePath)
+            ? "DefaultScene.scene"
+            : startupScenePath).Replace("\"", "\\\"");
+        string backendName = renderingBackend.ToString();
+
+        // In debug builds the outer catch writes a detailed error file beside
+        // the executable so crashes during initialization are diagnosable even
+        // when no debugger or console is attached.
+        string debugCatchBody = isDebug
+            ? """
+                        string errorPath = System.IO.Path.Combine(
+                            System.AppDomain.CurrentDomain.BaseDirectory, "error.log");
+                        string msg = $"[{System.DateTime.Now:yyyy-MM-dd HH:mm:ss}] FATAL — unhandled exception during startup:\n{ex}";
+                        try { System.IO.File.WriteAllText(errorPath, msg); }
+                        catch { /* best effort */ }
+                        System.Console.Error.WriteLine(msg);
+                        throw; // re-throw so the OS crash dialog still appears
+            """
+            : """
+                        System.Console.Error.WriteLine($"[Player] Fatal error: {ex}");
+                        throw;
+            """;
+
         // Use fully qualified type names to avoid conflicts with user-defined
         // namespaces or types that share names with Prowl.Runtime members (e.g. "Game").
         string code = $$"""
@@ -318,12 +383,29 @@ public sealed class DesktopBuildPipeline : IBuildPipeline
             {
                 static void Main(string[] args)
                 {
-                    new PlayerGame().Run("{{escaped}}", 1280, 720);
+                    try
+                    {
+                        // Start file logging — writes Player.log beside the executable.
+                        Prowl.Runtime.PlayerFileLogger.Initialize();
+
+                        try
+                        {
+                            new PlayerGame().Run("{{escaped}}", 1280, 720, Prowl.Runtime.RenderingBackend.{{backendName}});
+                        }
+                        finally
+                        {
+                            Prowl.Runtime.PlayerFileLogger.Shutdown();
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+            {{debugCatchBody}}
+                    }
                 }
             }
 
             /// <summary>
-            /// Minimal player game — loads and runs the default scene.
+            /// Minimal player game — loads and runs the configured startup scene.
             /// </summary>
             public sealed class PlayerGame : Prowl.Runtime.Game
             {
@@ -332,18 +414,35 @@ public sealed class DesktopBuildPipeline : IBuildPipeline
                     string assetsDir = System.IO.Path.Combine(System.AppDomain.CurrentDomain.BaseDirectory, "Assets");
 
                     // Prefer binary scene format (produced by the build pipeline) over JSON
-                    string defaultScene = System.IO.Path.Combine(assetsDir, "DefaultScene.bscene");
-                    if (!System.IO.File.Exists(defaultScene))
-                        defaultScene = System.IO.Path.Combine(assetsDir, "DefaultScene.scene");
+                    string startupScene = System.IO.Path.Combine(assetsDir, "{{sceneEscaped}}".Replace(".scene", ".bscene"));
+                    if (!System.IO.File.Exists(startupScene))
+                        startupScene = System.IO.Path.Combine(assetsDir, "{{sceneEscaped}}");
 
-                    if (System.IO.File.Exists(defaultScene))
+                    // Initialize the runtime asset database so that $assetId references
+                    // in scenes and materials are resolved from the shipped Assets folder.
+                    var assetDb = new Prowl.Runtime.RuntimeAssetDatabase(assetsDir);
+                    Prowl.Runtime.AssetDatabase.Current = assetDb;
+
+                    if (System.IO.File.Exists(startupScene))
                     {
-                        // Scene loading is handled by the runtime serialization layer.
-                        Prowl.Runtime.Debug.Log($"[Player] Loading scene: {defaultScene}");
+                        Prowl.Runtime.Debug.Log($"[Player] Loading scene: {startupScene}");
+
+                        var scene = Prowl.Runtime.RuntimeAssetDatabase.LoadScene(startupScene);
+                        if (scene != null)
+                        {
+                            Prowl.Runtime.Resources.Scene.Load(scene);
+                            Prowl.Runtime.Debug.LogSuccess($"[Player] Scene loaded successfully ({scene.Count} objects).");
+                        }
+                        else
+                        {
+                            Prowl.Runtime.Debug.LogWarning("[Player] Scene deserialization returned null. Starting with an empty scene.");
+                            Prowl.Runtime.Resources.Scene.Load(new Prowl.Runtime.Resources.Scene());
+                        }
                     }
                     else
                     {
-                        Prowl.Runtime.Debug.LogWarning("[Player] No default scene found. Starting with an empty scene.");
+                        Prowl.Runtime.Debug.LogWarning($"[Player] Startup scene not found: {startupScene}. Starting with an empty scene.");
+                        Prowl.Runtime.Resources.Scene.Load(new Prowl.Runtime.Resources.Scene());
                     }
                 }
             }

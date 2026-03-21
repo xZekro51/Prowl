@@ -19,11 +19,41 @@ internal class Program
 
         string? projectPath = ParseProjectPath(args);
 
+        // Load the rendering backend from project settings (default: OpenGL)
+        RenderingBackend backend = RenderingBackend.OpenGL;
+        if (!string.IsNullOrEmpty(projectPath))
+        {
+            try
+            {
+                var buildSettings = BuildSettings.Load(projectPath);
+                backend = buildSettings.RenderingBackend;
+            }
+            catch
+            {
+                // If settings can't be loaded, fall back to default.
+            }
+        }
+
         var editor = new EditorApplication(projectPath);
         string title = projectPath != null
             ? $"Prowl Editor — {Path.GetFileName(projectPath)}"
             : "Prowl Editor";
-        editor.Run(title, (int)(1600 * Game.DpiScale), (int)(900 * Game.DpiScale));
+
+        try
+        {
+            editor.Run(title, (int)(1600 * Game.DpiScale), (int)(900 * Game.DpiScale), backend);
+        }
+        catch (Exception ex) when (backend != RenderingBackend.OpenGL)
+        {
+            // Safety net: if Game.Run()'s internal fallback also failed somehow,
+            // attempt a completely fresh start with OpenGL.
+            Console.Error.WriteLine($"[Prowl] {backend} backend failed: {ex.Message}");
+            Console.Error.WriteLine("[Prowl] Retrying with a fresh OpenGL instance...");
+
+            Window.Cleanup();
+            editor = new EditorApplication(projectPath);
+            editor.Run(title, (int)(1600 * Game.DpiScale), (int)(900 * Game.DpiScale), RenderingBackend.OpenGL);
+        }
         return 0;
     }
 

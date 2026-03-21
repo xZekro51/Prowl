@@ -5,6 +5,7 @@ using System.Numerics;
 using System.Reflection;
 using System.Text.Json;
 using ImGuiNET;
+using Prowl.Echo;
 using Prowl.Runtime;
 using Prowl.Runtime.Prefabs;
 using Prowl.Runtime.Utils;
@@ -1293,6 +1294,9 @@ public sealed class InspectorPanel : EditorPanel
             case ".cs":
                 DrawScriptAssetInfo(asset);
                 break;
+            case ".asset":
+                DrawScriptableObjectAssetInfo(asset);
+                break;
             case ".png" or ".jpg" or ".jpeg" or ".bmp" or ".tga" or ".hdr":
                 DrawTextureAssetInfo(asset);
                 break;
@@ -1443,6 +1447,150 @@ public sealed class InspectorPanel : EditorPanel
                 ImGui.TextDisabled("(unable to read image metadata)");
             }
         }
+    }
+
+    private static void DrawScriptableObjectAssetInfo(AssetEntry asset)
+    {
+        ScriptableObject? so = null;
+        try
+        {
+            so = ScriptableObjectSerializer.Load(asset.FullPath);
+        }
+        catch
+        {
+            // handled below
+        }
+
+        if (so == null)
+        {
+            ImGui.TextDisabled("(unable to load ScriptableObject)");
+            return;
+        }
+
+        string typeName = so.GetType().Name;
+        if (!ImGui.CollapsingHeader($"     {typeName}", ImGuiTreeNodeFlags.DefaultOpen))
+            return;
+
+        IconManager.DrawIconOverLastItem("File");
+
+        // Draw all serializable public fields on the ScriptableObject
+        var fields = so.GetType().GetFields(BindingFlags.Public | BindingFlags.Instance);
+        bool changed = false;
+
+        foreach (var field in fields)
+        {
+            // Skip EngineObject internals
+            if (field.DeclaringType == typeof(EngineObject))
+                continue;
+
+            if (Attribute.IsDefined(field, typeof(HideInInspectorAttribute)))
+                continue;
+
+            string label = field.Name;
+            object? value = field.GetValue(so);
+            string valueStr = value?.ToString() ?? "(null)";
+
+            if (field.FieldType == typeof(float) && value is float fv)
+            {
+                if (DrawDragFloat(label, ref fv))
+                {
+                    field.SetValue(so, fv);
+                    changed = true;
+                }
+            }
+            else if (field.FieldType == typeof(int) && value is int iv)
+            {
+                if (DrawDragInt(label, ref iv))
+                {
+                    field.SetValue(so, iv);
+                    changed = true;
+                }
+            }
+            else if (field.FieldType == typeof(bool) && value is bool bv)
+            {
+                DrawFieldRow(label, () =>
+                {
+                    if (ImGui.Checkbox($"##{label}", ref bv))
+                    {
+                        field.SetValue(so, bv);
+                        changed = true;
+                    }
+                });
+            }
+            else if (field.FieldType == typeof(string))
+            {
+                string sv = (value as string) ?? string.Empty;
+                DrawFieldRow(label, () =>
+                {
+                    if (ImGui.InputText($"##{label}", ref sv, 1024))
+                    {
+                        field.SetValue(so, sv);
+                        changed = true;
+                    }
+                });
+            }
+            else
+            {
+                DrawAssetFieldRow(label, valueStr);
+            }
+        }
+
+        // Also draw fields with [SerializeField] attribute (private fields)
+        var privateFields = so.GetType().GetFields(BindingFlags.NonPublic | BindingFlags.Instance);
+        foreach (var field in privateFields)
+        {
+            if (!Attribute.IsDefined(field, typeof(SerializeFieldAttribute)))
+                continue;
+            if (field.DeclaringType == typeof(EngineObject))
+                continue;
+            if (Attribute.IsDefined(field, typeof(HideInInspectorAttribute)))
+                continue;
+
+            string label = field.Name.TrimStart('_');
+            object? value = field.GetValue(so);
+            string valueStr = value?.ToString() ?? "(null)";
+            DrawAssetFieldRow(label, valueStr);
+        }
+
+        ImGui.Spacing();
+
+        if (changed)
+        {
+            try
+            {
+                ScriptableObjectSerializer.Save(so, asset.FullPath);
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"Failed to save ScriptableObject: {ex.Message}");
+            }
+        }
+    }
+
+    private static bool DrawDragFloat(string label, ref float value)
+    {
+        bool changed = false;
+        float local = value;
+        DrawFieldRow(label, () =>
+        {
+            if (ImGui.DragFloat($"##{label}", ref local, 0.1f))
+                changed = true;
+        });
+        if (changed) value = local;
+        return changed;
+    }
+
+    private static bool DrawDragInt(string label, ref int value)
+    {
+        bool changed = false;
+        int local = value;
+        DrawFieldRow(label, () =>
+        {
+            if (ImGui.DragInt($"##{label}", ref local))
+                changed = true;
+        });
+        if (changed) value = local;
+        return changed;
     }
 
     private static void DrawAssetFieldRow(string label, string value)

@@ -2,9 +2,12 @@
 // Licensed under the MIT License. See the LICENSE file in the project root for details.
 
 using Prowl.Editor.Rendering;
+using Prowl.PaperUI;
 using Prowl.Runtime;
+using Prowl.Runtime.GUI;
 using Prowl.Runtime.Rendering;
 using Prowl.Runtime.Resources;
+using Prowl.Runtime.UI;
 using Prowl.Vector;
 
 using Silk.NET.OpenGL;
@@ -38,6 +41,15 @@ public sealed class StubEditorRendering : IEditorRendering
 
     // Selection outline effect
     private readonly OutlineEffect _outlineEffect = new();
+
+    // Paper UI rendering for game view / scene view
+    private PaperRenderer? _gamePaperRenderer;
+    private Paper? _gamePaper;
+    private int _gamePaperW, _gamePaperH;
+
+    private PaperRenderer? _scenePaperRenderer;
+    private Paper? _scenePaper;
+    private int _scenePaperW, _scenePaperH;
 
     public RenderTexture? SceneViewRT => _sceneRT;
     public RenderTexture? GameViewRT => _gameRT;
@@ -100,6 +112,14 @@ public sealed class StubEditorRendering : IEditorRendering
             default:
                 _editorCam.Render();
                 break;
+        }
+
+        // ── Render screen-space UI (Canvas) for Lit mode ──
+        if (viewMode == SceneViewMode.Lit)
+        {
+            RenderOnGuiIntoRT(scene, _sceneRT!, width, height,
+                ref _scenePaperRenderer, ref _scenePaper,
+                ref _scenePaperW, ref _scenePaperH);
         }
 
         _editorCam.Target = null;
@@ -258,6 +278,11 @@ public sealed class StubEditorRendering : IEditorRendering
 
         // Render the scene through its own cameras into the game RT
         scene.Render(_gameRT);
+
+        // ── Render screen-space UI (Canvas) into the game RT ──
+        RenderOnGuiIntoRT(scene, _gameRT, width, height,
+            ref _gamePaperRenderer, ref _gamePaper,
+            ref _gamePaperW, ref _gamePaperH);
     }
 
     /// <summary>
@@ -310,12 +335,62 @@ public sealed class StubEditorRendering : IEditorRendering
         _gameRT?.Dispose();
         _gameRT = null;
 
+        _gamePaperRenderer?.Dispose();
+        _gamePaperRenderer = null;
+        _gamePaper = null;
+
+        _scenePaperRenderer?.Dispose();
+        _scenePaperRenderer = null;
+        _scenePaper = null;
+
         if (_editorCamGO != null && !_editorCamGO.IsDisposed)
         {
             _editorCamGO.Scene?.Remove(_editorCamGO);
             _editorCamGO.Dispose();
             _editorCamGO = null;
             _editorCam = null;
+        }
+    }
+
+    /// <summary>
+    /// Runs a Paper / OnGui pass into the given render texture so that
+    /// screen-space <see cref="Canvas"/> elements are composited on top
+    /// of the 3D scene.
+    /// </summary>
+    private static void RenderOnGuiIntoRT(
+        Scene scene, RenderTexture rt, int width, int height,
+        ref PaperRenderer? paperRenderer, ref Paper? paper,
+        ref int paperW, ref int paperH)
+    {
+        // Lazily create or resize the Paper renderer / instance
+        if (paperRenderer == null || paperW != width || paperH != height)
+        {
+            paperRenderer?.Dispose();
+            paperRenderer = new PaperRenderer();
+            paperRenderer.Initialize(width, height);
+            paper = new Paper(paperRenderer, width, height, new Prowl.Quill.FontAtlasSettings());
+            paperW = width;
+            paperH = height;
+        }
+
+        // Tell Canvas to use the RT dimensions for layout
+        Canvas.ScreenSizeOverride = new Float2(width, height);
+
+        try
+        {
+            // Bind the RT and set viewport for the UI overlay pass
+            rt.Begin();
+            Graphics.Viewport(0, 0, (uint)width, (uint)height);
+
+            paper!.BeginFrame(Time.DeltaTime);
+            scene.OnGui(paper);
+            paper.EndFrame();
+
+            rt.End();
+        }
+        finally
+        {
+            Canvas.ScreenSizeOverride = null;
         }
     }
 }

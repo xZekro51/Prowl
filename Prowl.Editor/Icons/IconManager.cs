@@ -69,6 +69,8 @@ public static class IconManager
         [".ttf"]    = "Font",
         [".otf"]    = "Font",
         [".woff"]   = "Font",
+        // ScriptableObject assets
+        [".asset"]  = "File",
     };
 
     /// <summary>

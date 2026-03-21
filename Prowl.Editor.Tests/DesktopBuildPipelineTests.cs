@@ -171,11 +171,15 @@ public sealed class DesktopBuildPipelineTests : IDisposable
 
         string content = File.ReadAllText(csprojPath);
 
-        Assert.Contains("<OutputType>Exe</OutputType>", content);
+        // Default ShowConsole=false on Windows produces WinExe
+        Assert.Contains("<OutputType>WinExe</OutputType>", content);
         Assert.Contains("<TargetFramework>net9.0</TargetFramework>", content);
         Assert.Contains("<AllowUnsafeBlocks>true</AllowUnsafeBlocks>", content);
         Assert.Contains("<AssemblyName>MyGame</AssemblyName>", content);
         Assert.Contains("Compile Include=", content);
+        // Single-file publish to bundle all DLLs into the exe
+        Assert.Contains("<PublishSingleFile>true</PublishSingleFile>", content);
+        Assert.Contains("<IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>", content);
     }
 
     [Fact]
@@ -200,7 +204,7 @@ public sealed class DesktopBuildPipelineTests : IDisposable
     public void GeneratePlayerProgramCs_ContainsEntryPoint()
     {
         string path = Path.Combine(_tempDir, "Program.cs");
-        DesktopBuildPipeline.GeneratePlayerProgramCs(path, "TestGame");
+        DesktopBuildPipeline.GeneratePlayerProgramCs(path, "TestGame", "Scenes/Main.scene", false);
 
         string content = File.ReadAllText(path);
 
@@ -214,7 +218,7 @@ public sealed class DesktopBuildPipelineTests : IDisposable
     public void GeneratePlayerProgramCs_EscapesProductName()
     {
         string path = Path.Combine(_tempDir, "Program.cs");
-        DesktopBuildPipeline.GeneratePlayerProgramCs(path, "My \"Game\"");
+        DesktopBuildPipeline.GeneratePlayerProgramCs(path, "My \"Game\"", "", false);
 
         string content = File.ReadAllText(path);
 

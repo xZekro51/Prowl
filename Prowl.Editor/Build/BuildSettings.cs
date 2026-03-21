@@ -56,6 +56,24 @@ public sealed class BuildSettings
     public string Configuration { get; set; } = "Release";
 
     /// <summary>
+    /// Relative path (inside Assets/) of the scene to load on startup.
+    /// For example <c>"Scenes/MainMenu.scene"</c>.
+    /// </summary>
+    public string StartupScenePath { get; set; } = "";
+
+    /// <summary>
+    /// When <c>true</c> the built executable keeps a console window open
+    /// alongside the game window so that log output is visible.
+    /// </summary>
+    public bool ShowConsole { get; set; } = false;
+
+    /// <summary>
+    /// The rendering backend to use for both the editor and the built player.
+    /// Defaults to <see cref="Runtime.RenderingBackend.OpenGL"/>.
+    /// </summary>
+    public Runtime.RenderingBackend RenderingBackend { get; set; } = Runtime.RenderingBackend.OpenGL;
+
+    /// <summary>
     /// Per-platform profiles.  Missing entries will be created with
     /// defaults on first access.
     /// </summary>

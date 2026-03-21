@@ -112,7 +112,7 @@ public class Scene : EngineObject, ISerializationCallbackReceiver
     [SerializeIgnore]
     private readonly List<Camera> _cameraBuffer = [];
 
-    // Indexed lookups for O(1) FindObjectByID / FindObjectByIdentifier (§4.2.3)
+    // Indexed lookups for O(1) FindObjectByID / FindObjectByIdentifier (ï¿½4.2.3)
     [SerializeIgnore]
     private readonly Dictionary<int, EngineObject> _idLookup = [];
     [SerializeIgnore]

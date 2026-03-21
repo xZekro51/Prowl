@@ -25,7 +25,7 @@ public sealed class WindowManager
     /// Creates the Silk.NET window with DPI-aware sizing.
     /// Returns the system-level DPI scale used for the initial size calculation.
     /// </summary>
-    public float CreateWindow(string title, int logicalWidth, int logicalHeight)
+    public float CreateWindow(string title, int logicalWidth, int logicalHeight, RenderingBackend backend = RenderingBackend.OpenGL)
     {
         _logicalWidth = logicalWidth;
         _logicalHeight = logicalHeight;
@@ -38,7 +38,7 @@ public sealed class WindowManager
         InitialScaledHeight = (int)MathF.Round(logicalHeight * systemScale);
 
         Window.InitWindow(title, InitialScaledWidth, InitialScaledHeight,
-            Silk.NET.Windowing.WindowState.Normal, false);
+            Silk.NET.Windowing.WindowState.Normal, false, backend);
 
         return systemScale;
     }

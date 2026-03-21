@@ -136,19 +136,54 @@ public abstract class Game
         }
     }
 
-    public virtual void Run(string title, int width, int height)
+    public virtual void Run(string title, int width, int height, RenderingBackend backend = RenderingBackend.OpenGL)
     {
         _title = title;
 
         // Create a fresh engine context for this game instance.
         EngineContext.Current = new EngineContext();
 
+        // Try with the requested backend; fall back to OpenGL on failure.
+        if (backend != RenderingBackend.OpenGL)
+        {
+            try
+            {
+                SetupWindowAndStart(title, width, height, backend);
+                return; // Normal exit — window ran and closed cleanly.
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"[Graphics] Failed to initialize {backend} backend: {ex.Message}");
+                Debug.LogWarning("[Graphics] Falling back to OpenGL...");
+                Window.Cleanup();
+                // Reset engine context for a clean retry.
+                EngineContext.Current = new EngineContext();
+            }
+        }
+
+        // OpenGL path (either requested directly or as fallback).
+        SetupWindowAndStart(title, width, height, RenderingBackend.OpenGL);
+    }
+
+    private void SetupWindowAndStart(string title, int width, int height, RenderingBackend backend)
+    {
         // Create the DPI-aware window.
-        float systemScale = _windowManager.CreateWindow(title, width, height);
+        float systemScale = _windowManager.CreateWindow(title, width, height, backend);
 
         Window.Load += () =>
         {
-            AudioContext.Initialize(44100, 2, 2048);
+            try
+            {
+                AudioContext.Initialize(44100, 2, 2048);
+            }
+            catch (DllNotFoundException ex)
+            {
+                Debug.LogWarning($"[Audio] Native audio library not found — audio will be disabled: {ex.Message}");
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"[Audio] Failed to initialize audio context — audio will be disabled: {ex.Message}");
+            }
 
             int scaledW = _windowManager.InitialScaledWidth;
             int scaledH = _windowManager.InitialScaledHeight;
@@ -277,7 +312,6 @@ public abstract class Game
 
         Debug.LogSuccess("Initialization complete");
         Window.Start();
-
     }
 
     public virtual void Initialize() { }

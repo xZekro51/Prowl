@@ -103,6 +103,17 @@ public sealed class BuildPanel : EditorPanel
         ImGui.TextColored(new Vector4(0.5f, 0.5f, 0.5f, 1f), "(bundles .NET runtime)");
         ImGui.Spacing();
 
+        // ── Show console window ───────────────────────────────
+        bool showConsole = _buildSettings.ShowConsole;
+        if (ImGui.Checkbox("Show Console Window", ref showConsole))
+        {
+            _buildSettings.ShowConsole = showConsole;
+            SaveBuildSettings();
+        }
+        ImGui.SameLine();
+        ImGui.TextColored(new Vector4(0.5f, 0.5f, 0.5f, 1f), "(opens a console alongside the game for log output)");
+        ImGui.Spacing();
+
         // ── Product name ──────────────────────────────────────
         ImGui.Text("Product Name");
         string productName = _buildSettings.ProductName;
@@ -112,6 +123,11 @@ public sealed class BuildPanel : EditorPanel
             _buildSettings.ProductName = productName;
             SaveBuildSettings();
         }
+        ImGui.Spacing();
+
+        // ── Startup scene ─────────────────────────────────────
+        ImGui.Text("Startup Scene");
+        DrawStartupScenePicker(scale);
         ImGui.Spacing();
 
         ImGui.Separator();
@@ -541,6 +557,81 @@ public sealed class BuildPanel : EditorPanel
                 Process.Start("xdg-open", path);
         }
         catch { /* best effort */ }
+    }
+
+    // ── Startup scene picker ────────────────────────────────────────
+
+    private string[]? _cachedSceneFiles;
+    private string[]? _cachedSceneLabels;
+
+    private void DrawStartupScenePicker(float scale)
+    {
+        if (_buildSettings == null) return;
+
+        // Lazily discover .scene files under Assets/
+        if (_cachedSceneFiles == null)
+            RefreshSceneFileList();
+
+        string current = _buildSettings.StartupScenePath;
+
+        // Find current selection index (0 = "(none)")
+        int selectedIndex = 0;
+        if (!string.IsNullOrEmpty(current) && _cachedSceneFiles != null)
+        {
+            for (int i = 0; i < _cachedSceneFiles.Length; i++)
+            {
+                if (string.Equals(_cachedSceneFiles[i], current, StringComparison.OrdinalIgnoreCase))
+                {
+                    selectedIndex = i + 1; // +1 because index 0 is "(none)"
+                    break;
+                }
+            }
+        }
+
+        ImGui.SetNextItemWidth(300 * scale);
+        if (ImGui.Combo("##StartupScene", ref selectedIndex, _cachedSceneLabels!, _cachedSceneLabels!.Length))
+        {
+            _buildSettings.StartupScenePath = selectedIndex == 0 ? "" : _cachedSceneFiles![selectedIndex - 1];
+            SaveBuildSettings();
+        }
+
+        ImGui.SameLine();
+        if (ImGui.SmallButton("Refresh##SceneRefresh"))
+            RefreshSceneFileList();
+
+        if (string.IsNullOrEmpty(_buildSettings.StartupScenePath))
+        {
+            ImGui.TextColored(new Vector4(0.5f, 0.5f, 0.5f, 1f),
+                "No startup scene selected — the player will start with an empty scene.");
+        }
+    }
+
+    private void RefreshSceneFileList()
+    {
+        var scenes = new List<string>();
+
+        string? projectPath = EditorApplication.ProjectPath;
+        if (!string.IsNullOrEmpty(projectPath))
+        {
+            string assetsDir = Path.Combine(projectPath, "Assets");
+            if (Directory.Exists(assetsDir))
+            {
+                foreach (string file in Directory.GetFiles(assetsDir, "*.scene", SearchOption.AllDirectories))
+                {
+                    // Store relative path from Assets/ so it is portable
+                    scenes.Add(Path.GetRelativePath(assetsDir, file));
+                }
+                scenes.Sort(StringComparer.OrdinalIgnoreCase);
+            }
+        }
+
+        _cachedSceneFiles = scenes.ToArray();
+
+        // Build labels array with "(none)" at index 0
+        _cachedSceneLabels = new string[_cachedSceneFiles.Length + 1];
+        _cachedSceneLabels[0] = "(none)";
+        for (int i = 0; i < _cachedSceneFiles.Length; i++)
+            _cachedSceneLabels[i + 1] = _cachedSceneFiles[i];
     }
 
     // ── Load / Save ─────────────────────────────────────────────────

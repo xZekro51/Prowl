@@ -50,7 +50,11 @@ public sealed class ProjectPanel : EditorPanel
     private float _pingTimer;
     private const float PingDuration = 2.0f;
 
-    public ProjectPanel() : base("Project") { }
+    public ProjectPanel() : base("Project")
+    {
+        if (EditorApplication.ScriptAssemblyManager != null)
+            EditorApplication.ScriptAssemblyManager.OnAssemblyChanged += InvalidateScriptableObjectMenuCache;
+    }
 
     /// <summary>
     /// Navigates to the folder containing the specified asset and highlights it.
@@ -190,6 +194,9 @@ public sealed class ProjectPanel : EditorPanel
                     }
                 }
             }
+
+            // ── ScriptableObject types with [CreateAssetMenu] ──
+            DrawScriptableObjectCreateMenu(contextDir, assets);
 
             ImGui.EndPopup();
         }
@@ -762,6 +769,9 @@ public sealed class ProjectPanel : EditorPanel
             }
         }
 
+        // ── ScriptableObject types with [CreateAssetMenu] ──
+        DrawScriptableObjectCreateMenu(contextDir, assets);
+
         ImGui.Separator();
 
         if (ImGui.MenuItem("Paste", s_clipboardPaths.Count > 0))
@@ -889,6 +899,144 @@ public class {className} : MonoBehaviour
     }}
 }}
 ";
+
+    // ── ScriptableObject Create Menu ──────────────────────────
+
+    // Cached list of types decorated with [CreateAssetMenu]
+    private static List<(Type Type, CreateAssetMenuAttribute Attr)>? _soMenuCache;
+
+    private static List<(Type Type, CreateAssetMenuAttribute Attr)> GetScriptableObjectMenuEntries()
+    {
+        if (_soMenuCache != null)
+            return _soMenuCache;
+
+        _soMenuCache = new List<(Type, CreateAssetMenuAttribute)>();
+
+        foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
+        {
+            try
+            {
+                foreach (var type in asm.GetTypes())
+                {
+                    if (type.IsAbstract || !typeof(ScriptableObject).IsAssignableFrom(type))
+                        continue;
+
+                    var attr = (CreateAssetMenuAttribute?)Attribute.GetCustomAttribute(type, typeof(CreateAssetMenuAttribute));
+                    if (attr != null)
+                        _soMenuCache.Add((type, attr));
+                }
+            }
+            catch
+            {
+                // Some dynamic assemblies may throw on GetTypes()
+            }
+        }
+
+        _soMenuCache.Sort((a, b) =>
+        {
+            int cmp = a.Attr.Order.CompareTo(b.Attr.Order);
+            if (cmp != 0) return cmp;
+            string nameA = !string.IsNullOrEmpty(a.Attr.MenuName) ? a.Attr.MenuName : a.Type.Name;
+            string nameB = !string.IsNullOrEmpty(b.Attr.MenuName) ? b.Attr.MenuName : b.Type.Name;
+            return string.Compare(nameA, nameB, StringComparison.Ordinal);
+        });
+
+        return _soMenuCache;
+    }
+
+    /// <summary>
+    /// Invalidates the cached ScriptableObject menu entries so they are
+    /// re-scanned on the next frame. Call this after user scripts are recompiled.
+    /// </summary>
+    public static void InvalidateScriptableObjectMenuCache() => _soMenuCache = null;
+
+    private void DrawScriptableObjectCreateMenu(string contextDir, IAssetService assets)
+    {
+        var entries = GetScriptableObjectMenuEntries();
+        if (entries.Count == 0)
+            return;
+
+        ImGui.Separator();
+
+        // Group entries by top-level menu path for nested submenus
+        var grouped = new Dictionary<string, List<(string Label, Type Type, CreateAssetMenuAttribute Attr)>>();
+
+        foreach (var (type, attr) in entries)
+        {
+            string menuName = !string.IsNullOrEmpty(attr.MenuName) ? attr.MenuName : type.Name;
+
+            int slashIdx = menuName.IndexOf('/');
+            if (slashIdx > 0)
+            {
+                string group = menuName[..slashIdx];
+                string label = menuName[(slashIdx + 1)..];
+                if (!grouped.TryGetValue(group, out var list))
+                {
+                    list = new List<(string, Type, CreateAssetMenuAttribute)>();
+                    grouped[group] = list;
+                }
+                list.Add((label, type, attr));
+            }
+            else
+            {
+                // Top-level entry
+                if (!grouped.TryGetValue("", out var list))
+                {
+                    list = new List<(string, Type, CreateAssetMenuAttribute)>();
+                    grouped[""] = list;
+                }
+                list.Add((menuName, type, attr));
+            }
+        }
+
+        // Draw top-level entries first
+        if (grouped.TryGetValue("", out var topLevel))
+        {
+            foreach (var (label, type, attr) in topLevel)
+            {
+                if (EditorIcons.IconMenuItem(EditorIconType.File, label))
+                    CreateScriptableObjectAsset(type, attr, contextDir, assets);
+            }
+        }
+
+        // Draw grouped submenus
+        foreach (var kvp in grouped)
+        {
+            if (kvp.Key == "") continue;
+
+            if (ImGui.BeginMenu(kvp.Key))
+            {
+                foreach (var (label, type, attr) in kvp.Value)
+                {
+                    if (ImGui.MenuItem(label))
+                        CreateScriptableObjectAsset(type, attr, contextDir, assets);
+                }
+                ImGui.EndMenu();
+            }
+        }
+    }
+
+    private void CreateScriptableObjectAsset(Type type, CreateAssetMenuAttribute attr, string contextDir, IAssetService assets)
+    {
+        string fileName = !string.IsNullOrEmpty(attr.FileName) ? attr.FileName : $"New{type.Name}";
+        string assetFileName = $"{fileName}.asset";
+        string relPath = Path.Combine(contextDir == "." ? "" : contextDir, assetFileName);
+        string absPath = assets.GetAbsolutePath(relPath);
+
+        try
+        {
+            var instance = ScriptableObject.CreateInstance(type);
+            instance.Name = fileName;
+            ScriptableObjectSerializer.Save(instance, absPath);
+            assets.MetaManager.EnsureMeta(absPath);
+            assets.Refresh();
+            BeginRename(relPath, fileName);
+        }
+        catch (Exception ex)
+        {
+            Runtime.Debug.LogError($"Failed to create ScriptableObject asset: {ex.Message}");
+        }
+    }
 
     // ── File helpers ───────────────────────────────────────────
 

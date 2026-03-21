@@ -78,6 +78,7 @@ public sealed class EditorAssetDatabase : IAssetDatabase
             {
                 ".shader" => Shader.LoadFromFile(absolutePath),
                 ".mat" => MaterialSerializer.Load(absolutePath),
+                ".asset" => ScriptableObjectSerializer.Load(absolutePath),
                 ".png" or ".jpg" or ".jpeg" or ".bmp" or ".tga" =>
                     LoadTexture(absolutePath, relativePath),
                 _ => null,

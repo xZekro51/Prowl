@@ -29,6 +29,7 @@ public sealed class ProjectSettingsPanel : EditorPanel
     private static readonly string[] TabNames =
     [
         "Player",
+        "Rendering",
         "Scripting Defines",
     ];
 
@@ -78,7 +79,8 @@ public sealed class ProjectSettingsPanel : EditorPanel
             switch (_selectedTab)
             {
                 case 0: DrawPlayerPage(); break;
-                case 1: DrawScriptingDefinesPage(); break;
+                case 1: DrawRenderingPage(); break;
+                case 2: DrawScriptingDefinesPage(); break;
             }
         }
         ImGui.EndChild();
@@ -167,6 +169,40 @@ public sealed class ProjectSettingsPanel : EditorPanel
 
         ImGui.TextColored(new Vector4(0.5f, 0.5f, 0.5f, 1f),
             "The product name is used as the executable name and window title.");
+    }
+
+    // ── Rendering Page ──────────────────────────────────────────────
+
+    private void DrawRenderingPage()
+    {
+        if (_buildSettings == null) return;
+
+        ImGui.TextColored(new Vector4(0.7f, 0.8f, 1f, 1f), "Rendering Settings");
+        ImGui.Separator();
+        ImGui.Spacing();
+
+        ImGui.Text("Rendering Backend");
+        string[] backendNames = Enum.GetNames<Runtime.RenderingBackend>();
+        int backendIndex = (int)_buildSettings.RenderingBackend;
+        ImGui.SetNextItemWidth(200 * Game.DpiScale);
+        if (ImGui.Combo("##RenderingBackend", ref backendIndex, backendNames, backendNames.Length))
+        {
+            _buildSettings.RenderingBackend = (Runtime.RenderingBackend)backendIndex;
+            SaveBuildSettings();
+        }
+        ImGui.Spacing();
+
+        ImGui.TextColored(new Vector4(0.5f, 0.5f, 0.5f, 1f),
+            "The rendering backend used by both the editor and built player.");
+        ImGui.TextColored(new Vector4(0.5f, 0.5f, 0.5f, 1f),
+            "Currently only OpenGL is fully implemented. Other options are reserved for future use.");
+        ImGui.Spacing();
+
+        if (_buildSettings.RenderingBackend != Runtime.RenderingBackend.OpenGL)
+        {
+            ImGui.TextColored(new Vector4(0.95f, 0.80f, 0.25f, 1f),
+                "⚠ Warning: Only OpenGL is currently supported. Selecting another backend may cause errors.");
+        }
     }
 
     // ── Load / Save ─────────────────────────────────────────────────
