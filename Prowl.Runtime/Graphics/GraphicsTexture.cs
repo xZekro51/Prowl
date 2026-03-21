@@ -208,6 +208,9 @@ public unsafe class GraphicsTexture : IDisposable
                 GraphiteFormatMapper.InferTextureUsage(ImageFormat));
             GraphiteTexture = Graphics.Graphite.CreateTexture(in desc);
 
+            // GLTexture constructor binds/unbinds a GL texture, invalidating our cache.
+            if (IsGL) currentlyBound = null;
+
             // On non-GL backends, upload the initial data to the Graphite texture.
             if (!IsGL && data != null)
                 UploadToGraphiteTexture(data, width, height, 1, 0);
@@ -231,6 +234,9 @@ public unsafe class GraphicsTexture : IDisposable
                 GraphiteFormatMapper.MapTextureFormat(ImageFormat),
                 GraphiteFormatMapper.InferTextureUsage(ImageFormat));
             GraphiteTexture = Graphics.Graphite.CreateTexture(in desc);
+
+            // GLTexture constructor binds/unbinds a GL texture, invalidating our cache.
+            if (IsGL) currentlyBound = null;
 
             // On non-GL backends, upload the initial data to the Graphite texture.
             if (!IsGL && data != null)

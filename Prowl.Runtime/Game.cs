@@ -222,42 +222,68 @@ public abstract class Game
                 Graphics.BindVertexArray(null);
                 Graphics.Clear(0, 0, 0, 1, ClearFlags.Color | ClearFlags.Depth | ClearFlags.Stencil);
 
-                Rendering.ShadowAtlas.TryInitialize();
-                Rendering.ShadowAtlas.Clear();
-
                 // === End of Start Graphics ===
 
-                BeginRender();
+                // Scene rendering is wrapped separately so that failures here
+                // (e.g. during the Graphite migration) do not prevent UI from rendering.
+                try
+                {
+                    Rendering.ShadowAtlas.TryInitialize();
+                    Rendering.ShadowAtlas.Clear();
 
-                if (SceneManager.LoadedSceneCount > 0)
-                    SceneManager.RenderAll();
-                else
-                    Scene.Current?.Render();
+                    BeginRender();
 
-                EndRender();
+                    RenderScenes();
 
+                    EndRender();
+                }
+                catch (Exception e)
+                {
+                    Debug.LogError("An exception occurred during scene rendering:");
+                    Debug.LogError(e.ToString());
+                    if (!HandleFrameException(e, "SceneRender"))
+                        throw;
+                }
+
+                // Reset GL state so Paper UI starts from a known-good state.
                 Graphics.UnbindFramebuffer();
                 Graphics.Viewport(0, 0, (uint)Window.InternalWindow.FramebufferSize.X, (uint)Window.InternalWindow.FramebufferSize.Y);
 
-                _paper.BeginFrame(delta);
-
-                BeginGui(_paper);
-
-                // OnGui runs on all loaded scenes, or just the current scene
-                if (SceneManager.LoadedSceneCount > 0)
+                // Paper UI is also isolated so ImGui always gets a chance to render.
+                try
                 {
-                    foreach (var scene in SceneManager.LoadedScenes)
-                        if (scene.IsActive) scene.OnGui(_paper);
+                    _paper.BeginFrame(delta);
+
+                    BeginGui(_paper);
+
+                    // OnGui runs on all loaded scenes, or just the current scene
+                    if (SceneManager.LoadedSceneCount > 0)
+                    {
+                        foreach (var scene in SceneManager.LoadedScenes)
+                            if (scene.IsActive) scene.OnGui(_paper);
+                    }
+                    else
+                    {
+                        Scene.Current?.OnGui(_paper);
+                    }
+
+                    EndGui(_paper);
+
+                    _paperRenderer.RenderTarget = null; // Render to swapchain
+                    _paper.EndFrame();
                 }
-                else
+                catch (Exception e)
                 {
-                    Scene.Current?.OnGui(_paper);
+                    Debug.LogError("An exception occurred during Paper UI rendering:");
+                    Debug.LogError(e.ToString());
+                    if (!HandleFrameException(e, "PaperUI"))
+                        throw;
                 }
 
-                EndGui(_paper);
-
-                _paperRenderer.RenderTarget = null; // Render to swapchain
-                _paper.EndFrame();
+                // Reset GL state before ImGui so it always starts clean.
+                Graphics.UnbindFramebuffer();
+                Graphics.Viewport(0, 0, (uint)Window.InternalWindow.FramebufferSize.X, (uint)Window.InternalWindow.FramebufferSize.Y);
+                Graphics.SetState(new(), true);
 
                 // Dear ImGui frame (editor / launcher UI)
                 _imguiManager.Update((float)delta);
@@ -322,6 +348,13 @@ public abstract class Game
     public virtual void BeginUpdate() { }
     public virtual void EndUpdate() { }
     public virtual void BeginRender() { }
+    public virtual void RenderScenes()
+    {
+        if (SceneManager.LoadedSceneCount > 0)
+            SceneManager.RenderAll();
+        else
+            Scene.Current?.Render();
+    }
     public virtual void EndRender() { }
     public virtual void BeginGui(Paper paper) { }
     public virtual void EndGui(Paper paper) { }

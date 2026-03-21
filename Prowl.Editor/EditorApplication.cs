@@ -378,9 +378,28 @@ public sealed class EditorApplication : Game
         }
     }
 
+    // The editor renders scene/game views into RenderTextures in BeginRender().
+    // Override RenderScenes to prevent the base class from also rendering cameras
+    // to screen, which would overwrite the ImGui editor UI.
+    public override void RenderScenes() { }
+
     public override void BeginRender()
     {
         var rendering = EditorServices.Get<IEditorRendering>();
+
+
+        // Render game view always — in edit mode this provides a live preview
+        // from the scene's highest-priority camera (sorted by Camera.Depth).
+        if (_gamePanel != null && _gamePanel.IsOpen)
+        {
+            Rect gvp = _gamePanel.ViewportRect;
+            var (rw, rh) = _gamePanel.RenderResolution;
+            int gw = rw > 0 ? rw : (int)gvp.Size.X;
+            int gh = rh > 0 ? rh : (int)gvp.Size.Y;
+
+            if (gw > 0 && gh > 0)
+                rendering.RenderGameView(gw, gh);
+        }
 
         if (_scenePanel != null && _scenePanel.IsOpen)
         {
@@ -403,19 +422,6 @@ public sealed class EditorApplication : Game
                     rendering.RenderSelectionOutline([selectedGo]);
                 }
             }
-        }
-
-        // Render game view always — in edit mode this provides a live preview
-        // from the scene's highest-priority camera (sorted by Camera.Depth).
-        if (_gamePanel != null && _gamePanel.IsOpen)
-        {
-            Rect gvp = _gamePanel.ViewportRect;
-            var (rw, rh) = _gamePanel.RenderResolution;
-            int gw = rw > 0 ? rw : (int)gvp.Size.X;
-            int gh = rh > 0 ? rh : (int)gvp.Size.Y;
-
-            if (gw > 0 && gh > 0)
-                rendering.RenderGameView(gw, gh);
         }
     }
 
