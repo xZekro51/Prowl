@@ -8,6 +8,7 @@ using System.Text;
 using Echo.Logging;
 
 using Prowl.Runtime.Audio;
+using Prowl.Runtime.Graphite;
 
 using Prowl.PaperUI;
 using Prowl.Runtime.GUI;
@@ -136,7 +137,7 @@ public abstract class Game
         }
     }
 
-    public virtual void Run(string title, int width, int height, RenderingBackend backend = RenderingBackend.OpenGL)
+    public virtual void Run(string title, int width, int height, GraphicsBackendType backend = GraphicsBackendType.OpenGL)
     {
         _title = title;
 
@@ -144,7 +145,7 @@ public abstract class Game
         EngineContext.Current = new EngineContext();
 
         // Try with the requested backend; fall back to OpenGL on failure.
-        if (backend != RenderingBackend.OpenGL)
+        if (backend != GraphicsBackendType.OpenGL)
         {
             try
             {
@@ -154,6 +155,7 @@ public abstract class Game
             catch (Exception ex)
             {
                 Debug.LogWarning($"[Graphics] Failed to initialize {backend} backend: {ex.Message}");
+                Debug.LogException(ex);
                 Debug.LogWarning("[Graphics] Falling back to OpenGL...");
                 Window.Cleanup();
                 // Reset engine context for a clean retry.
@@ -162,10 +164,10 @@ public abstract class Game
         }
 
         // OpenGL path (either requested directly or as fallback).
-        SetupWindowAndStart(title, width, height, RenderingBackend.OpenGL);
+        SetupWindowAndStart(title, width, height, GraphicsBackendType.OpenGL);
     }
 
-    private void SetupWindowAndStart(string title, int width, int height, RenderingBackend backend)
+    private void SetupWindowAndStart(string title, int width, int height, GraphicsBackendType backend)
     {
         // Create the DPI-aware window.
         float systemScale = _windowManager.CreateWindow(title, width, height, backend);
@@ -254,6 +256,7 @@ public abstract class Game
 
                 EndGui(_paper);
 
+                _paperRenderer.RenderTarget = null; // Render to swapchain
                 _paper.EndFrame();
 
                 // Dear ImGui frame (editor / launcher UI)

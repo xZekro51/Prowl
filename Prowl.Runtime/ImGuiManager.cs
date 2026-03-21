@@ -36,6 +36,12 @@ public sealed class ImGuiManager : IDisposable
     /// </summary>
     public void Initialize()
     {
+        if (!Graphics.IsOpenGL)
+        {
+            Debug.LogWarning("[ImGuiManager] ImGui is only supported with the OpenGL backend. Skipping initialization.");
+            return;
+        }
+
         string? systemFont = FindSystemFont();
         int baseFontSize = (int)MathF.Round(14 * DpiManager.Scale);
         _controller = new SilkImGui.ImGuiController(

@@ -347,7 +347,7 @@ public sealed class DesktopBuildPipeline : IBuildPipeline
         string productName,
         string startupScenePath,
         bool isDebug,
-        Runtime.RenderingBackend renderingBackend = Runtime.RenderingBackend.OpenGL)
+        Runtime.Graphite.GraphicsBackendType renderingBackend = Runtime.Graphite.GraphicsBackendType.OpenGL)
     {
         string escaped = productName.Replace("\"", "\\\"");
         string sceneEscaped = (string.IsNullOrWhiteSpace(startupScenePath)
@@ -390,7 +390,7 @@ public sealed class DesktopBuildPipeline : IBuildPipeline
 
                         try
                         {
-                            new PlayerGame().Run("{{escaped}}", 1280, 720, Prowl.Runtime.RenderingBackend.{{backendName}});
+                            new PlayerGame().Run("{{escaped}}", 1280, 720, Prowl.Runtime.Graphite.GraphicsBackendType.{{backendName}});
                         }
                         finally
                         {

@@ -23,38 +23,46 @@ public struct BindGroupLayoutEntry
     /// <summary>Whether this binding uses dynamic offsets (for uniform/storage buffers).</summary>
     public bool HasDynamicOffset;
 
-    public BindGroupLayoutEntry(uint binding, ShaderStage visibility, BindingType type, uint count = 1, bool hasDynamicOffset = false)
+    /// <summary>
+    /// Optional name for shader linkage. For OpenGL, this is the UBO block name
+    /// (for uniform buffers) or the sampler uniform name (for texture/sampler bindings).
+    /// Ignored by Vulkan and other descriptor-set-based backends.
+    /// </summary>
+    public string? Name;
+
+    public BindGroupLayoutEntry(uint binding, ShaderStage visibility, BindingType type, uint count = 1, bool hasDynamicOffset = false, string? name = null)
     {
         Binding = binding;
         Visibility = visibility;
         Type = type;
         Count = count;
         HasDynamicOffset = hasDynamicOffset;
+        Name = name;
     }
 
     /// <summary>Creates a uniform buffer entry.</summary>
-    public static BindGroupLayoutEntry UniformBuffer(uint binding, ShaderStage visibility = ShaderStage.AllGraphics, bool hasDynamicOffset = false) =>
-        new(binding, visibility, BindingType.UniformBuffer, 1, hasDynamicOffset);
+    public static BindGroupLayoutEntry UniformBuffer(uint binding, ShaderStage visibility = ShaderStage.AllGraphics, bool hasDynamicOffset = false, string? name = null) =>
+        new(binding, visibility, BindingType.UniformBuffer, 1, hasDynamicOffset, name);
 
     /// <summary>Creates a storage buffer entry.</summary>
-    public static BindGroupLayoutEntry StorageBuffer(uint binding, ShaderStage visibility = ShaderStage.AllGraphics, bool readOnly = false, bool hasDynamicOffset = false) =>
-        new(binding, visibility, readOnly ? BindingType.ReadOnlyStorageBuffer : BindingType.StorageBuffer, 1, hasDynamicOffset);
+    public static BindGroupLayoutEntry StorageBuffer(uint binding, ShaderStage visibility = ShaderStage.AllGraphics, bool readOnly = false, bool hasDynamicOffset = false, string? name = null) =>
+        new(binding, visibility, readOnly ? BindingType.ReadOnlyStorageBuffer : BindingType.StorageBuffer, 1, hasDynamicOffset, name);
 
     /// <summary>Creates a sampled texture entry.</summary>
-    public static BindGroupLayoutEntry SampledTexture(uint binding, ShaderStage visibility = ShaderStage.Fragment) =>
-        new(binding, visibility, BindingType.SampledTexture);
+    public static BindGroupLayoutEntry SampledTexture(uint binding, ShaderStage visibility = ShaderStage.Fragment, string? name = null) =>
+        new(binding, visibility, BindingType.SampledTexture, 1, false, name);
 
     /// <summary>Creates a sampler entry.</summary>
-    public static BindGroupLayoutEntry Sampler(uint binding, ShaderStage visibility = ShaderStage.Fragment) =>
-        new(binding, visibility, BindingType.Sampler);
+    public static BindGroupLayoutEntry Sampler(uint binding, ShaderStage visibility = ShaderStage.Fragment, string? name = null) =>
+        new(binding, visibility, BindingType.Sampler, 1, false, name);
 
     /// <summary>Creates a combined texture+sampler entry.</summary>
-    public static BindGroupLayoutEntry CombinedTextureSampler(uint binding, ShaderStage visibility = ShaderStage.Fragment) =>
-        new(binding, visibility, BindingType.CombinedTextureSampler);
+    public static BindGroupLayoutEntry CombinedTextureSampler(uint binding, ShaderStage visibility = ShaderStage.Fragment, string? name = null) =>
+        new(binding, visibility, BindingType.CombinedTextureSampler, 1, false, name);
 
     /// <summary>Creates a storage texture entry.</summary>
-    public static BindGroupLayoutEntry StorageTexture(uint binding, ShaderStage visibility = ShaderStage.Compute) =>
-        new(binding, visibility, BindingType.StorageTexture);
+    public static BindGroupLayoutEntry StorageTexture(uint binding, ShaderStage visibility = ShaderStage.Compute, string? name = null) =>
+        new(binding, visibility, BindingType.StorageTexture, 1, false, name);
 }
 
 /// <summary>

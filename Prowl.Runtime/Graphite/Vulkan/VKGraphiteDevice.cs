@@ -10,6 +10,7 @@ using Silk.NET.Core;
 using Silk.NET.Core.Contexts;
 using Silk.NET.Core.Native;
 using Silk.NET.Vulkan;
+using Silk.NET.Vulkan.Extensions.KHR;
 
 using VkBuffer = Silk.NET.Vulkan.Buffer;
 using VkFence = Silk.NET.Vulkan.Fence;
@@ -23,14 +24,39 @@ namespace Prowl.Runtime.Graphite.Vulkan;
 /// </summary>
 public unsafe class VKGraphiteDevice : GraphiteDevice
 {
+    private const int MaxFramesInFlight = 2;
+
     internal Vk Vk { get; private set; } = null!;
     internal Instance VkInstance { get; private set; }
     internal PhysicalDevice PhysicalDevice { get; private set; }
     internal Device Device { get; private set; }
     internal Queue GraphicsQueue { get; private set; }
     internal uint GraphicsQueueFamily { get; private set; }
+    internal Queue PresentQueue { get; private set; }
+    internal uint PresentQueueFamily { get; private set; }
     internal CommandPool CommandPool { get; private set; }
     internal PhysicalDeviceMemoryProperties MemoryProperties { get; private set; }
+
+    // KHR extensions
+    private KhrSurface? _khrSurface;
+    private KhrSwapchain? _khrSwapchain;
+    private SurfaceKHR _surface;
+
+    // Swapchain
+    private SwapchainKHR _swapchain;
+    private Image[] _swapchainImages = [];
+    private ImageView[] _swapchainImageViews = [];
+    private VKSwapchainImageTexture[] _swapchainTextures = [];
+    private Format _swapchainFormat;
+    private Extent2D _swapchainExtent;
+
+    // Frame-in-flight synchronisation
+    private Semaphore[] _imageAvailableSemaphores = [];
+    private Semaphore[] _renderFinishedSemaphores = [];
+    private VkFence[] _inFlightFences = [];
+    private int _currentFrame;
+    private uint _currentImageIndex;
+    private bool _framebufferResized;
 
     private DeviceCapabilities _capabilities;
     private bool _initialized;
@@ -55,12 +81,18 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
         Vk = Vk.GetApi();
 
         CreateInstance(options.EnableDebugLayer);
+        CreateSurface();
         PickPhysicalDevice();
         CreateLogicalDevice();
         CreateCommandPool();
 
         Vk.GetPhysicalDeviceMemoryProperties(PhysicalDevice, out var memProps);
         MemoryProperties = memProps;
+
+        // Create swapchain from initial window size
+        var fbSize = Window.InternalWindow.FramebufferSize;
+        CreateSwapchain((uint)fbSize.X, (uint)fbSize.Y);
+        CreateSyncObjects();
 
         _capabilities = QueryCapabilities();
         _initialized = true;
@@ -148,28 +180,49 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
         Vk.GetPhysicalDeviceQueueFamilyProperties(PhysicalDevice, &queueFamilyCount, queueFamilies);
 
         uint graphicsFamily = uint.MaxValue;
+        uint presentFamily = uint.MaxValue;
+
         for (uint i = 0; i < queueFamilyCount; i++)
         {
             if (queueFamilies[i].QueueFlags.HasFlag(QueueFlags.GraphicsBit))
-            {
                 graphicsFamily = i;
-                break;
+
+            if (_khrSurface != null && _surface.Handle != 0)
+            {
+                _khrSurface.GetPhysicalDeviceSurfaceSupport(PhysicalDevice, i, _surface, out var supported);
+                if (supported)
+                    presentFamily = i;
             }
+
+            if (graphicsFamily != uint.MaxValue && presentFamily != uint.MaxValue)
+                break;
         }
 
         if (graphicsFamily == uint.MaxValue)
             throw new InvalidOperationException("No graphics queue family found.");
 
-        GraphicsQueueFamily = graphicsFamily;
+        // Fall back to graphics family if no separate present family
+        if (presentFamily == uint.MaxValue)
+            presentFamily = graphicsFamily;
 
+        GraphicsQueueFamily = graphicsFamily;
+        PresentQueueFamily = presentFamily;
+
+        // Build unique queue create infos
         float priority = 1.0f;
-        var queueCreateInfo = new DeviceQueueCreateInfo
+        var uniqueFamilies = new HashSet<uint> { graphicsFamily, presentFamily };
+        var queueCreateInfos = new DeviceQueueCreateInfo[uniqueFamilies.Count];
+        int idx = 0;
+        foreach (var family in uniqueFamilies)
         {
-            SType = StructureType.DeviceQueueCreateInfo,
-            QueueFamilyIndex = graphicsFamily,
-            QueueCount = 1,
-            PQueuePriorities = &priority,
-        };
+            queueCreateInfos[idx++] = new DeviceQueueCreateInfo
+            {
+                SType = StructureType.DeviceQueueCreateInfo,
+                QueueFamilyIndex = family,
+                QueueCount = 1,
+                PQueuePriorities = &priority,
+            };
+        }
 
         var features = new PhysicalDeviceFeatures
         {
@@ -184,23 +237,33 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
         var extensions = new List<string> { "VK_KHR_swapchain" };
         var extPtrs = SilkMarshal.StringArrayToPtr(extensions.ToArray());
 
-        var deviceCreateInfo = new DeviceCreateInfo
+        fixed (DeviceQueueCreateInfo* pQueueInfos = queueCreateInfos)
         {
-            SType = StructureType.DeviceCreateInfo,
-            QueueCreateInfoCount = 1,
-            PQueueCreateInfos = &queueCreateInfo,
-            PEnabledFeatures = &features,
-            EnabledExtensionCount = (uint)extensions.Count,
-            PpEnabledExtensionNames = (byte**)extPtrs,
-        };
+            var deviceCreateInfo = new DeviceCreateInfo
+            {
+                SType = StructureType.DeviceCreateInfo,
+                QueueCreateInfoCount = (uint)queueCreateInfos.Length,
+                PQueueCreateInfos = pQueueInfos,
+                PEnabledFeatures = &features,
+                EnabledExtensionCount = (uint)extensions.Count,
+                PpEnabledExtensionNames = (byte**)extPtrs,
+            };
 
-        Check(Vk.CreateDevice(PhysicalDevice, &deviceCreateInfo, null, out var device));
-        Device = device;
+            Check(Vk.CreateDevice(PhysicalDevice, &deviceCreateInfo, null, out var device));
+            Device = device;
+        }
 
         SilkMarshal.Free(extPtrs);
 
-        Vk.GetDeviceQueue(Device, graphicsFamily, 0, out var queue);
-        GraphicsQueue = queue;
+        Vk.GetDeviceQueue(Device, graphicsFamily, 0, out var gQueue);
+        GraphicsQueue = gQueue;
+
+        Vk.GetDeviceQueue(Device, presentFamily, 0, out var pQueue);
+        PresentQueue = pQueue;
+
+        // Acquire the KHR swapchain extension from the device
+        if (!Vk.TryGetDeviceExtension<KhrSwapchain>(VkInstance, Device, out _khrSwapchain))
+            throw new InvalidOperationException("Failed to load VK_KHR_swapchain device extension.");
     }
 
     private void CreateCommandPool()
@@ -213,6 +276,199 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
         };
         Check(Vk.CreateCommandPool(Device, &poolInfo, null, out var pool));
         CommandPool = pool;
+    }
+
+    private void CreateSurface()
+    {
+        if (!Vk.TryGetInstanceExtension<KhrSurface>(VkInstance, out _khrSurface))
+            throw new InvalidOperationException("Failed to load VK_KHR_surface instance extension.");
+
+        if (Window.InternalWindow is IVkSurface vkSurface)
+        {
+            _surface = vkSurface.Create<AllocationCallbacks>(VkInstance.ToHandle(), null).ToSurface();
+        }
+        else
+        {
+            throw new InvalidOperationException("Window does not support Vulkan surfaces (IVkSurface).");
+        }
+    }
+
+    private void CreateSwapchain(uint width, uint height)
+    {
+        if (_khrSurface == null || _khrSwapchain == null)
+            return;
+
+        // Query surface capabilities
+        _khrSurface.GetPhysicalDeviceSurfaceCapabilities(PhysicalDevice, _surface, out var capabilities);
+
+        // Choose surface format (prefer BGRA8 SRGB)
+        uint formatCount = 0;
+        _khrSurface.GetPhysicalDeviceSurfaceFormats(PhysicalDevice, _surface, &formatCount, null);
+        var formats = new SurfaceFormatKHR[formatCount];
+        fixed (SurfaceFormatKHR* pFormats = formats)
+            _khrSurface.GetPhysicalDeviceSurfaceFormats(PhysicalDevice, _surface, &formatCount, pFormats);
+
+        var surfaceFormat = formats[0];
+        foreach (var fmt in formats)
+        {
+            if (fmt.Format == Format.B8G8R8A8Unorm && fmt.ColorSpace == ColorSpaceKHR.SpaceSrgbNonlinearKhr)
+            {
+                surfaceFormat = fmt;
+                break;
+            }
+        }
+        _swapchainFormat = surfaceFormat.Format;
+
+        // Choose present mode (prefer Mailbox for low-latency, fall back to FIFO)
+        uint presentModeCount = 0;
+        _khrSurface.GetPhysicalDeviceSurfacePresentModes(PhysicalDevice, _surface, &presentModeCount, null);
+        var presentModes = new PresentModeKHR[presentModeCount];
+        fixed (PresentModeKHR* pModes = presentModes)
+            _khrSurface.GetPhysicalDeviceSurfacePresentModes(PhysicalDevice, _surface, &presentModeCount, pModes);
+
+        var presentMode = PresentModeKHR.FifoKhr;
+        foreach (var mode in presentModes)
+        {
+            if (mode == PresentModeKHR.MailboxKhr)
+            {
+                presentMode = mode;
+                break;
+            }
+        }
+
+        // Choose extent
+        if (capabilities.CurrentExtent.Width != uint.MaxValue)
+        {
+            _swapchainExtent = capabilities.CurrentExtent;
+        }
+        else
+        {
+            _swapchainExtent = new Extent2D(
+                Math.Clamp(width, capabilities.MinImageExtent.Width, capabilities.MaxImageExtent.Width),
+                Math.Clamp(height, capabilities.MinImageExtent.Height, capabilities.MaxImageExtent.Height));
+        }
+
+        // Image count (prefer min+1, clamped to max)
+        uint imageCount = capabilities.MinImageCount + 1;
+        if (capabilities.MaxImageCount > 0 && imageCount > capabilities.MaxImageCount)
+            imageCount = capabilities.MaxImageCount;
+
+        var createInfo = new SwapchainCreateInfoKHR
+        {
+            SType = StructureType.SwapchainCreateInfoKhr,
+            Surface = _surface,
+            MinImageCount = imageCount,
+            ImageFormat = surfaceFormat.Format,
+            ImageColorSpace = surfaceFormat.ColorSpace,
+            ImageExtent = _swapchainExtent,
+            ImageArrayLayers = 1,
+            ImageUsage = ImageUsageFlags.ColorAttachmentBit | ImageUsageFlags.TransferDstBit,
+            PreTransform = capabilities.CurrentTransform,
+            CompositeAlpha = CompositeAlphaFlagsKHR.OpaqueBitKhr,
+            PresentMode = presentMode,
+            Clipped = true,
+            OldSwapchain = _swapchain, // pass old for recreation
+        };
+
+        if (GraphicsQueueFamily != PresentQueueFamily)
+        {
+            var queueFamilyIndices = stackalloc uint[2] { GraphicsQueueFamily, PresentQueueFamily };
+            createInfo.ImageSharingMode = SharingMode.Concurrent;
+            createInfo.QueueFamilyIndexCount = 2;
+            createInfo.PQueueFamilyIndices = queueFamilyIndices;
+        }
+        else
+        {
+            createInfo.ImageSharingMode = SharingMode.Exclusive;
+        }
+
+        Check(_khrSwapchain.CreateSwapchain(Device, &createInfo, null, out var newSwapchain));
+
+        // Destroy old swapchain if recreating
+        if (_swapchain.Handle != 0)
+        {
+            CleanupSwapchainResources();
+            _khrSwapchain.DestroySwapchain(Device, _swapchain, null);
+        }
+        _swapchain = newSwapchain;
+
+        // Retrieve swapchain images
+        uint swapImageCount = 0;
+        _khrSwapchain.GetSwapchainImages(Device, _swapchain, &swapImageCount, null);
+        _swapchainImages = new Image[swapImageCount];
+        fixed (Image* pImages = _swapchainImages)
+            _khrSwapchain.GetSwapchainImages(Device, _swapchain, &swapImageCount, pImages);
+
+        // Create image views
+        _swapchainImageViews = new ImageView[swapImageCount];
+        _swapchainTextures = new VKSwapchainImageTexture[swapImageCount];
+        for (int i = 0; i < swapImageCount; i++)
+        {
+            var viewInfo = new ImageViewCreateInfo
+            {
+                SType = StructureType.ImageViewCreateInfo,
+                Image = _swapchainImages[i],
+                ViewType = ImageViewType.Type2D,
+                Format = _swapchainFormat,
+                Components = new ComponentMapping
+                {
+                    R = ComponentSwizzle.Identity,
+                    G = ComponentSwizzle.Identity,
+                    B = ComponentSwizzle.Identity,
+                    A = ComponentSwizzle.Identity,
+                },
+                SubresourceRange = new ImageSubresourceRange
+                {
+                    AspectMask = ImageAspectFlags.ColorBit,
+                    BaseMipLevel = 0,
+                    LevelCount = 1,
+                    BaseArrayLayer = 0,
+                    LayerCount = 1,
+                },
+            };
+            Check(Vk.CreateImageView(Device, &viewInfo, null, out _swapchainImageViews[i]));
+
+            _swapchainTextures[i] = new VKSwapchainImageTexture(
+                _swapchainImages[i], _swapchainImageViews[i],
+                _swapchainExtent.Width, _swapchainExtent.Height,
+                VKFormatHelper.FromVkFormat(_swapchainFormat));
+        }
+
+        _swapchainWidth = _swapchainExtent.Width;
+        _swapchainHeight = _swapchainExtent.Height;
+    }
+
+    private void CleanupSwapchainResources()
+    {
+        foreach (var view in _swapchainImageViews)
+        {
+            if (view.Handle != 0)
+                Vk.DestroyImageView(Device, view, null);
+        }
+        _swapchainImageViews = [];
+        _swapchainTextures = [];
+        _swapchainImages = [];
+    }
+
+    private void CreateSyncObjects()
+    {
+        _imageAvailableSemaphores = new Semaphore[MaxFramesInFlight];
+        _renderFinishedSemaphores = new Semaphore[MaxFramesInFlight];
+        _inFlightFences = new VkFence[MaxFramesInFlight];
+
+        var semaphoreInfo = new SemaphoreCreateInfo { SType = StructureType.SemaphoreCreateInfo };
+        var fenceInfo = new FenceCreateInfo
+        {
+            SType = StructureType.FenceCreateInfo,
+            Flags = FenceCreateFlags.SignaledBit, // start signaled so first WaitForFences succeeds
+        };
+
+        for (int i = 0; i < MaxFramesInFlight; i++)
+        {
+            Check(Vk.CreateSemaphore(Device, &semaphoreInfo, null, out _imageAvailableSemaphores[i]));
+            Check(Vk.CreateSemaphore(Device, &semaphoreInfo, null, out _renderFinishedSemaphores[i]));
+            Check(Vk.CreateFence(Device, &fenceInfo, null, out _inFlightFences[i]));
+        }
     }
 
     private DeviceCapabilities QueryCapabilities()
@@ -390,8 +646,15 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
     public override void ResizeSwapchain(uint width, uint height)
     {
         ThrowIfDisposed();
-        _swapchainWidth = width;
-        _swapchainHeight = height;
+        if (width == 0 || height == 0)
+        {
+            // Minimised — mark dirty but don't recreate
+            _framebufferResized = true;
+            return;
+        }
+
+        Vk.DeviceWaitIdle(Device);
+        CreateSwapchain(width, height);
     }
 
     #endregion
@@ -546,7 +809,121 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
     public override Texture GetSwapchainTexture()
     {
         ThrowIfDisposed();
-        return VKSwapchainTexture.Instance;
+        if (_swapchainTextures.Length == 0)
+            throw new InvalidOperationException("Swapchain not created or has no images.");
+        return _swapchainTextures[_currentImageIndex];
+    }
+
+    public override bool BeginFrame()
+    {
+        ThrowIfDisposed();
+        if (_khrSwapchain == null)
+            return true;
+
+        // Wait for this frame's fence to be signaled (previous use of this frame slot)
+        var fence = _inFlightFences[_currentFrame];
+        Vk.WaitForFences(Device, 1, &fence, true, ulong.MaxValue);
+
+        // Acquire the next swapchain image
+        var result = _khrSwapchain.AcquireNextImage(
+            Device, _swapchain, ulong.MaxValue,
+            _imageAvailableSemaphores[_currentFrame], default,
+            ref _currentImageIndex);
+
+        if (result == Result.ErrorOutOfDateKhr)
+        {
+            RecreateSwapchain();
+            return false;
+        }
+
+        if (result != Result.Success && result != Result.SuboptimalKhr)
+            Check(result);
+
+        // Only reset the fence if we know we're going to submit work
+        Vk.ResetFences(Device, 1, &fence);
+        return true;
+    }
+
+    public override bool Present()
+    {
+        ThrowIfDisposed();
+        if (_khrSwapchain == null)
+            return true;
+
+        var waitSemaphore = _renderFinishedSemaphores[_currentFrame];
+        var swapchain = _swapchain;
+        var imageIndex = _currentImageIndex;
+
+        var presentInfo = new PresentInfoKHR
+        {
+            SType = StructureType.PresentInfoKhr,
+            WaitSemaphoreCount = 1,
+            PWaitSemaphores = &waitSemaphore,
+            SwapchainCount = 1,
+            PSwapchains = &swapchain,
+            PImageIndices = &imageIndex,
+        };
+
+        var result = _khrSwapchain.QueuePresent(PresentQueue, &presentInfo);
+
+        if (result == Result.ErrorOutOfDateKhr || result == Result.SuboptimalKhr || _framebufferResized)
+        {
+            _framebufferResized = false;
+            RecreateSwapchain();
+            // Frame was presented (or discarded) — still advance
+        }
+        else if (result != Result.Success)
+        {
+            Check(result);
+        }
+
+        _currentFrame = (_currentFrame + 1) % MaxFramesInFlight;
+        return true;
+    }
+
+    /// <summary>
+    /// Submits a command list for execution with proper frame synchronisation.
+    /// The submission waits on the image-available semaphore and signals
+    /// the render-finished semaphore + in-flight fence for the current frame.
+    /// </summary>
+    public void SubmitFrameCommands(CommandList commandList)
+    {
+        ThrowIfDisposed();
+        if (commandList is not VKCommandList vkCmd)
+            throw new ArgumentException("Command list is not a Vulkan command list.", nameof(commandList));
+
+        var cb = vkCmd.Handle;
+        var waitSemaphore = _imageAvailableSemaphores[_currentFrame];
+        var signalSemaphore = _renderFinishedSemaphores[_currentFrame];
+        var waitStage = PipelineStageFlags.ColorAttachmentOutputBit;
+
+        var submitInfo = new SubmitInfo
+        {
+            SType = StructureType.SubmitInfo,
+            WaitSemaphoreCount = 1,
+            PWaitSemaphores = &waitSemaphore,
+            PWaitDstStageMask = &waitStage,
+            CommandBufferCount = 1,
+            PCommandBuffers = &cb,
+            SignalSemaphoreCount = 1,
+            PSignalSemaphores = &signalSemaphore,
+        };
+
+        Check(Vk.QueueSubmit(GraphicsQueue, 1, &submitInfo, _inFlightFences[_currentFrame]));
+    }
+
+    private void RecreateSwapchain()
+    {
+        var fbSize = Window.InternalWindow.FramebufferSize;
+        while (fbSize.X == 0 || fbSize.Y == 0)
+        {
+            // Window is minimised — wait for it to become visible again
+            fbSize = Window.InternalWindow.FramebufferSize;
+            Window.InternalWindow.DoEvents();
+        }
+
+        Vk.DeviceWaitIdle(Device);
+        CreateSwapchain((uint)fbSize.X, (uint)fbSize.Y);
     }
 
     #endregion
@@ -718,6 +1095,22 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
 
     protected override void DisposeResources()
     {
+        // Destroy sync objects
+        for (int i = 0; i < MaxFramesInFlight; i++)
+        {
+            if (i < _imageAvailableSemaphores.Length && _imageAvailableSemaphores[i].Handle != 0)
+                Vk.DestroySemaphore(Device, _imageAvailableSemaphores[i], null);
+            if (i < _renderFinishedSemaphores.Length && _renderFinishedSemaphores[i].Handle != 0)
+                Vk.DestroySemaphore(Device, _renderFinishedSemaphores[i], null);
+            if (i < _inFlightFences.Length && _inFlightFences[i].Handle != 0)
+                Vk.DestroyFence(Device, _inFlightFences[i], null);
+        }
+
+        // Destroy swapchain resources
+        CleanupSwapchainResources();
+        if (_khrSwapchain != null && _swapchain.Handle != 0)
+            _khrSwapchain.DestroySwapchain(Device, _swapchain, null);
+
         foreach (var rp in _renderPassCache.Values)
             Vk.DestroyRenderPass(Device, rp, null);
         _renderPassCache.Clear();
@@ -725,32 +1118,53 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
         Vk.DestroyCommandPool(Device, CommandPool, null);
 
         Vk.DestroyDevice(Device, null);
+
+        // Destroy surface before instance
+        if (_khrSurface != null && _surface.Handle != 0)
+            _khrSurface.DestroySurface(VkInstance, _surface, null);
+
         Vk.DestroyInstance(VkInstance, null);
         Vk.Dispose();
     }
 }
 
 /// <summary>
-/// Special texture type representing the Vulkan swapchain image.
+/// Texture wrapping a Vulkan swapchain image.
+/// The image and view are owned by the swapchain — this wrapper does not destroy them.
 /// </summary>
-internal class VKSwapchainTexture : Texture
+internal class VKSwapchainImageTexture : Texture
 {
-    public static readonly VKSwapchainTexture Instance = new();
+    internal Image Image { get; }
+    internal ImageView ImageView { get; }
 
-    private VKSwapchainTexture()
+    internal VKSwapchainImageTexture(Image image, ImageView imageView, uint width, uint height, TextureFormat format)
     {
+        Image = image;
+        ImageView = imageView;
         Dimension = TextureDimension.Texture2D;
-        Width = 0;
-        Height = 0;
+        Width = width;
+        Height = height;
         Depth = 1;
         MipLevels = 1;
         ArrayLayers = 1;
-        Format = TextureFormat.BGRA8Unorm;
+        Format = format;
         Usage = TextureUsage.RenderTarget;
         SampleCount = SampleCount.Count1;
     }
 
-    protected override void DisposeResources() { }
+    /// <summary>
+    /// Updates the dimensions when the swapchain is recreated.
+    /// </summary>
+    internal void UpdateDimensions(uint width, uint height)
+    {
+        Width = width;
+        Height = height;
+    }
+
+    protected override void DisposeResources()
+    {
+        // Swapchain images are owned by the swapchain — nothing to destroy here.
+    }
 }
 
 /// <summary>

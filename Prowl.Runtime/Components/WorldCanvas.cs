@@ -233,6 +233,7 @@ public class WorldCanvas : MonoBehaviour, IRenderable
         OnRenderUI?.Invoke(_paper);
 
         // End Paper frame (this will render to the texture)
+        _paperRenderer!.RenderTarget = _renderTexture;
         _paper.EndFrame();
 
         // End rendering to the render texture

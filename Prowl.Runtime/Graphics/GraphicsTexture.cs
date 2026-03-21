@@ -1,14 +1,20 @@
-﻿// This file is part of the Prowl Game Engine
+// This file is part of the Prowl Game Engine
 // Licensed under the MIT License. See the LICENSE file in the project root for details.
 
 using System;
 
 using Silk.NET.OpenGL;
 
+using Graphite = Prowl.Runtime.Graphite;
+
 namespace Prowl.Runtime;
 
 public unsafe class GraphicsTexture : IDisposable
 {
+    /// <summary>
+    /// The GL texture handle. Only valid when <see cref="Graphics.IsOpenGL"/> is <c>true</c>.
+    /// On non-GL backends this will be <c>0</c>.
+    /// </summary>
     public uint Handle { get; private set; }
     public TextureType Type { get; protected set; }
 
@@ -23,10 +29,24 @@ public unsafe class GraphicsTexture : IDisposable
     /// <summary>The format of the pixel data.</summary>
     public readonly PixelFormat PixelFormat;
 
+    /// <summary>The original legacy image format, preserved for Graphite mapping.</summary>
+    public readonly TextureImageFormat ImageFormat;
+
+    /// <summary>
+    /// The Graphite texture backing this resource.
+    /// On OpenGL this is a shadow created alongside the GL texture.
+    /// On non-GL backends this is the primary GPU texture.
+    /// Created on the first <see cref="TexImage2D"/> / <see cref="TexImage3D"/> call (mip 0).
+    /// Will be <c>null</c> before the first image upload.
+    /// </summary>
+    public Graphite.Texture? GraphiteTexture { get; private set; }
+
+    private static bool IsGL => Graphics.IsOpenGL;
+
     public GraphicsTexture(TextureType type, TextureImageFormat format)
     {
-        Handle = Graphics.GL.GenTexture();
         Type = type;
+        ImageFormat = format;
         Target = type switch
         {
             TextureType.Texture2D => TextureTarget.Texture2D,
@@ -34,11 +54,16 @@ public unsafe class GraphicsTexture : IDisposable
             _ => throw new ArgumentOutOfRangeException(nameof(type), type, null),
         };
         GetTextureFormatEnums(format, out PixelInternalFormat, out PixelType, out PixelFormat);
+
+        if (IsGL)
+            Handle = Graphics.GL.GenTexture();
     }
 
     private static uint? currentlyBound = null;
     public void Bind(bool force = true)
     {
+        if (!IsGL) return;
+
         if (!force && currentlyBound == Handle)
             return;
 
@@ -48,12 +73,20 @@ public unsafe class GraphicsTexture : IDisposable
 
     public void GenerateMipmap()
     {
-        Bind(false);
-        Graphics.GL.GenerateMipmap(Target);
+        if (IsGL)
+        {
+            Bind(false);
+            Graphics.GL.GenerateMipmap(Target);
+        }
+
+        if (GraphiteTexture != null)
+            Graphics.Graphite.GenerateMipmaps(GraphiteTexture);
     }
 
     public void SetWrapS(TextureWrap wrap)
     {
+        if (!IsGL) return;
+
         Bind(false);
         GLEnum wrapMode = wrap switch
         {
@@ -68,6 +101,8 @@ public unsafe class GraphicsTexture : IDisposable
 
     public void SetWrapT(TextureWrap wrap)
     {
+        if (!IsGL) return;
+
         Bind(false);
         GLEnum wrapMode = wrap switch
         {
@@ -82,6 +117,8 @@ public unsafe class GraphicsTexture : IDisposable
 
     public void SetWrapR(TextureWrap wrap)
     {
+        if (!IsGL) return;
+
         Bind(false);
         GLEnum wrapMode = wrap switch
         {
@@ -96,6 +133,8 @@ public unsafe class GraphicsTexture : IDisposable
 
     public void SetTextureFilters(TextureMin min, TextureMag mag)
     {
+        if (!IsGL) return;
+
         Bind(false);
         GLEnum minFilter = min switch
         {
@@ -119,6 +158,9 @@ public unsafe class GraphicsTexture : IDisposable
 
     public void GetTexImage(int level, void* ptr)
     {
+        if (!IsGL)
+            throw new NotSupportedException("GetTexImage is only supported with the OpenGL backend. Use Graphite readback APIs instead.");
+
         Bind(false);
         Graphics.GL.GetTexImage(Target, level, PixelFormat, PixelType, ptr);
     }
@@ -133,7 +175,12 @@ public unsafe class GraphicsTexture : IDisposable
         if (currentlyBound == Handle)
             currentlyBound = null;
 
-        Graphics.GL.DeleteTexture(Handle);
+        GraphiteTexture?.Dispose();
+        GraphiteTexture = null;
+
+        if (IsGL)
+            Graphics.GL.DeleteTexture(Handle);
+
         IsDisposed = true;
     }
 
@@ -142,29 +189,214 @@ public unsafe class GraphicsTexture : IDisposable
         return Handle.ToString();
     }
 
+
     public void TexImage2D(TextureTarget type, int mip, uint width, uint height, int v2, void* data)
     {
-        Bind(false);
-        Graphics.GL.TexImage2D(type, mip, PixelInternalFormat, width, height, v2, PixelFormat, PixelType, data);
+        if (IsGL)
+        {
+            Bind(false);
+            Graphics.GL.TexImage2D(type, mip, PixelInternalFormat, width, height, v2, PixelFormat, PixelType, data);
+        }
+
+        // Create (or recreate) the Graphite texture on mip level 0.
+        if (mip == 0 && Graphics.IsGraphiteReady)
+        {
+            GraphiteTexture?.Dispose();
+            var desc = Graphite.TextureDescriptor.Texture2D(
+                width, height,
+                GraphiteFormatMapper.MapTextureFormat(ImageFormat),
+                GraphiteFormatMapper.InferTextureUsage(ImageFormat));
+            GraphiteTexture = Graphics.Graphite.CreateTexture(in desc);
+
+            // On non-GL backends, upload the initial data to the Graphite texture.
+            if (!IsGL && data != null)
+                UploadToGraphiteTexture(data, width, height, 1, 0);
+        }
     }
 
     public void TexImage3D(TextureTarget type, int level, uint width, uint height, uint depth, void* data)
     {
-        Bind(false);
-        Graphics.GL.TexImage3D(type, level, PixelInternalFormat, width, height, depth, 0, PixelFormat, PixelType, data);
+        if (IsGL)
+        {
+            Bind(false);
+            Graphics.GL.TexImage3D(type, level, PixelInternalFormat, width, height, depth, 0, PixelFormat, PixelType, data);
+        }
+
+        // Create (or recreate) the Graphite texture on mip level 0.
+        if (level == 0 && Graphics.IsGraphiteReady)
+        {
+            GraphiteTexture?.Dispose();
+            var desc = Graphite.TextureDescriptor.Texture3D(
+                width, height, depth,
+                GraphiteFormatMapper.MapTextureFormat(ImageFormat),
+                GraphiteFormatMapper.InferTextureUsage(ImageFormat));
+            GraphiteTexture = Graphics.Graphite.CreateTexture(in desc);
+
+            // On non-GL backends, upload the initial data to the Graphite texture.
+            if (!IsGL && data != null)
+                UploadToGraphiteTexture(data, width, height, depth, 0);
+        }
     }
 
     internal void TexSubImage2D(TextureTarget type, int mip, int x, int y, uint width, uint height, void* data)
     {
-        Bind(false);
-        Graphics.GL.TexSubImage2D(type, mip, x, y, width, height, PixelFormat, PixelType, data);
+        if (IsGL)
+        {
+            Bind(false);
+            Graphics.GL.TexSubImage2D(type, mip, x, y, width, height, PixelFormat, PixelType, data);
+        }
+
+        // On non-GL backends, upload to the Graphite texture directly.
+        if (!IsGL && GraphiteTexture != null && data != null)
+        {
+            uint bpp = GetBytesPerPixel(ImageFormat);
+            if (GraphiteFormatMapper.IsRgbFormat(ImageFormat))
+            {
+                UploadRgbToRgba(data, width, height, 1, (uint)mip, (uint)x, (uint)y, 0, bpp);
+            }
+            else
+            {
+                var updateDesc = new Graphite.TextureUpdateDescriptor
+                {
+                    MipLevel = (uint)mip,
+                    X = (uint)x,
+                    Y = (uint)y,
+                    Z = 0,
+                    Width = width,
+                    Height = height,
+                    Depth = 1,
+                };
+                var span = new ReadOnlySpan<byte>(data, (int)(width * height * bpp));
+                Graphics.Graphite.UpdateTexture(GraphiteTexture, in updateDesc, span);
+            }
+        }
     }
 
     internal void TexSubImage3D(TextureTarget type, int level, int x, int y, int z, uint width, uint height, uint depth, void* data)
     {
-        Bind(false);
-        Graphics.GL.TexSubImage3D(type, level, x, y, z, width, height, depth, PixelFormat, PixelType, data);
+        if (IsGL)
+        {
+            Bind(false);
+            Graphics.GL.TexSubImage3D(type, level, x, y, z, width, height, depth, PixelFormat, PixelType, data);
+        }
+
+        // On non-GL backends, upload to the Graphite texture directly.
+        if (!IsGL && GraphiteTexture != null && data != null)
+        {
+            uint bpp = GetBytesPerPixel(ImageFormat);
+            if (GraphiteFormatMapper.IsRgbFormat(ImageFormat))
+            {
+                UploadRgbToRgba(data, width, height, depth, (uint)level, (uint)x, (uint)y, (uint)z, bpp);
+            }
+            else
+            {
+                var updateDesc = new Graphite.TextureUpdateDescriptor
+                {
+                    MipLevel = (uint)level,
+                    X = (uint)x,
+                    Y = (uint)y,
+                    Z = (uint)z,
+                    Width = width,
+                    Height = height,
+                    Depth = depth,
+                };
+                var span = new ReadOnlySpan<byte>(data, (int)(width * height * depth * bpp));
+                Graphics.Graphite.UpdateTexture(GraphiteTexture, in updateDesc, span);
+            }
+        }
     }
+
+    /// <summary>
+    /// Uploads data to the Graphite texture, handling RGB-to-RGBA padding when necessary.
+    /// </summary>
+    private void UploadToGraphiteTexture(void* data, uint width, uint height, uint depth, uint mipLevel)
+    {
+        if (GraphiteTexture == null || data == null) return;
+
+        uint bpp = GetBytesPerPixel(ImageFormat);
+
+        if (GraphiteFormatMapper.IsRgbFormat(ImageFormat))
+        {
+            UploadRgbToRgba(data, width, height, depth, mipLevel, 0, 0, 0, bpp);
+        }
+        else
+        {
+            var updateDesc = Graphite.TextureUpdateDescriptor.FullMip(width, height, mipLevel);
+            updateDesc.Depth = depth;
+            var span = new ReadOnlySpan<byte>(data, (int)(width * height * depth * bpp));
+            Graphics.Graphite.UpdateTexture(GraphiteTexture, in updateDesc, span);
+        }
+    }
+
+    /// <summary>
+    /// Pads 3-channel (RGB) source data to 4-channel (RGBA) and uploads to the Graphite texture.
+    /// </summary>
+    private void UploadRgbToRgba(void* data, uint width, uint height, uint depth, uint mipLevel,
+        uint offsetX, uint offsetY, uint offsetZ, uint srcBpp)
+    {
+        if (GraphiteTexture == null) return;
+
+        uint pixelCount = width * height * depth;
+        uint srcChannelSize = srcBpp / 3;
+        uint dstBpp = srcChannelSize * 4;
+        uint dstSize = pixelCount * dstBpp;
+
+        byte[] padded = new byte[dstSize];
+        byte* src = (byte*)data;
+        fixed (byte* dst = padded)
+        {
+            for (uint i = 0; i < pixelCount; i++)
+            {
+                System.Buffer.MemoryCopy(src + i * srcBpp, dst + i * dstBpp, srcChannelSize * 3, srcChannelSize * 3);
+            }
+        }
+
+        var updateDesc = new Graphite.TextureUpdateDescriptor
+        {
+            MipLevel = mipLevel,
+            X = offsetX,
+            Y = offsetY,
+            Z = offsetZ,
+            Width = width,
+            Height = height,
+            Depth = depth,
+        };
+        Graphics.Graphite.UpdateTexture(GraphiteTexture, in updateDesc, padded);
+    }
+
+    /// <summary>
+    /// Returns the number of bytes per pixel for the given legacy texture format.
+    /// </summary>
+    internal static uint GetBytesPerPixel(TextureImageFormat format) => format switch
+    {
+        TextureImageFormat.Color4b => 4,
+        TextureImageFormat.Byte => 1,
+        TextureImageFormat.Float => 4,
+        TextureImageFormat.Float2 => 8,
+        TextureImageFormat.Float3 => 12,
+        TextureImageFormat.Float4 => 16,
+        TextureImageFormat.Short => 2,
+        TextureImageFormat.Short2 => 4,
+        TextureImageFormat.Short3 => 6,
+        TextureImageFormat.Short4 => 8,
+        TextureImageFormat.Int => 4,
+        TextureImageFormat.Int2 => 8,
+        TextureImageFormat.Int3 => 12,
+        TextureImageFormat.Int4 => 16,
+        TextureImageFormat.UnsignedShort => 2,
+        TextureImageFormat.UnsignedShort2 => 4,
+        TextureImageFormat.UnsignedShort3 => 6,
+        TextureImageFormat.UnsignedShort4 => 8,
+        TextureImageFormat.UnsignedInt => 4,
+        TextureImageFormat.UnsignedInt2 => 8,
+        TextureImageFormat.UnsignedInt3 => 12,
+        TextureImageFormat.UnsignedInt4 => 16,
+        TextureImageFormat.Depth16f => 2,
+        TextureImageFormat.Depth24f => 4,
+        TextureImageFormat.Depth32f => 4,
+        TextureImageFormat.Depth24Stencil8 => 4,
+        _ => 4,
+    };
 
     /// <summary>
     /// Turns a value from the <see cref="Texture.TextureImageFormat"/> enum into the necessary

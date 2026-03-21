@@ -8,6 +8,8 @@ using Prowl.Vector;
 
 using Silk.NET.OpenGL;
 
+using Graphite = Prowl.Runtime.Graphite;
+
 namespace Prowl.Runtime;
 
 public class GraphicsProgram : IDisposable
@@ -45,11 +47,43 @@ public class GraphicsProgram : IDisposable
 
     public uint Handle { get; private set; }
 
+    /// <summary>Shadow Graphite vertex shader module (null when Graphite is not ready).</summary>
+    public Graphite.ShaderModule? GraphiteVertexModule { get; private set; }
+
+    /// <summary>Shadow Graphite fragment shader module (null when Graphite is not ready).</summary>
+    public Graphite.ShaderModule? GraphiteFragmentModule { get; private set; }
+
+    /// <summary>Shadow Graphite geometry shader module (null when Graphite is not ready).</summary>
+    public Graphite.ShaderModule? GraphiteGeometryModule { get; private set; }
+
+    /// <summary>Whether this program was created for a non-GL backend (Vulkan).
+    /// When true, only Graphite modules are valid; GL <see cref="Handle"/> is 0.</summary>
+    private bool _isGraphiteOnly;
+
     public GraphicsProgram(string fragmentSource, string vertexSource, string geometrySource) : base()
     {
         ID = System.Threading.Interlocked.Increment(ref _nextId);
 
-        // Initialize compilation log info variables
+        bool isVulkan = Graphics.IsGraphiteReady &&
+                        Graphics.Graphite.BackendType == Graphite.GraphicsBackendType.Vulkan;
+
+        if (isVulkan)
+        {
+            _isGraphiteOnly = true;
+            CreateGraphiteModulesVulkan(vertexSource, fragmentSource, geometrySource);
+        }
+        else
+        {
+            _isGraphiteOnly = false;
+            CompileOpenGL(fragmentSource, vertexSource, geometrySource);
+            CreateGraphiteModulesGL(vertexSource, fragmentSource, geometrySource);
+        }
+    }
+
+    #region OpenGL compilation
+
+    private void CompileOpenGL(string fragmentSource, string vertexSource, string geometrySource)
+    {
         int statusCode = -1;
         string info = string.Empty;
 
@@ -58,19 +92,15 @@ public class GraphicsProgram : IDisposable
         // Create fragment shader if requested
         if (!string.IsNullOrEmpty(fragmentSource))
         {
-            // Create and compile the shader
             uint fragmentShader = Graphics.GL.CreateShader(ShaderType.FragmentShader);
             Graphics.GL.ShaderSource(fragmentShader, fragmentSource);
             Graphics.GL.CompileShader(fragmentShader);
 
-            // Check the compile log
             Graphics.GL.GetShaderInfoLog(fragmentShader, out info);
             Graphics.GL.GetShader(fragmentShader, ShaderParameterName.CompileStatus, out statusCode);
 
-            // Check the compile log
             if (statusCode != 1)
             {
-                // Delete every handles when compilation failed
                 IsDisposed = true;
                 Graphics.GL.DeleteShader(fragmentShader);
                 Graphics.GL.DeleteProgram(Handle);
@@ -80,7 +110,6 @@ public class GraphicsProgram : IDisposable
                     "Status Code: " + statusCode.ToString());
             }
 
-            // Attach the shader to the program, and delete it (not needed anymore)
             Graphics.GL.AttachShader(Handle, fragmentShader);
             Graphics.GL.DeleteShader(fragmentShader);
         }
@@ -88,19 +117,15 @@ public class GraphicsProgram : IDisposable
         // Create vertex shader if requested
         if (!string.IsNullOrEmpty(vertexSource))
         {
-            // Create and compile the shader
             uint vertexShader = Graphics.GL.CreateShader(ShaderType.VertexShader);
             Graphics.GL.ShaderSource(vertexShader, vertexSource);
             Graphics.GL.CompileShader(vertexShader);
 
-            // Check the compile log
             Graphics.GL.GetShaderInfoLog(vertexShader, out info);
             Graphics.GL.GetShader(vertexShader, ShaderParameterName.CompileStatus, out statusCode);
 
-            // Check the compile log
             if (statusCode != 1)
             {
-                // Delete every handles when compilation failed
                 IsDisposed = true;
                 Graphics.GL.DeleteShader(vertexShader);
                 Graphics.GL.DeleteProgram(Handle);
@@ -110,7 +135,6 @@ public class GraphicsProgram : IDisposable
                     "Status Code: " + statusCode.ToString());
             }
 
-            // Attach the shader to the program, and delete it (not needed anymore)
             Graphics.GL.AttachShader(Handle, vertexShader);
             Graphics.GL.DeleteShader(vertexShader);
         }
@@ -118,19 +142,15 @@ public class GraphicsProgram : IDisposable
         // Create geometry shader if requested
         if (!string.IsNullOrEmpty(geometrySource))
         {
-            // Create and compile the shader
             uint geometryShader = Graphics.GL.CreateShader(ShaderType.GeometryShader);
             Graphics.GL.ShaderSource(geometryShader, geometrySource);
             Graphics.GL.CompileShader(geometryShader);
 
-            // Check the compile log
             Graphics.GL.GetShaderInfoLog(geometryShader, out info);
             Graphics.GL.GetShader(geometryShader, ShaderParameterName.CompileStatus, out statusCode);
 
-            // Check the compile log
             if (statusCode != 1)
             {
-                // Delete every handles when compilation failed
                 IsDisposed = true;
                 Graphics.GL.DeleteShader(geometryShader);
                 Graphics.GL.DeleteProgram(Handle);
@@ -140,7 +160,6 @@ public class GraphicsProgram : IDisposable
                     "Status Code: " + statusCode.ToString());
             }
 
-            // Attach the shader to the program, and delete it (not needed anymore)
             Graphics.GL.AttachShader(Handle, geometryShader);
             Graphics.GL.DeleteShader(geometryShader);
         }
@@ -148,12 +167,10 @@ public class GraphicsProgram : IDisposable
         // Link the compiled program
         Graphics.GL.LinkProgram(Handle);
 
-        // Check for link status
         Graphics.GL.GetProgramInfoLog(Handle, out info);
         Graphics.GL.GetProgram(Handle, ProgramPropertyARB.LinkStatus, out statusCode);
         if (statusCode != 1)
         {
-            // Delete the handles when failed to link the program
             IsDisposed = true;
             Graphics.GL.DeleteProgram(Handle);
 
@@ -162,14 +179,61 @@ public class GraphicsProgram : IDisposable
                     "Status Code: " + statusCode.ToString());
         }
 
-        // Force an OpenGL flush, so that the shader will appear updated
-        // in all contexts immediately (solves problems in multi-threaded apps)
         Graphics.GL.Flush();
     }
+
+    #endregion
+
+    #region Graphite module creation
+
+    private void CreateGraphiteModulesGL(string vertexSource, string fragmentSource, string geometrySource)
+    {
+        if (!Graphics.IsGraphiteReady)
+            return;
+
+        try
+        {
+            if (!string.IsNullOrEmpty(vertexSource))
+                GraphiteVertexModule = Graphics.Graphite.CreateShaderModule(Graphite.ShaderModuleDescriptor.VertexGLSL(vertexSource));
+            if (!string.IsNullOrEmpty(fragmentSource))
+                GraphiteFragmentModule = Graphics.Graphite.CreateShaderModule(Graphite.ShaderModuleDescriptor.FragmentGLSL(fragmentSource));
+            if (!string.IsNullOrEmpty(geometrySource))
+                GraphiteGeometryModule = Graphics.Graphite.CreateShaderModule(Graphite.ShaderModuleDescriptor.GeometryGLSL(geometrySource));
+        }
+        catch (Exception ex)
+        {
+            Debug.LogWarning($"[GraphicsProgram] Failed to create Graphite shader modules (GL): {ex.Message}");
+        }
+    }
+
+    private void CreateGraphiteModulesVulkan(string vertexSource, string fragmentSource, string geometrySource)
+    {
+        // Cross-compile GLSL → SPIR-V, then create Vulkan shader modules.
+        if (!string.IsNullOrEmpty(vertexSource))
+        {
+            byte[] spirv = Graphite.ShaderCrossCompiler.CompileGLSLToSPIRV(vertexSource, Graphite.ShaderStage.Vertex);
+            GraphiteVertexModule = Graphics.Graphite.CreateShaderModule(Graphite.ShaderModuleDescriptor.VertexSPIRV(spirv));
+        }
+        if (!string.IsNullOrEmpty(fragmentSource))
+        {
+            byte[] spirv = Graphite.ShaderCrossCompiler.CompileGLSLToSPIRV(fragmentSource, Graphite.ShaderStage.Fragment);
+            GraphiteFragmentModule = Graphics.Graphite.CreateShaderModule(Graphite.ShaderModuleDescriptor.FragmentSPIRV(spirv));
+        }
+        if (!string.IsNullOrEmpty(geometrySource))
+        {
+            byte[] spirv = Graphite.ShaderCrossCompiler.CompileGLSLToSPIRV(geometrySource, Graphite.ShaderStage.Geometry);
+            GraphiteGeometryModule = Graphics.Graphite.CreateShaderModule(Graphite.ShaderModuleDescriptor.GeometrySPIRV(spirv));
+        }
+    }
+
+    #endregion
 
     public static GraphicsProgram? currentProgram = null;
     public void Use()
     {
+        if (_isGraphiteOnly)
+            return;
+
         if (currentProgram != null && currentProgram.Handle == Handle)
             return;
 
@@ -185,7 +249,16 @@ public class GraphicsProgram : IDisposable
         if (currentProgram != null && currentProgram.Handle == Handle)
             currentProgram = null;
 
-        Graphics.GL.DeleteProgram(Handle);
+        GraphiteVertexModule?.Dispose();
+        GraphiteFragmentModule?.Dispose();
+        GraphiteGeometryModule?.Dispose();
+        GraphiteVertexModule = null;
+        GraphiteFragmentModule = null;
+        GraphiteGeometryModule = null;
+
+        if (!_isGraphiteOnly)
+            Graphics.GL.DeleteProgram(Handle);
+
         IsDisposed = true;
     }
 

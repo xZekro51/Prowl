@@ -8,6 +8,7 @@ using System.Linq;
 using Prowl.Runtime.Resources;
 using Prowl.Vector;
 
+using Graphite = Prowl.Runtime.Graphite;
 using Material = Prowl.Runtime.Resources.Material;
 using Mesh = Prowl.Runtime.Resources.Mesh;
 using Shader = Prowl.Runtime.Resources.Shader;
@@ -181,6 +182,17 @@ public class DefaultRenderPipeline : RenderPipeline
         IReadOnlyList<IRenderableLight> lights = camera.GameObject.Scene.Lights;
         RenderTexture target = camera.UpdateRenderData();
 
+        // Bridge phase: create Graphite command buffer for parallel recording.
+        // Commands are recorded alongside legacy GL calls but NOT submitted —
+        // this validates the RenderCommandBuffer API and pipeline structure.
+        RenderCommandBuffer? graphiteCmd = null;
+        if (Graphics.IsGraphiteReady)
+        {
+            try { graphiteCmd = Graphics.CreateCommandBuffer("DefaultPipeline"); }
+            catch { /* Graphite not fully ready */ }
+        }
+        Graphics.ActiveGraphiteCmdBuffer = graphiteCmd;
+
         // =======================================================
         // 1. Pre Cull
         foreach (ImageEffect effect in allEffects)
@@ -224,6 +236,25 @@ public class DefaultRenderPipeline : RenderPipeline
 
         // Bind GBuffer as the target
         Graphics.BindFramebuffer(gBuffer.frameBuffer);
+
+        // Bridge phase: begin Graphite render pass for GBuffer (clear handled by LoadOp.Clear)
+        if (graphiteCmd != null)
+        {
+            try
+            {
+                var clearFloat4 = new Float4(
+                    (float)camera.ClearColor.R,
+                    (float)camera.ClearColor.G,
+                    (float)camera.ClearColor.B,
+                    (float)camera.ClearColor.A);
+                var loadOp = camera.ClearFlags == CameraClearFlags.Nothing
+                    ? Graphite.LoadOp.DontCare
+                    : Graphite.LoadOp.Clear;
+                graphiteCmd.BeginRenderPass(gBuffer, loadOp, clearFloat4, camera.ClearFlags != CameraClearFlags.Nothing);
+            }
+            catch { /* Graphite render pass setup failed */ }
+        }
+
         // 6.1 Clear GBuffer
         switch (camera.ClearFlags)
         {
@@ -263,6 +294,13 @@ public class DefaultRenderPipeline : RenderPipeline
         //List<IRenderable> sortFrontToBack = SortRenderables(renderables, culledRenderableIndices, css.CameraPosition, SortMode.FrontToBack);
         DrawRenderables(renderables, "RenderOrder", "Opaque", new ViewerData(css), culledRenderableIndices, false); // Its deffered rendering, overdraw is cheap
 
+        // Bridge phase: end GBuffer Graphite render pass
+        if (graphiteCmd?.InRenderPass == true)
+        {
+            try { graphiteCmd.EndRenderPass(); }
+            catch { }
+        }
+
         // =======================================================
         // 7. Deferred Lighting Pass - Render each light's contribution
         // Create light accumulation buffer
@@ -281,6 +319,13 @@ public class DefaultRenderPipeline : RenderPipeline
         Graphics.BindFramebuffer(lightAccumulation.frameBuffer);
         Graphics.Clear(0, 0, 0, 0, ClearFlags.Color);
 
+        // Bridge phase: begin Graphite render pass for light accumulation
+        if (graphiteCmd != null)
+        {
+            try { graphiteCmd.BeginRenderPass(lightAccumulation, Graphite.LoadOp.Clear, Float4.Zero, false); }
+            catch { }
+        }
+
         // Render each light's contribution (additive blending)
         foreach (IRenderableLight light in lights)
         {
@@ -288,6 +333,13 @@ public class DefaultRenderPipeline : RenderPipeline
                 continue;
 
             light.OnRenderLight(gBuffer, lightAccumulation, css);
+        }
+
+        // Bridge phase: end lighting Graphite render pass
+        if (graphiteCmd?.InRenderPass == true)
+        {
+            try { graphiteCmd.EndRenderPass(); }
+            catch { }
         }
 
         // =======================================================
@@ -348,8 +400,22 @@ public class DefaultRenderPipeline : RenderPipeline
         _deferredCompose.SetColor("_AmbientGroundColor", ambient.GroundColor);
         _deferredCompose.SetFloat("_AmbientStrength", (float)ambient.Strength);
 
+        // Bridge phase: begin Graphite render pass for composition
+        if (graphiteCmd != null)
+        {
+            try { graphiteCmd.BeginRenderPass(composedOutput, Graphite.LoadOp.Clear, Float4.Zero, true); }
+            catch { }
+        }
+
         // Perform composition
         Blit(lightAccumulation, composedOutput, _deferredCompose, 0, false, false);
+
+        // Bridge phase: end compose Graphite render pass
+        if (graphiteCmd?.InRenderPass == true)
+        {
+            try { graphiteCmd.EndRenderPass(); }
+            catch { }
+        }
 
         // Copy depth from GBuffer to composed output for transparent rendering
         Graphics.BindFramebuffer(gBuffer.frameBuffer, FBOTarget.Read);
@@ -379,8 +445,22 @@ public class DefaultRenderPipeline : RenderPipeline
 
         // =======================================================
         // 10. Transparent geometry (Forward rendered on top of composed result)
+        // Bridge phase: begin Graphite render pass for forward transparent (load existing content)
+        if (graphiteCmd != null)
+        {
+            try { graphiteCmd.BeginRenderPass(composedOutput, Graphite.LoadOp.Load, null, false); }
+            catch { }
+        }
+
         List<IRenderable> sortBackToFront = SortRenderables(renderables, culledRenderableIndices, css.CameraPosition, SortMode.BackToFront);
         DrawRenderables(sortBackToFront, "RenderOrder", "Transparent", new ViewerData(css), null, false);
+
+        // Bridge phase: end forward transparent Graphite render pass
+        if (graphiteCmd?.InRenderPass == true)
+        {
+            try { graphiteCmd.EndRenderPass(); }
+            catch { }
+        }
 
         // =======================================================
         // 11. Apply PostProcess effects (final post-processing)
@@ -433,6 +513,12 @@ public class DefaultRenderPipeline : RenderPipeline
         RenderTexture.ReleaseTemporaryRT(lightAccumulation);
         RenderTexture.ReleaseTemporaryRT(composedOutput);
 
+        // Bridge phase: dispose Graphite command buffer (not submitted during bridge phase —
+        // commands are recorded for API validation only; submission enabled in Phase 4
+        // once BindGroup uniform support is in place).
+        Graphics.ActiveGraphiteCmdBuffer = null;
+        graphiteCmd?.Dispose();
+
         // Reset bound framebuffer if any is bound
         Graphics.UnbindFramebuffer();
         Graphics.Viewport(0, 0, (uint)Window.InternalWindow.FramebufferSize.X, (uint)Window.InternalWindow.FramebufferSize.Y);
@@ -451,6 +537,14 @@ public class DefaultRenderPipeline : RenderPipeline
         Graphics.BindFramebuffer(atlas.frameBuffer);
         Graphics.Clear(0.0f, 0.0f, 0.0f, 1.0f, ClearFlags.Depth);
 
+        // Bridge phase: begin depth-only Graphite render pass for shadow atlas
+        var graphiteCmd = Graphics.ActiveGraphiteCmdBuffer;
+        if (graphiteCmd != null)
+        {
+            try { graphiteCmd.BeginDepthOnlyRenderPass(atlas); }
+            catch { }
+        }
+
         // Process all lights - each light handles its own shadow rendering
         foreach (IRenderableLight light in lights)
         {
@@ -461,6 +555,13 @@ public class DefaultRenderPipeline : RenderPipeline
             {
                 lightComponent.RenderShadows(this, css.CameraPosition, renderables);
             }
+        }
+
+        // Bridge phase: end shadow atlas Graphite render pass
+        if (graphiteCmd?.InRenderPass == true)
+        {
+            try { graphiteCmd.EndRenderPass(); }
+            catch { }
         }
     }
 

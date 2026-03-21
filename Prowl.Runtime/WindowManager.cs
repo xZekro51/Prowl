@@ -3,6 +3,8 @@
 
 using System;
 
+using Prowl.Runtime.Graphite;
+
 namespace Prowl.Runtime;
 
 /// <summary>
@@ -25,7 +27,7 @@ public sealed class WindowManager
     /// Creates the Silk.NET window with DPI-aware sizing.
     /// Returns the system-level DPI scale used for the initial size calculation.
     /// </summary>
-    public float CreateWindow(string title, int logicalWidth, int logicalHeight, RenderingBackend backend = RenderingBackend.OpenGL)
+    public float CreateWindow(string title, int logicalWidth, int logicalHeight, GraphicsBackendType backend = GraphicsBackendType.OpenGL)
     {
         _logicalWidth = logicalWidth;
         _logicalHeight = logicalHeight;

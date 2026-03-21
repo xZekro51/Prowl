@@ -182,12 +182,12 @@ public sealed class ProjectSettingsPanel : EditorPanel
         ImGui.Spacing();
 
         ImGui.Text("Rendering Backend");
-        string[] backendNames = Enum.GetNames<Runtime.RenderingBackend>();
+        string[] backendNames = Enum.GetNames<Runtime.Graphite.GraphicsBackendType>();
         int backendIndex = (int)_buildSettings.RenderingBackend;
         ImGui.SetNextItemWidth(200 * Game.DpiScale);
         if (ImGui.Combo("##RenderingBackend", ref backendIndex, backendNames, backendNames.Length))
         {
-            _buildSettings.RenderingBackend = (Runtime.RenderingBackend)backendIndex;
+            _buildSettings.RenderingBackend = (Runtime.Graphite.GraphicsBackendType)backendIndex;
             SaveBuildSettings();
         }
         ImGui.Spacing();
@@ -198,7 +198,7 @@ public sealed class ProjectSettingsPanel : EditorPanel
             "Currently only OpenGL is fully implemented. Other options are reserved for future use.");
         ImGui.Spacing();
 
-        if (_buildSettings.RenderingBackend != Runtime.RenderingBackend.OpenGL)
+        if (_buildSettings.RenderingBackend != Runtime.Graphite.GraphicsBackendType.OpenGL)
         {
             ImGui.TextColored(new Vector4(0.95f, 0.80f, 0.25f, 1f),
                 "⚠ Warning: Only OpenGL is currently supported. Selecting another backend may cause errors.");

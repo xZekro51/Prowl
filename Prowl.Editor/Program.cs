@@ -3,6 +3,7 @@
 
 using Prowl.Editor.Build;
 using Prowl.Runtime;
+using Prowl.Runtime.Graphite;
 
 namespace Prowl.Editor;
 
@@ -19,20 +20,9 @@ internal class Program
 
         string? projectPath = ParseProjectPath(args);
 
-        // Load the rendering backend from project settings (default: OpenGL)
-        RenderingBackend backend = RenderingBackend.OpenGL;
-        if (!string.IsNullOrEmpty(projectPath))
-        {
-            try
-            {
-                var buildSettings = BuildSettings.Load(projectPath);
-                backend = buildSettings.RenderingBackend;
-            }
-            catch
-            {
-                // If settings can't be loaded, fall back to default.
-            }
-        }
+        // Editor always prefers Vulkan for its rendering.
+        // If Vulkan initialization fails, Game.Run() automatically falls back to OpenGL.
+        GraphicsBackendType backend = GraphicsBackendType.Vulkan;
 
         var editor = new EditorApplication(projectPath);
         string title = projectPath != null
@@ -41,9 +31,9 @@ internal class Program
 
         try
         {
-            editor.Run(title, (int)(1600 * Game.DpiScale), (int)(900 * Game.DpiScale), backend);
+            editor.Run(title, (int)(1600 * Game.DpiScale), (int)(900 * Game.DpiScale), GraphicsBackendType.OpenGL);
         }
-        catch (Exception ex) when (backend != RenderingBackend.OpenGL)
+        catch (Exception ex) when (backend != GraphicsBackendType.OpenGL)
         {
             // Safety net: if Game.Run()'s internal fallback also failed somehow,
             // attempt a completely fresh start with OpenGL.
@@ -52,7 +42,7 @@ internal class Program
 
             Window.Cleanup();
             editor = new EditorApplication(projectPath);
-            editor.Run(title, (int)(1600 * Game.DpiScale), (int)(900 * Game.DpiScale), RenderingBackend.OpenGL);
+            editor.Run(title, (int)(1600 * Game.DpiScale), (int)(900 * Game.DpiScale), GraphicsBackendType.OpenGL);
         }
         return 0;
     }

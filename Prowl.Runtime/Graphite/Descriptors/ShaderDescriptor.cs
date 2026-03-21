@@ -108,4 +108,44 @@ public struct ShaderModuleDescriptor
         Source = ShaderSource.FromGLSL(source),
         EntryPoint = entryPoint,
     };
+
+    /// <summary>
+    /// Creates a vertex shader module descriptor from SPIR-V binary.
+    /// </summary>
+    public static ShaderModuleDescriptor VertexSPIRV(byte[] spirv, string entryPoint = "main") => new()
+    {
+        Stage = ShaderStage.Vertex,
+        Source = ShaderSource.FromSPIRV(spirv),
+        EntryPoint = entryPoint,
+    };
+
+    /// <summary>
+    /// Creates a fragment shader module descriptor from SPIR-V binary.
+    /// </summary>
+    public static ShaderModuleDescriptor FragmentSPIRV(byte[] spirv, string entryPoint = "main") => new()
+    {
+        Stage = ShaderStage.Fragment,
+        Source = ShaderSource.FromSPIRV(spirv),
+        EntryPoint = entryPoint,
+    };
+
+    /// <summary>
+    /// Creates a geometry shader module descriptor from SPIR-V binary.
+    /// </summary>
+    public static ShaderModuleDescriptor GeometrySPIRV(byte[] spirv, string entryPoint = "main") => new()
+    {
+        Stage = ShaderStage.Geometry,
+        Source = ShaderSource.FromSPIRV(spirv),
+        EntryPoint = entryPoint,
+    };
+
+    /// <summary>
+    /// Creates a compute shader module descriptor from SPIR-V binary.
+    /// </summary>
+    public static ShaderModuleDescriptor ComputeSPIRV(byte[] spirv, string entryPoint = "main") => new()
+    {
+        Stage = ShaderStage.Compute,
+        Source = ShaderSource.FromSPIRV(spirv),
+        EntryPoint = entryPoint,
+    };
 }

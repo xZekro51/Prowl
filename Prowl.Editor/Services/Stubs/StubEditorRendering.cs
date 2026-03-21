@@ -130,11 +130,13 @@ public sealed class StubEditorRendering : IEditorRendering
 
     private void RenderWireframe()
     {
-        Graphics.GL.PolygonMode(GLEnum.FrontAndBack, GLEnum.Line);
+        if (Graphics.IsOpenGL)
+            Graphics.GL.PolygonMode(GLEnum.FrontAndBack, GLEnum.Line);
 
         _editorCam!.Render();
 
-        Graphics.GL.PolygonMode(GLEnum.FrontAndBack, GLEnum.Fill);
+        if (Graphics.IsOpenGL)
+            Graphics.GL.PolygonMode(GLEnum.FrontAndBack, GLEnum.Fill);
     }
 
     // ── Depth ──────────────────────────────────────────────────
@@ -383,6 +385,7 @@ public sealed class StubEditorRendering : IEditorRendering
             Graphics.Viewport(0, 0, (uint)width, (uint)height);
 
             paper!.BeginFrame(Time.DeltaTime);
+            paperRenderer!.RenderTarget = rt;
             scene.OnGui(paper);
             paper.EndFrame();
 

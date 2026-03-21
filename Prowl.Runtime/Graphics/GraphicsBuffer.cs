@@ -5,6 +5,8 @@ using System;
 
 using Silk.NET.OpenGL;
 
+using Graphite = Prowl.Runtime.Graphite;
+
 namespace Prowl.Runtime;
 
 public class GraphicsBuffer : IDisposable
@@ -15,6 +17,13 @@ public class GraphicsBuffer : IDisposable
     public readonly BufferType OriginalType;
     public readonly BufferTargetARB Target;
     public readonly uint SizeInBytes;
+
+    /// <summary>
+    /// Shadow Graphite buffer that mirrors this legacy GL buffer.
+    /// Available once data has been uploaded via <see cref="Set"/>.
+    /// Will be <c>null</c> when the Graphite device is not ready.
+    /// </summary>
+    public Graphite.Buffer? GraphiteBuffer { get; private set; }
 
     public unsafe GraphicsBuffer(BufferType type, uint sizeInBytes, void* data, bool dynamic)
     {
@@ -43,7 +52,8 @@ public class GraphicsBuffer : IDisposable
         }
 
 
-        Handle = Graphics.GL.GenBuffer();
+        if (Graphics.IsOpenGL)
+            Handle = Graphics.GL.GenBuffer();
         Bind();
         if (sizeInBytes != 0)
             Set(sizeInBytes, data, dynamic);
@@ -51,15 +61,43 @@ public class GraphicsBuffer : IDisposable
 
     public unsafe void Set(uint sizeInBytes, void* data, bool dynamic)
     {
-        Bind();
-        BufferUsageARB usage = dynamic ? BufferUsageARB.DynamicDraw : BufferUsageARB.StaticDraw;
-        Graphics.GL.BufferData(Target, sizeInBytes, data, usage);
+        if (Graphics.IsOpenGL)
+        {
+            Bind();
+            BufferUsageARB usage = dynamic ? BufferUsageARB.DynamicDraw : BufferUsageARB.StaticDraw;
+            Graphics.GL.BufferData(Target, sizeInBytes, data, usage);
+        }
+
+        // Shadow: (re)create the Graphite buffer with the same data.
+        if (Graphics.IsGraphiteReady)
+        {
+            GraphiteBuffer?.Dispose();
+            var desc = new Graphite.BufferDescriptor
+            {
+                SizeInBytes = sizeInBytes,
+                Usage = GraphiteFormatMapper.MapBufferUsage(OriginalType),
+                MemoryAccess = dynamic ? Graphite.MemoryAccess.CpuToGpu : Graphite.MemoryAccess.GpuOnly,
+            };
+            if (data != null && sizeInBytes > 0)
+                desc.InitialData = new ReadOnlySpan<byte>(data, (int)sizeInBytes).ToArray();
+            GraphiteBuffer = Graphics.Graphite.CreateBuffer(in desc);
+        }
     }
 
     public unsafe void Update(uint offsetInBytes, uint sizeInBytes, void* data)
     {
-        Bind();
-        Graphics.GL.BufferSubData(Target, (nint)offsetInBytes, sizeInBytes, data);
+        if (Graphics.IsOpenGL)
+        {
+            Bind();
+            Graphics.GL.BufferSubData(Target, (nint)offsetInBytes, sizeInBytes, data);
+        }
+
+        // Shadow: sync sub-range to the Graphite buffer.
+        if (GraphiteBuffer is not null && data != null && sizeInBytes > 0)
+        {
+            var span = new ReadOnlySpan<byte>(data, (int)sizeInBytes);
+            Graphics.Graphite.UpdateBuffer(GraphiteBuffer, offsetInBytes, span);
+        }
     }
 
     public void Dispose()
@@ -70,8 +108,12 @@ public class GraphicsBuffer : IDisposable
         if (boundBuffers[(int)OriginalType] == Handle)
             boundBuffers[(int)OriginalType] = 0;
 
+        GraphiteBuffer?.Dispose();
+        GraphiteBuffer = null;
+
         IsDisposed = true;
-        Graphics.GL.DeleteBuffer(Handle);
+        if (Graphics.IsOpenGL)
+            Graphics.GL.DeleteBuffer(Handle);
     }
 
     public override string ToString()
@@ -83,6 +125,7 @@ public class GraphicsBuffer : IDisposable
 
     private void Bind()
     {
+        if (!Graphics.IsOpenGL) return;
         if (boundBuffers[(int)OriginalType] == Handle)
             return;
         Graphics.GL.BindBuffer(Target, Handle);

@@ -63,9 +63,67 @@ public class GLPipelineState : PipelineState
         if (descriptor.GeometryShader is GLShaderModule gs)
             _device.GL.DetachShader(ProgramHandle, gs.Handle);
 
+        // Set up bind group linkage (UBO block → binding point, sampler → texture unit)
+        SetupBindGroupLinkage(descriptor.BindGroupLayouts);
+
         // Create VAO for vertex layout
         VAOHandle = _device.GL.GenVertexArray();
         SetupVertexLayout(descriptor.VertexLayout);
+    }
+
+    /// <summary>
+    /// Links UBO block names to binding points and sampler uniform names to texture units
+    /// based on the bind group layout entries. This is required for OpenGL because, unlike
+    /// Vulkan, the binding indices in the shader need to be programmatically connected to
+    /// the resource binding points used by <see cref="GLBindGroup.Apply"/>.
+    /// </summary>
+    private void SetupBindGroupLinkage(BindGroupLayout[]? layouts)
+    {
+        if (layouts == null || layouts.Length == 0)
+            return;
+
+        // Temporarily bind our program for uniform/block queries
+        _device.GL.UseProgram(ProgramHandle);
+
+        for (int groupIndex = 0; groupIndex < layouts.Length; groupIndex++)
+        {
+            if (layouts[groupIndex] is not GLBindGroupLayout glLayout)
+                continue;
+
+            foreach (var entry in glLayout.Entries)
+            {
+                if (string.IsNullOrEmpty(entry.Name))
+                    continue;
+
+                switch (entry.Type)
+                {
+                    case BindingType.UniformBuffer:
+                    {
+                        // Link UBO block name to the binding point
+                        uint blockIndex = _device.GL.GetUniformBlockIndex(ProgramHandle, entry.Name);
+                        if (blockIndex != uint.MaxValue) // GL_INVALID_INDEX
+                        {
+                            _device.GL.UniformBlockBinding(ProgramHandle, blockIndex, entry.Binding);
+                        }
+                        break;
+                    }
+
+                    case BindingType.SampledTexture:
+                    case BindingType.CombinedTextureSampler:
+                    {
+                        // Link sampler uniform name to the texture unit
+                        int location = _device.GL.GetUniformLocation(ProgramHandle, entry.Name);
+                        if (location >= 0)
+                        {
+                            _device.GL.Uniform1(location, (int)entry.Binding);
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+
+        _device.GL.UseProgram(0);
     }
 
     private void SetupVertexLayout(VertexLayoutDescriptor vertexLayout)

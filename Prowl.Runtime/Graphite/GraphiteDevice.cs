@@ -265,6 +265,20 @@ public abstract class GraphiteDevice : IDisposable
     /// </summary>
     public abstract Texture GetSwapchainTexture();
 
+    /// <summary>
+    /// Begins a new frame by acquiring the next swapchain image.
+    /// Must be called before any rendering commands for the frame.
+    /// Returns false if the swapchain is out of date and needs resizing.
+    /// </summary>
+    public virtual bool BeginFrame() => true;
+
+    /// <summary>
+    /// Presents the current frame to the screen.
+    /// Must be called after all rendering commands for the frame have been submitted.
+    /// Returns false if the swapchain is out of date and needs resizing.
+    /// </summary>
+    public virtual bool Present() => true;
+
     #endregion
 
     #region Disposal

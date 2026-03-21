@@ -3,6 +3,8 @@
 
 using System;
 
+using Prowl.Runtime.Graphite;
+
 using Silk.NET.Input;
 using Silk.NET.Maths;
 using Silk.NET.Windowing;
@@ -19,7 +21,7 @@ public static class Window
     /// The rendering backend that was actually used when the window was created.
     /// This may differ from the requested backend if a fallback occurred.
     /// </summary>
-    public static RenderingBackend ActiveBackend { get; private set; } = RenderingBackend.OpenGL;
+    public static GraphicsBackendType ActiveBackend { get; private set; } = GraphicsBackendType.OpenGL;
 
     public static event Action? Load;
     public static event Action<float>? Update;
@@ -71,7 +73,7 @@ public static class Window
         get { return isFocused; }
     }
 
-    public static void InitWindow(string title, int width, int height, WindowState startState = WindowState.Normal, bool VSync = true, RenderingBackend backend = RenderingBackend.OpenGL)
+    public static void InitWindow(string title, int width, int height, WindowState startState = WindowState.Normal, bool VSync = true, GraphicsBackendType backend = GraphicsBackendType.OpenGL)
     {
         ActiveBackend = backend;
 
@@ -83,8 +85,7 @@ public static class Window
 
         GraphicsAPI api = backend switch
         {
-            RenderingBackend.Vulkan => new GraphicsAPI(ContextAPI.Vulkan, ContextProfile.Core, ContextFlags.Default, new APIVersion(1, 2)),
-            RenderingBackend.OpenGLES => new GraphicsAPI(ContextAPI.OpenGLES, ContextProfile.Core, ContextFlags.Default, new APIVersion(3, 0)),
+            GraphicsBackendType.Vulkan => new GraphicsAPI(ContextAPI.Vulkan, ContextProfile.Core, ContextFlags.Default, new APIVersion(1, 2)),
             _ => new GraphicsAPI(ContextAPI.OpenGL, ContextProfile.Core, ContextFlags.ForwardCompatible, new APIVersion(4, 1)),
         };
         options.API = api;
@@ -144,7 +145,7 @@ public static class Window
     {
         InternalInput = InternalWindow.CreateInput();
         WindowInputHandler = new DefaultInputHandler(InternalInput);
-        Graphics.Initialize(false);
+        Graphics.Initialize(ActiveBackend, false);
 
         // Push Default Handler
         Input.PushHandler(WindowInputHandler);
@@ -153,8 +154,13 @@ public static class Window
 
     public static void OnRender(double delta)
     {
+        if (!Graphics.Graphite.BeginFrame())
+            return;
+
         Render?.Invoke((float)delta);
         PostRender?.Invoke((float)delta);
+
+        Graphics.Graphite.Present();
     }
 
     public static void OnFocusChanged(bool focused)
@@ -169,6 +175,8 @@ public static class Window
 
     public static void OnFramebufferResize(Vector2D<int> size)
     {
+        if (Graphics.IsGraphiteReady)
+            Graphics.Graphite.ResizeSwapchain((uint)size.X, (uint)size.Y);
         FramebufferResize?.Invoke(size);
     }
 

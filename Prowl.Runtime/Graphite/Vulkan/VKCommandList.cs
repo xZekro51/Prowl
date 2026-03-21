@@ -99,13 +99,11 @@ internal unsafe class VKCommandList : CommandList
                 imageViews.Add(vkTex.ImageView);
                 if (width == 0) { width = vkTex.Width; height = vkTex.Height; }
             }
-            else if (att.Texture is VKSwapchainTexture)
+            else if (att.Texture is VKSwapchainImageTexture swapTex)
             {
-                width = _device.SwapchainWidth;
-                height = _device.SwapchainHeight;
-                // Swapchain textures don't have a real ImageView in this simple implementation
-                // A full implementation would get the swapchain image view here
-                imageViews.Add(default);
+                imageViews.Add(swapTex.ImageView);
+                width = swapTex.Width;
+                height = swapTex.Height;
             }
 
             if (att.ResolveTarget is VKTexture resolveTex)

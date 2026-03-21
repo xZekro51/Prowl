@@ -5,6 +5,7 @@ using System;
 using System.Collections.Generic;
 
 using Prowl.Echo;
+using Prowl.Runtime.Graphite;
 
 namespace Prowl.Runtime.Rendering.Shaders;
 
@@ -115,8 +116,14 @@ public sealed class ShaderPass
             }
         }
 
-        frag = frag.Insert(0, $"#version 410\n");
-        vert = vert.Insert(0, $"#version 410\n");
+        // Use GLSL 450 for Vulkan (enables explicit layout bindings required by SPIR-V),
+        // GLSL 410 for OpenGL.
+        bool isVulkan = Graphics.IsGraphiteReady &&
+                        Graphics.Graphite.BackendType == GraphicsBackendType.Vulkan;
+        string versionDirective = isVulkan ? "#version 450\n" : "#version 410\n";
+
+        frag = frag.Insert(0, versionDirective);
+        vert = vert.Insert(0, versionDirective);
 
 
         Debug.Log("Compiling shader pass " + Name + " with keywords: " + keywords);

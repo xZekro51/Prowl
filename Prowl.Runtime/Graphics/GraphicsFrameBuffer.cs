@@ -4,6 +4,8 @@ using System;
 
 using Silk.NET.OpenGL;
 
+using Graphite = Prowl.Runtime.Graphite;
+
 namespace Prowl.Runtime;
 
 public unsafe class GraphicsFrameBuffer
@@ -18,6 +20,17 @@ public unsafe class GraphicsFrameBuffer
     public uint NumOfAttachments { get; private set; }
     public uint Width { get; protected set; }
     public uint Height { get; protected set; }
+
+    /// <summary>
+    /// References to Graphite shadow textures that back the color attachments.
+    /// Indices correspond to the color-attachment order.
+    /// </summary>
+    public Graphite.Texture?[] GraphiteColorAttachments { get; private set; } = [];
+
+    /// <summary>
+    /// Reference to the Graphite shadow texture for the depth attachment, if any.
+    /// </summary>
+    public Graphite.Texture? GraphiteDepthAttachment { get; private set; }
 
     public static readonly GLEnum[] buffers =
     [
@@ -40,54 +53,70 @@ public unsafe class GraphicsFrameBuffer
         if (numTextures < 0 || numTextures > Graphics.MaxFramebufferColorAttachments)
             throw new Exception("[FrameBuffer] Invalid number of textures! [0-" + Graphics.MaxFramebufferColorAttachments + "]");
 
-        // Generate FBO
-        Handle = Graphics.GL.GenFramebuffer();
-        if (Handle <= 0)
-            throw new Exception($"[FrameBuffer] Failed to generate new FrameBuffer.");
-
         NumOfAttachments = (uint)numTextures;
         Width = width;
         Height = height;
 
-        Graphics.GL.BindFramebuffer(FramebufferTarget.Framebuffer, Handle);
-
-        unsafe
+        if (Graphics.IsOpenGL)
         {
-            // Generate textures
-            if (numTextures > 0)
+            // Generate FBO
+            Handle = Graphics.GL.GenFramebuffer();
+            if (Handle <= 0)
+                throw new Exception($"[FrameBuffer] Failed to generate new FrameBuffer.");
+
+            Graphics.GL.BindFramebuffer(FramebufferTarget.Framebuffer, Handle);
+
+            unsafe
             {
-                int colorAttachmentCount = 0;
-                for (int i = 0; i < numTextures; i++)
+                // Generate textures
+                if (numTextures > 0)
                 {
-                    if (!attachments[i].IsDepth)
+                    int colorAttachmentCount = 0;
+                    for (int i = 0; i < numTextures; i++)
                     {
-                        //InternalTextures[i].SetTextureFilters(TextureMinFilter.Linear, TextureMagFilter.Linear);
-                        //InternalTextures[i].SetWrapModes(TextureWrapMode.ClampToEdge, TextureWrapMode.ClampToEdge);
-                        Graphics.GL.FramebufferTexture2D(FramebufferTarget.Framebuffer, FramebufferAttachment.ColorAttachment0 + colorAttachmentCount, attachments[i].Texture!.Target, attachments[i].Texture!.Handle, 0);
-                        colorAttachmentCount++;
+                        if (!attachments[i].IsDepth)
+                        {
+                            Graphics.GL.FramebufferTexture2D(FramebufferTarget.Framebuffer, FramebufferAttachment.ColorAttachment0 + colorAttachmentCount, attachments[i].Texture!.Target, attachments[i].Texture!.Handle, 0);
+                            colorAttachmentCount++;
+                        }
+                        else
+                        {
+                            Graphics.GL.FramebufferTexture2D(FramebufferTarget.Framebuffer, FramebufferAttachment.DepthAttachment, TextureTarget.Texture2D, attachments[i].Texture!.Handle, 0);
+                        }
+                    }
+
+                    if (colorAttachmentCount > 0)
+                    {
+                        Graphics.GL.DrawBuffers((uint)colorAttachmentCount, buffers);
                     }
                     else
                     {
-                        Graphics.GL.FramebufferTexture2D(FramebufferTarget.Framebuffer, FramebufferAttachment.DepthAttachment, TextureTarget.Texture2D, attachments[i].Texture!.Handle, 0);
+                        Graphics.GL.DrawBuffer(GLEnum.None);
+                        Graphics.GL.ReadBuffer(GLEnum.None);
                     }
                 }
 
-                if (colorAttachmentCount > 0)
-                {
-                    Graphics.GL.DrawBuffers((uint)colorAttachmentCount, buffers);
-                }
-                else
-                {
-                    Graphics.GL.DrawBuffer(GLEnum.None);
-                    Graphics.GL.ReadBuffer(GLEnum.None);
-                }
+                if (Graphics.GL.CheckFramebufferStatus(FramebufferTarget.Framebuffer) != GLEnum.FramebufferComplete)
+                    throw new Exception("RenderTexture: [ID {fboId}] RenderTexture object creation failed.");
+
+                // Unbind FBO
+                Graphics.GL.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
             }
+        }
 
-            if (Graphics.GL.CheckFramebufferStatus(FramebufferTarget.Framebuffer) != GLEnum.FramebufferComplete)
-                throw new Exception("RenderTexture: [ID {fboId}] RenderTexture object creation failed.");
+        // Store references to the Graphite textures that back each attachment.
+        int colorCount = 0;
+        for (int i = 0; i < numTextures; i++)
+            if (!attachments[i].IsDepth) colorCount++;
 
-            // Unbind FBO
-            Graphics.GL.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
+        GraphiteColorAttachments = new Graphite.Texture?[colorCount];
+        int ci = 0;
+        for (int i = 0; i < numTextures; i++)
+        {
+            if (!attachments[i].IsDepth)
+                GraphiteColorAttachments[ci++] = attachments[i].Texture?.GraphiteTexture;
+            else
+                GraphiteDepthAttachment = attachments[i].Texture?.GraphiteTexture;
         }
     }
 
@@ -98,7 +127,8 @@ public unsafe class GraphicsFrameBuffer
         if (IsDisposed)
             return;
 
-        Graphics.GL.DeleteFramebuffer(Handle);
+        if (Graphics.IsOpenGL)
+            Graphics.GL.DeleteFramebuffer(Handle);
         IsDisposed = true;
     }
     public override string ToString()

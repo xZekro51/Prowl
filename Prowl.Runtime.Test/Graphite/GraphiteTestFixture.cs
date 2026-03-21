@@ -48,12 +48,11 @@ public class GraphiteTestFixture : IDisposable
         // Create GL context
         GL = GL.GetApi(_glfw.GetProcAddress);
 
-        // Set static GL reference BEFORE initializing the Graphite device
-        Prowl.Runtime.Graphics.GL = GL;
-
-        // Initialize the Graphite device
+        // Initialize the unified Graphite device and give it the GL context directly.
         Device = new GLGraphiteDevice();
+        Device.GLContext = GL;
         Device.Initialize(new GraphiteDeviceOptions { EnableDebugLayer = true });
+        Graphics.SetGraphiteDevice(Device);
     }
 
     public unsafe void Dispose()

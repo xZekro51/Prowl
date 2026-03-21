@@ -69,9 +69,9 @@ public sealed class BuildSettings
 
     /// <summary>
     /// The rendering backend to use for both the editor and the built player.
-    /// Defaults to <see cref="Runtime.RenderingBackend.OpenGL"/>.
+    /// Defaults to <see cref="Runtime.Graphite.GraphicsBackendType.OpenGL"/>.
     /// </summary>
-    public Runtime.RenderingBackend RenderingBackend { get; set; } = Runtime.RenderingBackend.OpenGL;
+    public Runtime.Graphite.GraphicsBackendType RenderingBackend { get; set; } = Runtime.Graphite.GraphicsBackendType.OpenGL;
 
     /// <summary>
     /// Per-platform profiles.  Missing entries will be created with

@@ -329,6 +329,37 @@ public abstract class RenderPipeline : EngineObject
             Graphics.DrawIndexed(mesh.MeshTopology, (uint)mesh.IndexCount, mesh.IndexFormat == IndexFormat.UInt32, null);
             Graphics.BindVertexArray(null);
         }
+
+        // Bridge phase: record parallel Graphite draw command
+        RecordGraphiteDraw(mesh, pass, variant);
+    }
+
+    /// <summary>
+    /// Records a parallel Graphite draw command during the bridge phase.
+    /// Only records if <see cref="Graphics.ActiveGraphiteCmdBuffer"/> is set
+    /// and a render pass is currently active.
+    /// </summary>
+    private static void RecordGraphiteDraw(Mesh mesh, Shaders.ShaderPass pass, GraphicsProgram variant)
+    {
+        if (Graphics.ActiveGraphiteCmdBuffer is not { InRenderPass: true } cmd)
+            return;
+
+        try
+        {
+            var vao = mesh.VertexArrayObject;
+            if (vao?.GraphiteVertexLayout == null ||
+                variant.GraphiteVertexModule == null ||
+                variant.GraphiteFragmentModule == null)
+                return;
+
+            cmd.SetMaterialPipeline(variant, vao.GraphiteVertexLayout!.Value, pass.State, mesh.MeshTopology);
+            cmd.DrawMeshIndexed(mesh);
+        }
+        catch
+        {
+            // Silently ignore Graphite recording failures during bridge phase.
+            // The legacy rendering path continues unaffected.
+        }
     }
 
     private static Shader? s_blitShader;
@@ -634,6 +665,25 @@ public abstract class RenderPipeline : EngineObject
             // Upload mesh data to GPU once per batch (shared by all objects)
             mesh.Upload();
 
+            // Bridge phase: setup Graphite pipeline and mesh buffers for this batch
+            bool graphiteBatchActive = false;
+            if (Graphics.ActiveGraphiteCmdBuffer is { InRenderPass: true } graphiteCmd)
+            {
+                try
+                {
+                    var vao = mesh.VertexArrayObject;
+                    if (vao?.GraphiteVertexLayout != null &&
+                        variant.GraphiteVertexModule != null &&
+                        variant.GraphiteFragmentModule != null)
+                    {
+                        graphiteCmd.SetMaterialPipeline(variant, vao.GraphiteVertexLayout!.Value, pass.State, mesh.MeshTopology);
+                        graphiteCmd.SetMeshBuffers(mesh);
+                        graphiteBatchActive = true;
+                    }
+                }
+                catch { graphiteBatchActive = false; }
+            }
+
             // ========== PHASE 3: Draw Objects in Batch ==========
             // Material/mesh state is already bound - only per-object uniforms change
             foreach (int renderIndex in batch.RenderableIndices)
@@ -666,6 +716,14 @@ public abstract class RenderPipeline : EngineObject
                     Graphics.DrawIndexed(mesh.MeshTopology, (uint)mesh.IndexCount, mesh.IndexFormat == IndexFormat.UInt32, null);
                     Graphics.BindVertexArray(null);
                 }
+
+                // Bridge phase: record parallel Graphite indexed draw
+                if (graphiteBatchActive)
+                {
+                    try { Graphics.ActiveGraphiteCmdBuffer!.DrawIndexed((uint)mesh.IndexCount); }
+                    catch { graphiteBatchActive = false; }
+                }
+
                 RenderStats.Instance.AddDrawCall(mesh.VertexCount, mesh.IndexCount);
             }
 
@@ -754,6 +812,25 @@ public abstract class RenderPipeline : EngineObject
             );
             Graphics.BindVertexArray(null);
         }
+
+        // Bridge phase: record parallel Graphite instanced draw
+        if (Graphics.ActiveGraphiteCmdBuffer is { InRenderPass: true } graphiteCmd)
+        {
+            try
+            {
+                var meshVao = mesh.VertexArrayObject;
+                if (meshVao?.GraphiteVertexLayout != null &&
+                    variant.GraphiteVertexModule != null &&
+                    variant.GraphiteFragmentModule != null)
+                {
+                    graphiteCmd.SetMaterialPipeline(variant, meshVao.GraphiteVertexLayout!.Value, pass.State, mesh.MeshTopology);
+                    graphiteCmd.SetMeshBuffers(mesh);
+                    graphiteCmd.DrawIndexed((uint)indexCount, (uint)instanceCount);
+                }
+            }
+            catch { /* Silently ignore during bridge phase */ }
+        }
+
         RenderStats.Instance.AddDrawCall(mesh.VertexCount * instanceCount, indexCount * instanceCount);
         RenderStats.Instance.AddBatch();
 
