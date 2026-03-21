@@ -6,6 +6,7 @@ using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Reflection;
+using System.Runtime.CompilerServices;
 
 using Prowl.Echo;
 using Prowl.Runtime.Prefabs;
@@ -71,12 +72,17 @@ public class GameObject : EngineObject, ISerializable
     /// <summary> Gets whether or not this gameobject is enabled explicitly </summary>
     public bool Enabled
     {
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         get => _enabled;
         set { if (value != _enabled) { SetEnabled(value); } }
     }
 
     /// <summary> Gets whether this gameobject is enabled in the hierarchy, so if its parent is disabled this will return false </summary>
-    public bool EnabledInHierarchy => _enabledInHierarchy;
+    public bool EnabledInHierarchy
+    {
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        get => _enabledInHierarchy;
+    }
 
     /// <summary> The Tag of this GameObject </summary>
     public string Tag
@@ -114,7 +120,11 @@ public class GameObject : EngineObject, ISerializable
     }
 
     /// <summary> The Parent of this GameObject, Can be null </summary>
-    public GameObject? Parent => _parent;
+    public GameObject? Parent
+    {
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        get => _parent;
+    }
 
     /// <summary> A List of all children of this GameObject </summary>
     public List<GameObject> Children = [];
@@ -129,6 +139,7 @@ public class GameObject : EngineObject, ISerializable
     /// </summary>
     public Scene? Scene
     {
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         get => _scene != null && _scene.TryGetTarget(out Scene? scene) ? scene : null;
         internal set => _scene = new(value);
     }
@@ -173,6 +184,7 @@ public class GameObject : EngineObject, ISerializable
 
     public Transform Transform
     {
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         get
         {
             _transform.GameObject = this; // ensure game object is this
