@@ -170,6 +170,11 @@ internal unsafe class VKBindGroup : BindGroup
             }
             else if (entry.Texture != null)
             {
+                if (descType == DescriptorType.CombinedImageSampler)
+                    throw new InvalidOperationException(
+                        $"Bind group entry at binding {entry.Binding} uses CombinedImageSampler but no Sampler was provided. " +
+                        $"Use BindGroupEntry.ForTextureSampler() instead of BindGroupEntry.ForTexture().");
+
                 var tex = (VKTexture)entry.Texture;
                 imageInfos[i] = new DescriptorImageInfo
                 {

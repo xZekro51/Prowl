@@ -97,7 +97,9 @@ internal static class GraphiteFormatMapper
     /// Infers a sensible Graphite <see cref="Graphite.TextureUsage"/> from the legacy image format.
     /// Depth/stencil formats get <see cref="Graphite.TextureUsage.DepthStencil"/>;
     /// everything else defaults to <see cref="Graphite.TextureUsage.Sampled"/> with
-    /// <see cref="Graphite.TextureUsage.CopyDestination"/> so the bridge can upload data.
+    /// <see cref="Graphite.TextureUsage.CopyDestination"/> and
+    /// <see cref="Graphite.TextureUsage.RenderTarget"/> so the texture can be used as
+    /// a framebuffer color attachment (required by Vulkan).
     /// </summary>
     public static Graphite.TextureUsage InferTextureUsage(TextureImageFormat format)
     {
@@ -108,7 +110,7 @@ internal static class GraphiteFormatMapper
 
         return isDepth
             ? Graphite.TextureUsage.DepthStencil | Graphite.TextureUsage.Sampled
-            : Graphite.TextureUsage.Sampled | Graphite.TextureUsage.CopyDestination;
+            : Graphite.TextureUsage.Sampled | Graphite.TextureUsage.CopyDestination | Graphite.TextureUsage.RenderTarget;
     }
 
     #endregion

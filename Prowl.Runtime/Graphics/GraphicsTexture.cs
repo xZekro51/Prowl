@@ -60,6 +60,14 @@ public unsafe class GraphicsTexture : IDisposable
     }
 
     private static uint? currentlyBound = null;
+
+    /// <summary>
+    /// Invalidates the static bind cache.  Call this after external code
+    /// (e.g. Graphite command list execution) changes the GL texture binding
+    /// without going through <see cref="Bind"/>.
+    /// </summary>
+    internal static void InvalidateBindCache() => currentlyBound = null;
+
     public void Bind(bool force = true)
     {
         if (!IsGL) return;

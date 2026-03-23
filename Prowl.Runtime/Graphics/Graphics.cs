@@ -16,14 +16,30 @@ namespace Prowl.Runtime;
 
 /// <summary>
 /// Identifies the active rendering context — whether the engine is currently
-/// performing editor-specific rendering or game/scene rendering.
+/// performing game/scene rendering or editor UI rendering.
+/// <para>
+/// In the editor, scene and game views render through the Graphite
+/// abstraction layer using the project's chosen backend (<see cref="GraphicsContext.Game"/>),
+/// while the editor chrome (Dear ImGui, Paper UI) always uses the OpenGL
+/// backend (<see cref="GraphicsContext.Editor"/>).
+/// </para>
+/// <para>
+/// In standalone (built) games the context stays <see cref="GraphicsContext.Game"/>
+/// for the entire frame.
+/// </para>
 /// </summary>
 public enum GraphicsContext
 {
-    /// <summary>Game or scene rendering using the game's chosen backend.</summary>
+    /// <summary>
+    /// Game or scene rendering.  Commands go through the Graphite abstraction
+    /// and are executed by whichever backend the project settings define.
+    /// </summary>
     Game,
 
-    /// <summary>Editor UI and tool rendering.</summary>
+    /// <summary>
+    /// Editor UI and tool rendering (Dear ImGui, Paper UI).  Always uses
+    /// the OpenGL backend regardless of the project's rendering setting.
+    /// </summary>
     Editor,
 }
 
@@ -50,6 +66,14 @@ public static unsafe class Graphics
     /// will record parallel Graphite commands when this is set and a render pass is active.
     /// </summary>
     internal static Rendering.RenderCommandBuffer? ActiveGraphiteCmdBuffer { get; set; }
+
+    /// <summary>
+    /// Tracks whether the swapchain has been rendered to in the current frame.
+    /// When <c>true</c>, subsequent render passes targeting the swapchain should use
+    /// <c>LoadOp.Load</c> to preserve existing content instead of <c>LoadOp.Clear</c>.
+    /// Reset at the start of each frame by the render loop in <see cref="Game"/>.
+    /// </summary>
+    internal static bool SwapchainClearedThisFrame { get; set; }
 
     /// <summary>
     /// Injects a pre-configured <see cref="GraphiteDevice"/> instance.
@@ -296,17 +320,17 @@ public static unsafe class Graphics
 
     public static void Viewport(int x, int y, uint width, uint height)
     {
-        RequireGLDevice.Viewport(x, y, width, height);
+        GLDevice?.Viewport(x, y, width, height);
         // Bridge phase: mirror viewport to active Graphite command buffer
         if (ActiveGraphiteCmdBuffer is { InRenderPass: true } cmd)
             cmd.SetViewport(x, y, width, height);
     }
 
-    public static void Clear(float r, float g, float b, float a, ClearFlags v) => RequireGLDevice.Clear(r, g, b, a, v);
+    public static void Clear(float r, float g, float b, float a, ClearFlags v) => GLDevice?.Clear(r, g, b, a, v);
 
-    public static void SetState(RasterizerState state, bool force = false) => RequireGLDevice.SetState(state, force);
+    public static void SetState(RasterizerState state, bool force = false) => GLDevice?.SetState(state, force);
 
-    public static RasterizerState GetState() => RequireGLDevice.GetState();
+    public static RasterizerState GetState() => GLDevice?.GetState() ?? new RasterizerState();
 
     #region Buffers
 
@@ -328,12 +352,12 @@ public static unsafe class Graphics
             buffer!.Update(offsetInBytes, (uint)(data.Length * sizeof(T)), dat);
     }
 
-    public static void BindBuffer(GraphicsBuffer buffer) => RequireGLDevice.BindBuffer(buffer);
+    public static void BindBuffer(GraphicsBuffer buffer) => GLDevice?.BindBuffer(buffer);
 
     public static uint GetBlockIndex(GraphicsProgram program, string blockName) => RequireGLDevice.GetBlockIndex(program, blockName);
 
     public static void BindUniformBuffer(GraphicsProgram program, string blockName, GraphicsBuffer buffer, uint bindingPoint = 0)
-        => RequireGLDevice.BindUniformBuffer(program, blockName, buffer, bindingPoint);
+        => GLDevice?.BindUniformBuffer(program, blockName, buffer, bindingPoint);
 
     #endregion
 
@@ -349,7 +373,7 @@ public static unsafe class Graphics
         return new GraphicsVertexArray(format, vertices, indices, instanceFormat, instanceBuffer);
     }
 
-    public static void BindVertexArray(GraphicsVertexArray? vertexArrayObject) => RequireGLDevice.BindVertexArray(vertexArrayObject);
+    public static void BindVertexArray(GraphicsVertexArray? vertexArrayObject) => GLDevice?.BindVertexArray(vertexArrayObject);
 
     #endregion
 
@@ -358,16 +382,16 @@ public static unsafe class Graphics
 
     public static GraphicsFrameBuffer CreateFramebuffer(GraphicsFrameBuffer.Attachment[] attachments, uint width, uint height) => new GraphicsFrameBuffer(attachments, width, height);
 
-    public static void UnbindFramebuffer() => RequireGLDevice.UnbindFramebuffer();
+    public static void UnbindFramebuffer() => GLDevice?.UnbindFramebuffer();
 
     public static void BindFramebuffer(GraphicsFrameBuffer frameBuffer, FBOTarget readFramebuffer = FBOTarget.Framebuffer)
-        => RequireGLDevice.BindFramebuffer(frameBuffer, readFramebuffer);
+        => GLDevice?.BindFramebuffer(frameBuffer, readFramebuffer);
 
     public static GraphicsFrameBuffer? GetCurrentFramebuffer(FBOTarget target = FBOTarget.Framebuffer)
         => RequireGLDevice.GetCurrentFramebuffer(target);
 
     public static void BlitFramebuffer(int srcX, int srcY, int srcWidth, int srcHeight, int destX, int destY, int destWidth, int destHeight, ClearFlags mask, BlitFilter filter)
-        => RequireGLDevice.BlitFramebuffer(srcX, srcY, srcWidth, srcHeight, destX, destY, destWidth, destHeight, mask, filter);
+        => GLDevice?.BlitFramebuffer(srcX, srcY, srcWidth, srcHeight, destX, destY, destWidth, destHeight, mask, filter);
 
     public static T ReadPixel<T>(int attachment, int x, int y, TextureImageFormat format) where T : unmanaged
         => RequireGLDevice.ReadPixel<T>(attachment, x, y, format);
@@ -377,32 +401,32 @@ public static unsafe class Graphics
     #region Shaders
 
     public static GraphicsProgram CompileProgram(string fragment, string vertex, string geometry) => new GraphicsProgram(fragment, vertex, geometry);
-    public static void BindProgram(GraphicsProgram program) => RequireGLDevice.BindProgram(program);
+    public static void BindProgram(GraphicsProgram program) => GLDevice?.BindProgram(program);
 
     public static int GetUniformLocation(GraphicsProgram program, string name) => RequireGLDevice.GetUniformLocation(program, name);
 
     public static int GetAttribLocation(GraphicsProgram program, string name) => RequireGLDevice.GetAttribLocation(program, name);
 
-    public static void SetUniformF(GraphicsProgram program, string name, float value) => RequireGLDevice.SetUniformF(program, name, value);
+    public static void SetUniformF(GraphicsProgram program, string name, float value) => GLDevice?.SetUniformF(program, name, value);
 
-    public static void SetUniformI(GraphicsProgram program, string name, int value) => RequireGLDevice.SetUniformI(program, name, value);
+    public static void SetUniformI(GraphicsProgram program, string name, int value) => GLDevice?.SetUniformI(program, name, value);
 
-    public static void SetUniformV2(GraphicsProgram program, string name, Float2 value) => RequireGLDevice.SetUniformV2(program, name, value);
+    public static void SetUniformV2(GraphicsProgram program, string name, Float2 value) => GLDevice?.SetUniformV2(program, name, value);
 
-    public static void SetUniformV3(GraphicsProgram program, string name, Float3 value) => RequireGLDevice.SetUniformV3(program, name, value);
+    public static void SetUniformV3(GraphicsProgram program, string name, Float3 value) => GLDevice?.SetUniformV3(program, name, value);
 
-    public static void SetUniformV4(GraphicsProgram program, string name, Float4 value) => RequireGLDevice.SetUniformV4(program, name, value);
+    public static void SetUniformV4(GraphicsProgram program, string name, Float4 value) => GLDevice?.SetUniformV4(program, name, value);
 
     public static void SetUniformMatrix(GraphicsProgram program, string name, bool transpose, Float4x4 matrix)
-        => RequireGLDevice.SetUniformMatrix(program, name, transpose, matrix);
+        => GLDevice?.SetUniformMatrix(program, name, transpose, matrix);
     public static void SetUniformMatrix(GraphicsProgram program, string name, bool transpose, in float matrix)
-        => RequireGLDevice.SetUniformMatrix(program, name, transpose, in matrix);
+        => GLDevice?.SetUniformMatrix(program, name, transpose, in matrix);
 
     public static void SetUniformMatrix(GraphicsProgram program, string name, uint count, bool transpose, in float matrix)
-        => RequireGLDevice.SetUniformMatrix(program, name, count, transpose, in matrix);
+        => GLDevice?.SetUniformMatrix(program, name, count, transpose, in matrix);
 
     public static void SetUniformTexture(GraphicsProgram program, string name, int slot, GraphicsTexture texture)
-        => RequireGLDevice.SetUniformTexture(program, name, slot, texture);
+        => GLDevice?.SetUniformTexture(program, name, slot, texture);
 
     #endregion
 
@@ -430,18 +454,32 @@ public static unsafe class Graphics
 
     #endregion
 
-    public static void Draw(Topology primitiveType, uint count) => RequireGLDevice.Draw(primitiveType, count);
+    public static void Draw(Topology primitiveType, uint count) => GLDevice?.Draw(primitiveType, count);
 
-    public static void Draw(Topology primitiveType, int v, uint count) => RequireGLDevice.Draw(primitiveType, v, count);
+    public static void Draw(Topology primitiveType, int v, uint count) => GLDevice?.Draw(primitiveType, v, count);
 
     public static unsafe void DrawIndexed(Topology primitiveType, uint indexCount, bool index32bit, void* value)
-        => RequireGLDevice.DrawIndexed(primitiveType, indexCount, index32bit, value);
+        => GLDevice?.DrawIndexed(primitiveType, indexCount, index32bit, value);
 
     public static unsafe void DrawIndexed(Topology primitiveType, uint indexCount, int startIndex, int baseVertex, bool index32bit)
-        => RequireGLDevice.DrawIndexed(primitiveType, indexCount, startIndex, baseVertex, index32bit);
+        => GLDevice?.DrawIndexed(primitiveType, indexCount, startIndex, baseVertex, index32bit);
 
     public static unsafe void DrawIndexedInstanced(Topology primitiveType, uint indexCount, uint instanceCount, bool index32bit)
-        => RequireGLDevice.DrawIndexedInstanced(primitiveType, indexCount, instanceCount, index32bit);
+        => GLDevice?.DrawIndexedInstanced(primitiveType, indexCount, instanceCount, index32bit);
+
+    /// <summary>
+    /// Invalidates all legacy GL state caches (program, texture binding, etc.).
+    /// Must be called after Graphite command lists are submitted, because the
+    /// GL backend executes those commands directly—changing the active program,
+    /// VAO, textures, and other state—without going through the legacy
+    /// cache-aware wrappers (<see cref="GraphicsProgram.Use"/>,
+    /// <see cref="GraphicsTexture.Bind"/>, etc.).
+    /// </summary>
+    public static void InvalidateLegacyCaches()
+    {
+        GraphicsProgram.currentProgram = null;
+        GraphicsTexture.InvalidateBindCache();
+    }
 
     public static void Dispose()
     {

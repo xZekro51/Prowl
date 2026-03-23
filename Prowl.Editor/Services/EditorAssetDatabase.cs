@@ -96,7 +96,7 @@ public sealed class EditorAssetDatabase : IAssetDatabase
         if (!File.Exists(absolutePath))
             return null;
 
-        var tex = Texture2D.FromFile(absolutePath);
+        var tex = Texture2D.FromFile(absolutePath, generateMipmaps: true);
         if (tex != null)
         {
             tex.Name = Path.GetFileNameWithoutExtension(absolutePath);

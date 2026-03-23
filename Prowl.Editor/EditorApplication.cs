@@ -18,6 +18,7 @@ using Prowl.Editor.Toolbar;
 using Prowl.Editor.Undo;
 using Prowl.Runtime;
 using Prowl.Runtime.Resources;
+using Prowl.PaperUI;
 using Prowl.UI;
 using Prowl.Vector;
 
@@ -383,45 +384,63 @@ public sealed class EditorApplication : Game
     // to screen, which would overwrite the ImGui editor UI.
     public override void RenderScenes() { }
 
+    // In the editor, scene Paper UI (Canvas) is rendered into the game/scene view
+    // render textures by StubEditorRendering.RenderOnGuiIntoRT.  Override the
+    // main-loop scene OnGui to prevent duplicate rendering to the swapchain.
+    protected override void RenderScenePaperGui(Paper paper) { }
+
     public override void BeginRender()
     {
-        var rendering = EditorServices.Get<IEditorRendering>();
-
-
-        // Render game view always — in edit mode this provides a live preview
-        // from the scene's highest-priority camera (sorted by Camera.Depth).
-        if (_gamePanel != null && _gamePanel.IsOpen)
+        // Scene and game views render through the Graphite abstraction, which
+        // routes commands to whatever backend the project defines.  Switch to
+        // Game context so rendering code can distinguish editor-chrome GL
+        // calls from actual scene/game rendering.
+        Graphics.ActiveContext = GraphicsContext.Game;
+        try
         {
-            Rect gvp = _gamePanel.ViewportRect;
-            var (rw, rh) = _gamePanel.RenderResolution;
-            int gw = rw > 0 ? rw : (int)gvp.Size.X;
-            int gh = rh > 0 ? rh : (int)gvp.Size.Y;
+            var rendering = EditorServices.Get<IEditorRendering>();
 
-            if (gw > 0 && gh > 0)
-                rendering.RenderGameView(gw, gh);
-        }
-
-        if (_scenePanel != null && _scenePanel.IsOpen)
-        {
-            Rect vp = _scenePanel.ViewportRect;
-            int w = (int)vp.Size.X;
-            int h = (int)vp.Size.Y;
-
-            if (w > 0 && h > 0)
+            // Render game view always — in edit mode this provides a live preview
+            // from the scene's highest-priority camera (sorted by Camera.Depth).
+            if (_gamePanel != null && _gamePanel.IsOpen)
             {
-                var cam = _scenePanel.Camera;
-                rendering.RenderSceneView(
-                    cam.GetPosition(), cam.GetRotation(),
-                    cam.FieldOfView, cam.NearClip, cam.FarClip,
-                    w, h, _scenePanel.ViewMode);
+                Rect gvp = _gamePanel.ViewportRect;
+                var (rw, rh) = _gamePanel.RenderResolution;
+                int gw = rw > 0 ? rw : (int)gvp.Size.X;
+                int gh = rh > 0 ? rh : (int)gvp.Size.Y;
 
-                // Selection outline (rendered onto the scene RT as a post-process)
-                var selService = EditorServices.Get<ISelectionService>();
-                if (selService.ActiveObject is GameObject selectedGo)
+                if (gw > 0 && gh > 0)
+                    rendering.RenderGameView(gw, gh);
+            }
+
+            if (_scenePanel != null && _scenePanel.IsOpen)
+            {
+                Rect vp = _scenePanel.ViewportRect;
+                int w = (int)vp.Size.X;
+                int h = (int)vp.Size.Y;
+
+                if (w > 0 && h > 0)
                 {
-                    rendering.RenderSelectionOutline([selectedGo]);
+                    var cam = _scenePanel.Camera;
+                    rendering.RenderSceneView(
+                        cam.GetPosition(), cam.GetRotation(),
+                        cam.FieldOfView, cam.NearClip, cam.FarClip,
+                        w, h, _scenePanel.ViewMode);
+
+                    // Selection outline (rendered onto the scene RT as a post-process)
+                    var selService = EditorServices.Get<ISelectionService>();
+                    if (selService.ActiveObject is GameObject selectedGo)
+                    {
+                        //rendering.RenderSelectionOutline([selectedGo]);
+                    }
                 }
             }
+        }
+        finally
+        {
+            // Restore editor context — everything after BeginRender (Paper UI,
+            // Dear ImGui) is editor chrome and always uses the OpenGL backend.
+            Graphics.ActiveContext = GraphicsContext.Editor;
         }
     }
 

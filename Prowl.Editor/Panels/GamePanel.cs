@@ -161,8 +161,11 @@ public sealed class GamePanel : EditorPanel
                 ImGui.GetColorU32(new Vector4(0.70f, 0.86f, 0.70f, 0.78f)), status);
         }
 
-        // Show current render resolution
-        string resInfo = $"{renderW}\u00D7{renderH}";
+        // Show current render resolution and backend info
+        string backendInfo = Graphics.IsGraphiteReady
+            ? $"{Graphics.Graphite.BackendType}"
+            : "N/A";
+        string resInfo = $"{renderW}\u00D7{renderH} | Backend: {backendInfo}";
         float resInfoW = ImGui.CalcTextSize(resInfo).X;
         drawList.AddText(
             new Vector2(cursorScreen.X + regionAvail.X - resInfoW - 6 * Game.DpiScale, cursorScreen.Y + 4 * Game.DpiScale),

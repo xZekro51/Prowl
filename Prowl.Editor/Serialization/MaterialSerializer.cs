@@ -315,14 +315,14 @@ public static class MaterialSerializer
                     {
                         string? path = texRef["path"]?.GetValue<string>();
                         if (!string.IsNullOrEmpty(path) && File.Exists(path))
-                            tex = Texture2D.FromFile(path);
+                                tex = Texture2D.FromFile(path, generateMipmaps: true);
                     }
                 }
                 else if (kvp.Value is JsonValue jv && jv.TryGetValue<string>(out string? legacyPath))
                 {
                     // Legacy format: plain path string
                     if (!string.IsNullOrEmpty(legacyPath) && File.Exists(legacyPath))
-                        tex = Texture2D.FromFile(legacyPath);
+                        tex = Texture2D.FromFile(legacyPath, generateMipmaps: true);
                 }
 
                 if (tex != null)

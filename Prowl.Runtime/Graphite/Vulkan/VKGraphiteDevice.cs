@@ -57,6 +57,7 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
     private int _currentFrame;
     private uint _currentImageIndex;
     private bool _framebufferResized;
+    private bool _frameSyncConsumed;
 
     private DeviceCapabilities _capabilities;
     private bool _initialized;
@@ -65,6 +66,11 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
 
     // Cached render passes
     private readonly Dictionary<RenderPassKey, RenderPass> _renderPassCache = new();
+
+    // Per-frame-slot deferred destruction for resources still referenced by in-flight command buffers.
+    // Resources are retired into the current frame slot and destroyed in BeginFrame once the
+    // corresponding fence has been signaled, guaranteeing the GPU is no longer using them.
+    private List<(List<Framebuffer> Framebuffers, CommandBuffer CommandBuffer)>[] _retiredResources = [];
 
     public override string BackendName => "Vulkan 1.0";
     public override GraphicsBackendType BackendType => GraphicsBackendType.Vulkan;
@@ -93,6 +99,10 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
         var fbSize = Window.InternalWindow.FramebufferSize;
         CreateSwapchain((uint)fbSize.X, (uint)fbSize.Y);
         CreateSyncObjects();
+
+        _retiredResources = new List<(List<Framebuffer>, CommandBuffer)>[MaxFramesInFlight];
+        for (int i = 0; i < MaxFramesInFlight; i++)
+            _retiredResources[i] = [];
 
         _capabilities = QueryCapabilities();
         _initialized = true;
@@ -574,13 +584,40 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
             throw new ArgumentException("Command list is not a Vulkan command list.", nameof(commandList));
 
         var cb = vkCmd.Handle;
-        var submitInfo = new SubmitInfo
+
+        // When the command list renders to the swapchain, include proper
+        // synchronisation: wait for the acquired image to be available and
+        // signal the render-finished semaphore + in-flight fence.
+        if (vkCmd.IsPresentTarget && !_frameSyncConsumed && _khrSwapchain != null)
         {
-            SType = StructureType.SubmitInfo,
-            CommandBufferCount = 1,
-            PCommandBuffers = &cb,
-        };
-        Check(Vk.QueueSubmit(GraphicsQueue, 1, &submitInfo, default));
+            var waitSem = _imageAvailableSemaphores[_currentFrame];
+            var signalSem = _renderFinishedSemaphores[_currentFrame];
+            var waitStage = PipelineStageFlags.ColorAttachmentOutputBit;
+
+            var submitInfo = new SubmitInfo
+            {
+                SType = StructureType.SubmitInfo,
+                WaitSemaphoreCount = 1,
+                PWaitSemaphores = &waitSem,
+                PWaitDstStageMask = &waitStage,
+                CommandBufferCount = 1,
+                PCommandBuffers = &cb,
+                SignalSemaphoreCount = 1,
+                PSignalSemaphores = &signalSem,
+            };
+            Check(Vk.QueueSubmit(GraphicsQueue, 1, &submitInfo, _inFlightFences[_currentFrame]));
+            _frameSyncConsumed = true;
+        }
+        else
+        {
+            var submitInfo = new SubmitInfo
+            {
+                SType = StructureType.SubmitInfo,
+                CommandBufferCount = 1,
+                PCommandBuffers = &cb,
+            };
+            Check(Vk.QueueSubmit(GraphicsQueue, 1, &submitInfo, default));
+        }
     }
 
     public override void SubmitCommands(ReadOnlySpan<CommandList> commandLists)
@@ -824,6 +861,10 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
         var fence = _inFlightFences[_currentFrame];
         Vk.WaitForFences(Device, 1, &fence, true, ulong.MaxValue);
 
+        // Now that the fence is signaled, all GPU work from the previous use of this
+        // frame slot has finished — destroy any retired framebuffers / command buffers.
+        FlushRetiredResources(_currentFrame);
+
         // Acquire the next swapchain image
         var result = _khrSwapchain.AcquireNextImage(
             Device, _swapchain, ulong.MaxValue,
@@ -841,6 +882,7 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
 
         // Only reset the fence if we know we're going to submit work
         Vk.ResetFences(Device, 1, &fence);
+        _frameSyncConsumed = false;
         return true;
     }
 
@@ -849,6 +891,30 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
         ThrowIfDisposed();
         if (_khrSwapchain == null)
             return true;
+
+        // If a rendering submission already consumed the frame semaphores
+        // (via SubmitCommands with a swapchain target), skip the sync-only
+        // batch — the semaphores and fence are already in-flight.
+        if (!_frameSyncConsumed)
+        {
+            var waitSem = _imageAvailableSemaphores[_currentFrame];
+            var signalSem = _renderFinishedSemaphores[_currentFrame];
+            var waitStage = PipelineStageFlags.ColorAttachmentOutputBit;
+
+            var syncSubmit = new SubmitInfo
+            {
+                SType = StructureType.SubmitInfo,
+                WaitSemaphoreCount = 1,
+                PWaitSemaphores = &waitSem,
+                PWaitDstStageMask = &waitStage,
+                CommandBufferCount = 0,
+                PCommandBuffers = null,
+                SignalSemaphoreCount = 1,
+                PSignalSemaphores = &signalSem,
+            };
+
+            Check(Vk.QueueSubmit(GraphicsQueue, 1, &syncSubmit, _inFlightFences[_currentFrame]));
+        }
 
         var waitSemaphore = _renderFinishedSemaphores[_currentFrame];
         var swapchain = _swapchain;
@@ -879,37 +945,6 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
 
         _currentFrame = (_currentFrame + 1) % MaxFramesInFlight;
         return true;
-    }
-
-    /// <summary>
-    /// Submits a command list for execution with proper frame synchronisation.
-    /// The submission waits on the image-available semaphore and signals
-    /// the render-finished semaphore + in-flight fence for the current frame.
-    /// </summary>
-    public void SubmitFrameCommands(CommandList commandList)
-    {
-        ThrowIfDisposed();
-        if (commandList is not VKCommandList vkCmd)
-            throw new ArgumentException("Command list is not a Vulkan command list.", nameof(commandList));
-
-        var cb = vkCmd.Handle;
-        var waitSemaphore = _imageAvailableSemaphores[_currentFrame];
-        var signalSemaphore = _renderFinishedSemaphores[_currentFrame];
-        var waitStage = PipelineStageFlags.ColorAttachmentOutputBit;
-
-        var submitInfo = new SubmitInfo
-        {
-            SType = StructureType.SubmitInfo,
-            WaitSemaphoreCount = 1,
-            PWaitSemaphores = &waitSemaphore,
-            PWaitDstStageMask = &waitStage,
-            CommandBufferCount = 1,
-            PCommandBuffers = &cb,
-            SignalSemaphoreCount = 1,
-            PSignalSemaphores = &signalSemaphore,
-        };
-
-        Check(Vk.QueueSubmit(GraphicsQueue, 1, &submitInfo, _inFlightFences[_currentFrame]));
     }
 
     private void RecreateSwapchain()
@@ -992,6 +1027,16 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
         for (int i = 0; i < key.ColorFormats.Length; i++)
         {
             bool resolve = key.HasResolve != null && i < key.HasResolve.Length && key.HasResolve[i];
+
+            // Swapchain images are always in Undefined layout after AcquireNextImage
+            // and must end in PresentSrcKhr for QueuePresent.
+            var initialLayout = key.IsPresentTarget
+                ? ImageLayout.Undefined
+                : (key.ColorLoadOps[i] == LoadOp.Load ? ImageLayout.ColorAttachmentOptimal : ImageLayout.Undefined);
+            var finalLayout = key.IsPresentTarget
+                ? ImageLayout.PresentSrcKhr
+                : ImageLayout.ColorAttachmentOptimal;
+
             attachments.Add(new AttachmentDescription
             {
                 Format = VKFormatHelper.ToVkFormat(key.ColorFormats[i]),
@@ -1000,8 +1045,8 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
                 StoreOp = VKFormatHelper.ToVkStoreOp(key.ColorStoreOps[i]),
                 StencilLoadOp = AttachmentLoadOp.DontCare,
                 StencilStoreOp = AttachmentStoreOp.DontCare,
-                InitialLayout = key.ColorLoadOps[i] == LoadOp.Load ? ImageLayout.ColorAttachmentOptimal : ImageLayout.Undefined,
-                FinalLayout = ImageLayout.ColorAttachmentOptimal,
+                InitialLayout = initialLayout,
+                FinalLayout = finalLayout,
             });
             colorRefs.Add(new AttachmentReference { Attachment = (uint)attachments.Count - 1, Layout = ImageLayout.ColorAttachmentOptimal });
 
@@ -1085,6 +1130,29 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
         }
     }
 
+    /// <summary>
+    /// Moves framebuffers and the command buffer from a disposed <see cref="VKCommandList"/>
+    /// into the current frame slot's retirement list so they are destroyed only after the
+    /// GPU has finished executing the commands that reference them.
+    /// </summary>
+    internal void RetireCommandListResources(List<Framebuffer> framebuffers, CommandBuffer commandBuffer)
+    {
+        _retiredResources[_currentFrame].Add((framebuffers, commandBuffer));
+    }
+
+    private void FlushRetiredResources(int frameSlot)
+    {
+        var list = _retiredResources[frameSlot];
+        foreach (var (framebuffers, cb) in list)
+        {
+            foreach (var fb in framebuffers)
+                Vk.DestroyFramebuffer(Device, fb, null);
+            var cbLocal = cb;
+            Vk.FreeCommandBuffers(Device, CommandPool, 1, &cbLocal);
+        }
+        list.Clear();
+    }
+
     internal static void Check(Result result, [CallerMemberName] string? caller = null)
     {
         if (result != Result.Success)
@@ -1095,6 +1163,10 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
 
     protected override void DisposeResources()
     {
+        // Flush all deferred deletions before tearing down
+        for (int i = 0; i < _retiredResources.Length; i++)
+            FlushRetiredResources(i);
+
         // Destroy sync objects
         for (int i = 0; i < MaxFramesInFlight; i++)
         {
@@ -1182,6 +1254,7 @@ internal struct RenderPassKey : IEquatable<RenderPassKey>
     public LoadOp StencilLoadOp;
     public StoreOp StencilStoreOp;
     public SampleCount SampleCount;
+    public bool IsPresentTarget;
 
     public override readonly int GetHashCode()
     {
@@ -1203,6 +1276,7 @@ internal struct RenderPassKey : IEquatable<RenderPassKey>
         hash.Add(StencilLoadOp);
         hash.Add(StencilStoreOp);
         hash.Add(SampleCount);
+        hash.Add(IsPresentTarget);
         return hash.ToHashCode();
     }
 
@@ -1211,7 +1285,8 @@ internal struct RenderPassKey : IEquatable<RenderPassKey>
     public readonly bool Equals(RenderPassKey other)
     {
         if (DepthFormat != other.DepthFormat || DepthLoadOp != other.DepthLoadOp || DepthStoreOp != other.DepthStoreOp ||
-            StencilLoadOp != other.StencilLoadOp || StencilStoreOp != other.StencilStoreOp || SampleCount != other.SampleCount)
+            StencilLoadOp != other.StencilLoadOp || StencilStoreOp != other.StencilStoreOp || SampleCount != other.SampleCount ||
+            IsPresentTarget != other.IsPresentTarget)
             return false;
 
         if ((ColorFormats == null) != (other.ColorFormats == null))

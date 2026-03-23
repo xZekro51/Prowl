@@ -60,6 +60,12 @@ public class DefaultRenderPipeline : RenderPipeline
     private Material _gizmo;
     private Material _deferredCompose;
 
+    // Graphite resources for non-GL swapchain blit (Vulkan path)
+    private Graphite.Sampler? _graphiteBlitSampler;
+    private Graphite.BindGroupLayout? _graphiteBlitTexBGL;
+    private Graphite.Texture? _graphiteBlitLastSourceTex;
+    private Graphite.BindGroup? _graphiteBlitBindGroup;
+
     #endregion
 
     #region Configuration
@@ -502,6 +508,22 @@ public class DefaultRenderPipeline : RenderPipeline
         // 13. Blit Result to target, If target is null Blit will go to the Screen/Window
         Blit(composedOutput, target, null, 0, false, false);
 
+        // On non-GL backends (Vulkan), the legacy GL Blit above is a no-op.
+        // Blit the composed scene output to the swapchain via Graphite so the
+        // rendered content is actually visible.  This must happen before the
+        // temporary render textures are released back to the pool.
+        if (!Graphics.IsOpenGL && target == null)
+        {
+            try
+            {
+                BlitToSwapchainGraphite(composedOutput);
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning($"[DefaultRenderPipeline] Failed to blit to swapchain: {e.Message}");
+            }
+        }
+
         // =======================================================
         // 14. Post Render
         foreach (ImageEffect effect in allEffects)
@@ -513,15 +535,90 @@ public class DefaultRenderPipeline : RenderPipeline
         RenderTexture.ReleaseTemporaryRT(lightAccumulation);
         RenderTexture.ReleaseTemporaryRT(composedOutput);
 
-        // Bridge phase: dispose Graphite command buffer (not submitted during bridge phase —
-        // commands are recorded for API validation only; submission enabled in Phase 4
-        // once BindGroup uniform support is in place).
+        // Bridge phase: dispose the Graphite command buffer recorded alongside
+        // legacy GL calls.  The recorded commands lack bind group bindings and
+        // cannot produce correct output yet (Phase 4).
         Graphics.ActiveGraphiteCmdBuffer = null;
         graphiteCmd?.Dispose();
 
         // Reset bound framebuffer if any is bound
         Graphics.UnbindFramebuffer();
         Graphics.Viewport(0, 0, (uint)Window.InternalWindow.FramebufferSize.X, (uint)Window.InternalWindow.FramebufferSize.Y);
+    }
+
+    /// <summary>
+    /// Blits the composed scene output to the swapchain using Graphite commands.
+    /// Called on non-GL backends (Vulkan) where the legacy GL Blit is a no-op.
+    /// </summary>
+    private void BlitToSwapchainGraphite(RenderTexture source)
+    {
+        var device = Graphics.Graphite;
+        var swapchainTex = device.GetSwapchainTexture();
+
+        var sourceGraphiteTex = source.frameBuffer.GraphiteColorAttachments is { Length: > 0 }
+            ? source.frameBuffer.GraphiteColorAttachments[0]
+            : null;
+        if (sourceGraphiteTex == null)
+            return;
+
+        // Lazy-initialize shared resources
+        _graphiteBlitSampler ??= device.CreateSampler(Graphite.SamplerDescriptor.LinearClamp);
+        _graphiteBlitTexBGL ??= device.CreateBindGroupLayout(new Graphite.BindGroupLayoutDescriptor(
+            Graphite.BindGroupLayoutEntry.CombinedTextureSampler(0, Graphite.ShaderStage.Fragment, name: "_MainTex")));
+
+        // Get or create a bind group for this source texture, disposing the old
+        // one when the source changes to avoid accumulating stale GPU resources.
+        if (_graphiteBlitLastSourceTex != sourceGraphiteTex)
+        {
+            _graphiteBlitBindGroup?.Dispose();
+            _graphiteBlitBindGroup = device.CreateBindGroup(new Graphite.BindGroupDescriptor(
+                _graphiteBlitTexBGL,
+                Graphite.BindGroupEntry.ForTextureSampler(0, sourceGraphiteTex, _graphiteBlitSampler)));
+            _graphiteBlitLastSourceTex = sourceGraphiteTex;
+        }
+        var texBindGroup = _graphiteBlitBindGroup!;
+
+        // Resolve the blit shader program
+        var blitMat = BlitMaterial;
+        var pass = blitMat.Shader.GetPass(0);
+        if (!pass.TryGetVariantProgram(blitMat._localKeywords, out var program))
+            return;
+
+        // Get the fullscreen quad mesh and its Graphite vertex layout
+        var quad = Mesh.GetFullscreenQuad();
+        quad.Upload();
+        var vao = quad.VertexArrayObject;
+        if (vao?.GraphiteVertexLayout == null)
+            return;
+
+        // Render pass targeting the swapchain (clear to black, then draw over it)
+        var renderPassLayout = new Graphite.RenderPassLayout([swapchainTex.Format]);
+        var colorAtt = Graphite.RenderPassColorAttachment.Clear(swapchainTex, Float4.Zero);
+        var desc = new Graphite.RenderPassDescriptor
+        {
+            ColorAttachments = [colorAtt],
+        };
+
+        using var cmd = Graphics.CreateCommandBuffer("SwapchainBlit");
+        cmd.BeginRenderPass(in desc, renderPassLayout);
+
+        // Vulkan pipelines use dynamic viewport/scissor state — these MUST be set
+        // before any draw call or the GPU will read uninitialised dynamic state.
+        cmd.SetViewport(0, 0, swapchainTex.Width, swapchainTex.Height);
+        cmd.SetScissor(0, 0, swapchainTex.Width, swapchainTex.Height);
+
+        var pipeline = PipelineStateCache.GetOrCreate(
+            program, vao.GraphiteVertexLayout.Value, pass.State, Topology.Triangles,
+            renderPassLayout, [_graphiteBlitTexBGL]);
+        cmd.SetPipeline(pipeline);
+        cmd.SetBindGroup(0, texBindGroup);
+        cmd.SetMeshBuffers(quad);
+        cmd.DrawIndexed((uint)quad.IndexCount);
+
+        cmd.EndRenderPass();
+        cmd.Submit();
+
+        Graphics.SwapchainClearedThisFrame = true;
     }
 
     private void RenderShadowAtlas(CameraSnapshot css, IReadOnlyList<IRenderableLight> lights, IReadOnlyList<IRenderable> renderables)
@@ -535,6 +632,16 @@ public class DefaultRenderPipeline : RenderPipeline
         var atlas = ShadowAtlas.GetAtlas();
 
         Graphics.BindFramebuffer(atlas.frameBuffer);
+        // Ensure clean state for shadow rendering: depth test/write enabled, no blending.
+        // Prevents stale state from image effects or prior passes from corrupting the shadow map.
+        Graphics.SetState(new RasterizerState
+        {
+            DepthTest = true,
+            DepthWrite = true,
+            Depth = RasterizerState.DepthMode.Lequal,
+            DoBlend = false,
+            CullFace = RasterizerState.PolyFace.Back,
+        }, true);
         Graphics.Clear(0.0f, 0.0f, 0.0f, 1.0f, ClearFlags.Depth);
 
         // Bridge phase: begin depth-only Graphite render pass for shadow atlas

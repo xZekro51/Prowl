@@ -20,30 +20,18 @@ internal class Program
 
         string? projectPath = ParseProjectPath(args);
 
-        // Editor always prefers Vulkan for its rendering.
-        // If Vulkan initialization fails, Game.Run() automatically falls back to OpenGL.
-        GraphicsBackendType backend = GraphicsBackendType.Vulkan;
+        // The editor window always uses the OpenGL backend because the Dear ImGui
+        // integration (Silk.NET.OpenGL.Extensions.ImGui) requires a GL context.
+        // Scene and game views render through the Graphite abstraction layer which
+        // can target whichever backend the project settings define.
+        GraphicsBackendType backend = GraphicsBackendType.OpenGL;
 
         var editor = new EditorApplication(projectPath);
         string title = projectPath != null
             ? $"Prowl Editor — {Path.GetFileName(projectPath)}"
             : "Prowl Editor";
 
-        try
-        {
-            editor.Run(title, (int)(1600 * Game.DpiScale), (int)(900 * Game.DpiScale), GraphicsBackendType.OpenGL);
-        }
-        catch (Exception ex) when (backend != GraphicsBackendType.OpenGL)
-        {
-            // Safety net: if Game.Run()'s internal fallback also failed somehow,
-            // attempt a completely fresh start with OpenGL.
-            Console.Error.WriteLine($"[Prowl] {backend} backend failed: {ex.Message}");
-            Console.Error.WriteLine("[Prowl] Retrying with a fresh OpenGL instance...");
-
-            Window.Cleanup();
-            editor = new EditorApplication(projectPath);
-            editor.Run(title, (int)(1600 * Game.DpiScale), (int)(900 * Game.DpiScale), GraphicsBackendType.OpenGL);
-        }
+        editor.Run(title, (int)(1600 * Game.DpiScale), (int)(900 * Game.DpiScale), backend);
         return 0;
     }
 

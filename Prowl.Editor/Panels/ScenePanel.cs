@@ -208,7 +208,10 @@ public sealed class ScenePanel : EditorPanel
     private void DrawOverlay()
     {
         Float3 camPos = Camera.GetPosition();
-        string info = $"Cam: ({camPos.X:F1}, {camPos.Y:F1}, {camPos.Z:F1})  Mode: {Gizmo.Mode}  [RMB+WASD: Fly | Alt+LMB: Orbit | MMB: Pan | Scroll: Zoom | W/E/R: Tool]";
+        string backendInfo = Graphics.IsGraphiteReady
+            ? $"{Graphics.Graphite.BackendType}"
+            : "N/A";
+        string info = $"Cam: ({camPos.X:F1}, {camPos.Y:F1}, {camPos.Z:F1})  Mode: {Gizmo.Mode}  Backend: {backendInfo}  [RMB+WASD: Fly | Alt+LMB: Orbit | MMB: Pan | Scroll: Zoom | W/E/R: Tool]";
 
         var drawList = ImGui.GetWindowDrawList();
         float x = ViewportRect.Min.X + 6 * Game.DpiScale;

@@ -215,14 +215,25 @@ public abstract class Game
             {
                 // === Start Graphics ===
 
-                Graphics.UnbindFramebuffer();
-                Graphics.Viewport(0, 0, (uint)Window.InternalWindow.FramebufferSize.X, (uint)Window.InternalWindow.FramebufferSize.Y);
-                Graphics.SetState(new(), true);
+                if (Graphics.IsOpenGL)
+                {
+                    // Invalidate legacy caches that may be stale from Graphite
+                    // command execution in the previous frame (PaperRenderer, etc.).
+                    Graphics.InvalidateLegacyCaches();
 
-                Graphics.BindVertexArray(null);
-                Graphics.Clear(0, 0, 0, 1, ClearFlags.Color | ClearFlags.Depth | ClearFlags.Stencil);
+                    Graphics.UnbindFramebuffer();
+                    Graphics.Viewport(0, 0, (uint)Window.InternalWindow.FramebufferSize.X, (uint)Window.InternalWindow.FramebufferSize.Y);
+                    Graphics.SetState(new(), true);
+
+                    Graphics.BindVertexArray(null);
+                    Graphics.Clear(0, 0, 0, 1, ClearFlags.Color | ClearFlags.Depth | ClearFlags.Stencil);
+                }
 
                 // === End of Start Graphics ===
+
+                // Reset per-frame swapchain tracking so the first render pass
+                // targeting the swapchain knows to use Clear (Vulkan layout transition).
+                Graphics.SwapchainClearedThisFrame = false;
 
                 // Scene rendering is wrapped separately so that failures here
                 // (e.g. during the Graphite migration) do not prevent UI from rendering.
@@ -246,8 +257,11 @@ public abstract class Game
                 }
 
                 // Reset GL state so Paper UI starts from a known-good state.
-                Graphics.UnbindFramebuffer();
-                Graphics.Viewport(0, 0, (uint)Window.InternalWindow.FramebufferSize.X, (uint)Window.InternalWindow.FramebufferSize.Y);
+                if (Graphics.IsOpenGL)
+                {
+                    Graphics.UnbindFramebuffer();
+                    Graphics.Viewport(0, 0, (uint)Window.InternalWindow.FramebufferSize.X, (uint)Window.InternalWindow.FramebufferSize.Y);
+                }
 
                 // Paper UI is also isolated so ImGui always gets a chance to render.
                 try
@@ -257,15 +271,7 @@ public abstract class Game
                     BeginGui(_paper);
 
                     // OnGui runs on all loaded scenes, or just the current scene
-                    if (SceneManager.LoadedSceneCount > 0)
-                    {
-                        foreach (var scene in SceneManager.LoadedScenes)
-                            if (scene.IsActive) scene.OnGui(_paper);
-                    }
-                    else
-                    {
-                        Scene.Current?.OnGui(_paper);
-                    }
+                    RenderScenePaperGui(_paper);
 
                     EndGui(_paper);
 
@@ -281,18 +287,30 @@ public abstract class Game
                 }
 
                 // Reset GL state before ImGui so it always starts clean.
-                Graphics.UnbindFramebuffer();
-                Graphics.Viewport(0, 0, (uint)Window.InternalWindow.FramebufferSize.X, (uint)Window.InternalWindow.FramebufferSize.Y);
-                Graphics.SetState(new(), true);
+                if (Graphics.IsOpenGL)
+                {
+                    // PaperRenderer submits Graphite command lists that change
+                    // the active GL program, VAO, and texture bindings directly.
+                    // Invalidate the legacy caches so ImGui and the next frame
+                    // start from a known-good state.
+                    Graphics.InvalidateLegacyCaches();
 
-                // Dear ImGui frame (editor / launcher UI)
-                _imguiManager.Update((float)delta);
-                _imguiManager.BeginFrame();
+                    Graphics.UnbindFramebuffer();
+                    Graphics.Viewport(0, 0, (uint)Window.InternalWindow.FramebufferSize.X, (uint)Window.InternalWindow.FramebufferSize.Y);
+                    Graphics.SetState(new(), true);
+                }
 
-                BeginImGui(_imguiManager.Renderer!);
-                EndImGui(_imguiManager.Renderer!);
+                // Dear ImGui frame (editor / launcher UI) — requires OpenGL backend.
+                if (_imguiManager.IsReady)
+                {
+                    _imguiManager.Update((float)delta);
+                    _imguiManager.BeginFrame();
 
-                _imguiManager.Render();
+                    BeginImGui(_imguiManager.Renderer!);
+                    EndImGui(_imguiManager.Renderer!);
+
+                    _imguiManager.Render();
+                }
 
                 // === End Graphics ===
 
@@ -357,6 +375,25 @@ public abstract class Game
     }
     public virtual void EndRender() { }
     public virtual void BeginGui(Paper paper) { }
+
+    /// <summary>
+    /// Runs the Paper/OnGui pass for all loaded scenes.
+    /// Override in the editor to skip this — the editor handles scene Paper UI
+    /// separately via <c>RenderOnGuiIntoRT</c> into the game/scene view render textures.
+    /// </summary>
+    protected virtual void RenderScenePaperGui(Paper paper)
+    {
+        if (SceneManager.LoadedSceneCount > 0)
+        {
+            foreach (var scene in SceneManager.LoadedScenes)
+                if (scene.IsActive) scene.OnGui(paper);
+        }
+        else
+        {
+            Scene.Current?.OnGui(paper);
+        }
+    }
+
     public virtual void EndGui(Paper paper) { }
     public virtual void BeginImGui(IUIRenderer ui) { }
     public virtual void EndImGui(IUIRenderer ui) { }

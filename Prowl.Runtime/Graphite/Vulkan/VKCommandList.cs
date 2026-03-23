@@ -29,6 +29,9 @@ internal unsafe class VKCommandList : CommandList
     private uint _currentFBWidth;
     private uint _currentFBHeight;
 
+    /// <summary>True when the command list records a render pass that targets the swapchain.</summary>
+    internal bool IsPresentTarget { get; private set; }
+
     // Track framebuffers created during recording so we can destroy them after submission
     private readonly List<Framebuffer> _framebuffers = new();
 
@@ -51,6 +54,7 @@ internal unsafe class VKCommandList : CommandList
 
     protected override void BeginRecording()
     {
+        IsPresentTarget = false;
         _device.Vk.ResetCommandBuffer(Handle, 0);
         var beginInfo = new CommandBufferBeginInfo
         {
@@ -73,6 +77,7 @@ internal unsafe class VKCommandList : CommandList
     {
         // Build render pass key
         int colorCount = descriptor.ColorAttachments?.Length ?? 0;
+        bool isPresentTarget = false;
         var rpKey = new RenderPassKey
         {
             ColorFormats = new TextureFormat[colorCount],
@@ -104,6 +109,7 @@ internal unsafe class VKCommandList : CommandList
                 imageViews.Add(swapTex.ImageView);
                 width = swapTex.Width;
                 height = swapTex.Height;
+                isPresentTarget = true;
             }
 
             if (att.ResolveTarget is VKTexture resolveTex)
@@ -127,6 +133,9 @@ internal unsafe class VKCommandList : CommandList
             }
         }
 
+        rpKey.IsPresentTarget = isPresentTarget;
+        if (isPresentTarget)
+            IsPresentTarget = true;
         _currentRenderPass = _device.GetOrCreateRenderPass(in rpKey);
 
         // Create framebuffer
@@ -465,13 +474,11 @@ internal unsafe class VKCommandList : CommandList
 
     protected override void DisposeResources()
     {
-        // Destroy any framebuffers created during recording
-        foreach (var fb in _framebuffers)
-            _device.Vk.DestroyFramebuffer(_device.Device, fb, null);
+        // Framebuffers and the command buffer may still be referenced by an
+        // in-flight submission. Hand them to the device so they are destroyed
+        // only after the current frame's fence has been signaled.
+        _device.RetireCommandListResources(new List<Framebuffer>(_framebuffers), Handle);
         _framebuffers.Clear();
-
-        var cb = Handle;
-        _device.Vk.FreeCommandBuffers(_device.Device, _device.CommandPool, 1, &cb);
     }
 
     #region Helpers

@@ -53,8 +53,9 @@ public class PaperRenderer : ICanvasRenderer
     // Shader program (kept for module references used by PipelineStateCache)
     private GraphicsProgram? _shaderProgram;
 
-    // Default white texture
+    // Default white texture and sampler
     private Texture2D? _defaultTexture;
+    private Graphite.Sampler? _defaultSampler;
 
     // Per-drawcall texture bind groups, cached by Graphite texture reference
     private readonly Dictionary<Graphite.Texture, BindGroup> _textureBindGroups = new();
@@ -104,6 +105,7 @@ public class PaperRenderer : ICanvasRenderer
 
         _shaderProgram?.Dispose();
         _defaultTexture?.Dispose();
+        _defaultSampler?.Dispose();
 
         _vertexBuffer = null;
         _indexBuffer = null;
@@ -114,6 +116,7 @@ public class PaperRenderer : ICanvasRenderer
         _bindGroupLayouts = null;
         _shaderProgram = null;
         _defaultTexture = null;
+        _defaultSampler = null;
         _uboStagingBuffer = null;
     }
 
@@ -173,6 +176,9 @@ public class PaperRenderer : ICanvasRenderer
         _uboBindGroup = device.CreateBindGroup(new BindGroupDescriptor(
             _uboBindGroupLayout,
             BindGroupEntry.ForBuffer(0, _uboRingBuffer, 0, UboStructSize)));
+
+        // Default sampler for UI textures (linear filtering, clamp-to-edge for UI)
+        _defaultSampler = device.CreateSampler(SamplerDescriptor.LinearClamp);
 
         // Default 1×1 white texture
         _defaultTexture = new Texture2D(1, 1);
@@ -295,18 +301,27 @@ public class PaperRenderer : ICanvasRenderer
         using var cmd = new RenderCommandBuffer("PaperRenderer");
 
         // Begin render pass
+        Graphite.Texture? swapchainTex = null;
         if (RenderTarget != null)
         {
             cmd.BeginRenderPass(RenderTarget, LoadOp.Load, clearDepth: false);
         }
         else
         {
-            var swapchainTex = device.GetSwapchainTexture();
+            swapchainTex = device.GetSwapchainTexture();
+            // Load to preserve content already rendered to the swapchain this frame
+            // (the scene pipeline clears it to the camera color on Vulkan, and the
+            // legacy GL path renders directly to the default framebuffer on OpenGL).
+            // If no prior pass touched the swapchain (e.g. no cameras in the scene),
+            // Clear to black so the Vulkan image transitions from Undefined layout.
+            var colorAtt = Graphics.SwapchainClearedThisFrame || Graphics.IsOpenGL
+                ? RenderPassColorAttachment.Load(swapchainTex)
+                : RenderPassColorAttachment.Clear(swapchainTex, new Float4(0, 0, 0, 1));
             var desc = new RenderPassDescriptor
             {
-                ColorAttachments = [RenderPassColorAttachment.Load(swapchainTex)],
+                ColorAttachments = [colorAtt],
             };
-            cmd.BeginRenderPass(in desc, new RenderPassLayout([TextureFormat.RGBA8Unorm]));
+            cmd.BeginRenderPass(in desc, new RenderPassLayout([swapchainTex.Format]));
         }
 
         // Resolve pipeline (cached, with bind group layouts for GL UBO/sampler linkage)
@@ -322,7 +337,7 @@ public class PaperRenderer : ICanvasRenderer
 
         var renderPassLayout = RenderTarget != null
             ? GraphiteFormatMapper.MapRenderPassLayout(RenderTarget.frameBuffer)
-            : new RenderPassLayout([TextureFormat.RGBA8Unorm]);
+            : new RenderPassLayout([swapchainTex!.Format]);
 
         var pipeline = PipelineStateCache.GetOrCreate(
             _shaderProgram, _vertexLayout, uiState, Topology.Triangles,
@@ -363,7 +378,7 @@ public class PaperRenderer : ICanvasRenderer
     private BindGroup? GetOrCreateTextureBindGroup(Texture2D texture)
     {
         var graphiteTex = texture.Handle?.GraphiteTexture;
-        if (graphiteTex == null)
+        if (graphiteTex == null || _defaultSampler == null)
             return null;
 
         if (_textureBindGroups.TryGetValue(graphiteTex, out var cached))
@@ -371,7 +386,7 @@ public class PaperRenderer : ICanvasRenderer
 
         var bindGroup = Graphics.Graphite.CreateBindGroup(new BindGroupDescriptor(
             _textureBindGroupLayout!,
-            BindGroupEntry.ForTexture(0, graphiteTex)));
+            BindGroupEntry.ForTextureSampler(0, graphiteTex, _defaultSampler)));
 
         _textureBindGroups[graphiteTex] = bindGroup;
         return bindGroup;
