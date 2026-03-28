@@ -10,12 +10,12 @@ using ImGuiNET;
 using Prowl.Scribe;
 using Prowl.Vector;
 
-namespace Prowl.UI;
+namespace Prowl.ImGuiIntegration;
 
 /// <summary>
-/// <see cref="IUIRenderer"/> implementation that forwards calls to Dear ImGui.
+/// <see cref="Prowl.UI.IUIRenderer"/> implementation that forwards calls to Dear ImGui.
 /// </summary>
-public sealed class ImGuiUIRenderer : IUIRenderer
+public sealed class ImGuiUIRenderer : Prowl.UI.IUIRenderer
 {
     internal static readonly Stack<ImGuiLayoutMode> LayoutStack = new();
     internal static readonly Stack<int> ChildCountStack = new();
@@ -45,9 +45,9 @@ public sealed class ImGuiUIRenderer : IUIRenderer
         ChildCountStack.Clear();
     }
 
-    public IElementBuilder Box(string id)    => new ImGuiElementBuilder(id, ImGuiLayoutMode.Box);
-    public IElementBuilder Row(string id)    => new ImGuiElementBuilder(id, ImGuiLayoutMode.Row);
-    public IElementBuilder Column(string id) => new ImGuiElementBuilder(id, ImGuiLayoutMode.Column);
+    public Prowl.UI.IElementBuilder Box(string id)    => new ImGuiElementBuilder(id, ImGuiLayoutMode.Box);
+    public Prowl.UI.IElementBuilder Row(string id)    => new ImGuiElementBuilder(id, ImGuiLayoutMode.Row);
+    public Prowl.UI.IElementBuilder Column(string id) => new ImGuiElementBuilder(id, ImGuiLayoutMode.Column);
 
     public bool IsPointerOverRect(float x, float y, float w, float h)
     {
@@ -62,7 +62,7 @@ internal enum ImGuiLayoutMode { Box, Row, Column }
 
 // ─────────────────────────────────────────────────────────────────────────────
 
-internal sealed class ImGuiElementBuilder : IElementBuilder
+internal sealed class ImGuiElementBuilder : Prowl.UI.IElementBuilder
 {
     private readonly string _id;
     private readonly ImGuiLayoutMode _mode;
@@ -76,7 +76,7 @@ internal sealed class ImGuiElementBuilder : IElementBuilder
     private float _heightFactor = 1f;
 
     // Position
-    private UIPositionType _posType = UIPositionType.ParentDirected;
+    private Prowl.UI.UIPositionType _posType = Prowl.UI.UIPositionType.ParentDirected;
     private float _left, _top;
 
     // Visuals
@@ -107,56 +107,56 @@ internal sealed class ImGuiElementBuilder : IElementBuilder
 
     // ── Dimensions ─────────────────────────────────────────────────
 
-    public IElementBuilder Width(UIValue value)
+    public Prowl.UI.IElementBuilder Width(Prowl.UI.UIValue value)
     {
-        if (value.Kind == UIValueKind.Stretch) { _widthStretch = true;  _widthFactor = value.Value; }
-        else                                   { _width = value.Value;  _widthStretch = false; }
+        if (value.Kind == Prowl.UI.UIValueKind.Stretch) { _widthStretch = true;  _widthFactor = value.Value; }
+        else                                            { _width = value.Value;  _widthStretch = false; }
         return this;
     }
 
-    public IElementBuilder Height(UIValue value)
+    public Prowl.UI.IElementBuilder Height(Prowl.UI.UIValue value)
     {
-        if (value.Kind == UIValueKind.Stretch) { _heightStretch = true;  _heightFactor = value.Value; }
-        else                                   { _height = value.Value;  _heightStretch = false; }
+        if (value.Kind == Prowl.UI.UIValueKind.Stretch) { _heightStretch = true;  _heightFactor = value.Value; }
+        else                                            { _height = value.Value;  _heightStretch = false; }
         return this;
     }
 
     // ── Position ───────────────────────────────────────────────────
 
-    public IElementBuilder PositionType(UIPositionType type) { _posType = type; return this; }
-    public IElementBuilder Left(UIValue value)   { _left = value.Value;  return this; }
-    public IElementBuilder Top(UIValue value)    { _top  = value.Value;  return this; }
-    public IElementBuilder Right(UIValue value)  { return this; }
-    public IElementBuilder Bottom(UIValue value) { return this; }
+    public Prowl.UI.IElementBuilder PositionType(Prowl.UI.UIPositionType type) { _posType = type; return this; }
+    public Prowl.UI.IElementBuilder Left(Prowl.UI.UIValue value)   { _left = value.Value;  return this; }
+    public Prowl.UI.IElementBuilder Top(Prowl.UI.UIValue value)    { _top  = value.Value;  return this; }
+    public Prowl.UI.IElementBuilder Right(Prowl.UI.UIValue value)  { return this; }
+    public Prowl.UI.IElementBuilder Bottom(Prowl.UI.UIValue value) { return this; }
 
     // ── Child alignment / spacing ──────────────────────────────────
 
-    public IElementBuilder ChildLeft(UIValue value)   { _childLeft = value.Value; _paddingSet = true; return this; }
-    public IElementBuilder ChildRight(UIValue value)  { _paddingSet = true; return this; }
-    public IElementBuilder ChildTop(UIValue value)    { _childTop = value.Value;  _paddingSet = true; return this; }
-    public IElementBuilder ChildBottom(UIValue value) { _paddingSet = true; return this; }
-    public IElementBuilder RowBetween(UIValue value)  { _rowBetween = value.Value; _spacingSet = true; return this; }
-    public IElementBuilder ColBetween(UIValue value)  { _colBetween = value.Value; _spacingSet = true; return this; }
+    public Prowl.UI.IElementBuilder ChildLeft(Prowl.UI.UIValue value)   { _childLeft = value.Value; _paddingSet = true; return this; }
+    public Prowl.UI.IElementBuilder ChildRight(Prowl.UI.UIValue value)  { _paddingSet = true; return this; }
+    public Prowl.UI.IElementBuilder ChildTop(Prowl.UI.UIValue value)    { _childTop = value.Value;  _paddingSet = true; return this; }
+    public Prowl.UI.IElementBuilder ChildBottom(Prowl.UI.UIValue value) { _paddingSet = true; return this; }
+    public Prowl.UI.IElementBuilder RowBetween(Prowl.UI.UIValue value)  { _rowBetween = value.Value; _spacingSet = true; return this; }
+    public Prowl.UI.IElementBuilder ColBetween(Prowl.UI.UIValue value)  { _colBetween = value.Value; _spacingSet = true; return this; }
 
     // ── Visual styling ─────────────────────────────────────────────
 
-    public IElementBuilder BackgroundColor(Color color) { _bgColor  = color;  return this; }
-    public IElementBuilder Rounded(float radius)        { _rounding = radius; return this; }
+    public Prowl.UI.IElementBuilder BackgroundColor(Color color) { _bgColor  = color;  return this; }
+    public Prowl.UI.IElementBuilder Rounded(float radius)        { _rounding = radius; return this; }
 
     // ── Text ───────────────────────────────────────────────────────
 
-    public IElementBuilder Text(string text, FontFile font) { _text = text; return this; }
-    public IElementBuilder FontSize(float size)             { _fontSize = size; return this; }
-    public IElementBuilder TextColor(Color color)           { _textColor = color; return this; }
+    public Prowl.UI.IElementBuilder Text(string text, FontFile font) { _text = text; return this; }
+    public Prowl.UI.IElementBuilder FontSize(float size)             { _fontSize = size; return this; }
+    public Prowl.UI.IElementBuilder TextColor(Color color)           { _textColor = color; return this; }
 
     // ── Interaction ────────────────────────────────────────────────
 
-    public IElementBuilder OnClick(Action handler)           { _onClick = handler;       return this; }
-    public IElementBuilder OnPostLayout(Action<Rect> handler) { _onPostLayout = handler; return this; }
+    public Prowl.UI.IElementBuilder OnClick(Action handler)           { _onClick = handler;       return this; }
+    public Prowl.UI.IElementBuilder OnPostLayout(Action<Rect> handler) { _onPostLayout = handler; return this; }
 
     // ── Hover ──────────────────────────────────────────────────────
 
-    public IHoverBuilder Hovered => new ImGuiHoverBuilder(this);
+    public Prowl.UI.IHoverBuilder Hovered => new ImGuiHoverBuilder(this);
     internal void SetHoverBg(Color c) => _hoverBgColor = c;
 
     // ── Lifecycle ──────────────────────────────────────────────────
@@ -191,7 +191,7 @@ internal sealed class ImGuiElementBuilder : IElementBuilder
 
         // Hover detection (before pushing styles)
         bool hovered = false;
-        if (_hoverBgColor.HasValue && _posType != UIPositionType.SelfDirected)
+        if (_hoverBgColor.HasValue && _posType != Prowl.UI.UIPositionType.SelfDirected)
         {
             var sp = ImGui.GetCursorScreenPos();
             hovered = ImGui.IsMouseHoveringRect(sp, new Vector2(sp.X + w, sp.Y + h));
@@ -204,7 +204,7 @@ internal sealed class ImGuiElementBuilder : IElementBuilder
         if (effectiveBg.HasValue)
         {
             var c   = effectiveBg.Value;
-            var col = _posType == UIPositionType.SelfDirected ? ImGuiCol.WindowBg : ImGuiCol.ChildBg;
+            var col = _posType == Prowl.UI.UIPositionType.SelfDirected ? ImGuiCol.WindowBg : ImGuiCol.ChildBg;
             ImGui.PushStyleColor(col, new Vector4(c.R, c.G, c.B, c.A));
             colorsPushed++;
         }
@@ -212,7 +212,7 @@ internal sealed class ImGuiElementBuilder : IElementBuilder
         if (_rounding > 0)
         {
             ImGui.PushStyleVar(
-                _posType == UIPositionType.SelfDirected
+                _posType == Prowl.UI.UIPositionType.SelfDirected
                     ? ImGuiStyleVar.WindowRounding
                     : ImGuiStyleVar.ChildRounding,
                 _rounding);
@@ -233,7 +233,7 @@ internal sealed class ImGuiElementBuilder : IElementBuilder
 
         // ── Begin element ──────────────────────────────────────────
 
-        if (_posType == UIPositionType.SelfDirected)
+        if (_posType == Prowl.UI.UIPositionType.SelfDirected)
         {
             ImGui.SetNextWindowPos(new Vector2(_left, _top));
             ImGui.SetNextWindowSize(new Vector2(w, h));
@@ -292,13 +292,13 @@ internal sealed class ImGuiElementBuilder : IElementBuilder
 
 // ─────────────────────────────────────────────────────────────────────────────
 
-internal sealed class ImGuiHoverBuilder : IHoverBuilder
+internal sealed class ImGuiHoverBuilder : Prowl.UI.IHoverBuilder
 {
     private readonly ImGuiElementBuilder _parent;
     internal ImGuiHoverBuilder(ImGuiElementBuilder parent) => _parent = parent;
 
-    public IHoverBuilder BackgroundColor(Color color) { _parent.SetHoverBg(color); return this; }
-    public IElementBuilder End() => _parent;
+    public Prowl.UI.IHoverBuilder BackgroundColor(Color color) { _parent.SetHoverBg(color); return this; }
+    public Prowl.UI.IElementBuilder End() => _parent;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

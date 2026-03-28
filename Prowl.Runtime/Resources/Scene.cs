@@ -112,6 +112,11 @@ public class Scene : EngineObject, ISerializationCallbackReceiver
     [SerializeIgnore]
     private readonly List<Camera> _cameraBuffer = [];
 
+    // Tracked cameras — registered/unregistered via RegisterCamera/UnregisterCamera
+    // so Render() doesn't need to walk the entire scene tree each frame.
+    [SerializeIgnore]
+    private readonly HashSet<Camera> _trackedCameras = new(ReferenceEqualityComparer.Instance);
+
     // Indexed lookups for O(1) FindObjectByID / FindObjectByIdentifier (�4.2.3)
     [SerializeIgnore]
     private readonly Dictionary<int, EngineObject> _idLookup = [];
@@ -325,6 +330,17 @@ public class Scene : EngineObject, ISerializationCallbackReceiver
     }
 
     /// <summary>
+    /// Registers a camera so it participates in scene rendering without a full tree scan.
+    /// Called from Camera.OnEnable / OnAddedToScene.
+    /// </summary>
+    internal void RegisterCamera(Camera cam) => _trackedCameras.Add(cam);
+
+    /// <summary>
+    /// Unregisters a camera. Called from Camera.OnDisable / OnRemovedFromScene.
+    /// </summary>
+    internal void UnregisterCamera(Camera cam) => _trackedCameras.Remove(cam);
+
+    /// <summary>
     /// Fills <see cref="_activeGOsBuffer"/> with all non-disposed, hierarchy-enabled
     /// objects. Reuses the same list instance to avoid per-frame allocations.
     /// </summary>
@@ -512,24 +528,31 @@ public class Scene : EngineObject, ISerializationCallbackReceiver
         }
     }
 
+    // Reusable buffer for Flush() to avoid per-frame allocations.
+    [SerializeIgnore]
+    private readonly List<GameObject> _flushBuffer = [];
+
     /// <summary> Unregisters all dead / disposed GameObjects </summary>
     public void Flush()
     {
-        List<GameObject> removed = [];
+        _flushBuffer.Clear();
         foreach (GameObject obj in _allObj)
         {
             if (obj.IsDisposed)
             {
-                removed.Add(obj);
+                _flushBuffer.Add(obj);
                 _idLookup.Remove(obj.InstanceID);
                 _identifierLookup.Remove(obj.Identifier);
             }
         }
 
-        _allObj.RemoveWhere(obj => obj.IsDisposed);
+        if (_flushBuffer.Count > 0)
+        {
+            _allObj.RemoveWhere(obj => obj.IsDisposed);
 
-        foreach (GameObject obj in removed)
-            obj.Scene = null;
+            for (int i = 0; i < _flushBuffer.Count; i++)
+                _flushBuffer[i].Scene = null;
+        }
     }
 
     public override void OnDispose()
@@ -552,6 +575,7 @@ public class Scene : EngineObject, ISerializationCallbackReceiver
         _allObj.Clear();
         _idLookup.Clear();
         _identifierLookup.Clear();
+        _trackedCameras.Clear();
     }
 
     public void OnBeforeSerialize()
@@ -584,11 +608,11 @@ public class Scene : EngineObject, ISerializationCallbackReceiver
             go.PreUpdate(editFilter ? ShouldRunInEditMode : null);
 
         Game.BaseEventManager.InvokeEvent(EventSystem.BaseEvents.OnBeforeUpdate);
-        ForeachComponent(activeGOs, (x) => x.Update(), editFilter);
+        ForeachComponent(activeGOs, s_updateAction, editFilter);
         Game.BaseEventManager.InvokeEvent(EventSystem.BaseEvents.OnAfterUpdate);
 
         Game.BaseEventManager.InvokeEvent(EventSystem.BaseEvents.OnBeforeLateUpdate);
-        ForeachComponent(activeGOs, (x) => x.LateUpdate(), editFilter);
+        ForeachComponent(activeGOs, s_lateUpdateAction, editFilter);
         Game.BaseEventManager.InvokeEvent(EventSystem.BaseEvents.OnAfterLateUpdate);
 
         Flush();
@@ -653,7 +677,7 @@ public class Scene : EngineObject, ISerializationCallbackReceiver
         bool editFilter = !IsPlayMode;
 
         List<GameObject> activeGOs = GetActiveObjectsNonAlloc();
-        ForeachComponent(activeGOs, (x) => x.FixedUpdate(), editFilter);
+        ForeachComponent(activeGOs, s_fixedUpdateAction, editFilter);
 
         Flush();
     }
@@ -664,13 +688,14 @@ public class Scene : EngineObject, ISerializationCallbackReceiver
     public void DrawGizmos()
     {
         List<GameObject> activeGOs = GetActiveObjectsNonAlloc();
-        ForeachComponent(activeGOs, (x) =>
-        {
-            x.DrawGizmos();
-        });
+        ForeachComponent(activeGOs, s_drawGizmosAction);
 
         Flush();
     }
+
+    // Cached delegate + thread-static Paper reference for OnGui to avoid per-frame closure allocation.
+    private static readonly Action<MonoBehaviour> s_onGuiAction = static x => x.OnGui(t_guiPaper!);
+    [ThreadStatic] private static Paper? t_guiPaper;
 
     /// <summary>
     /// Executes GUI update on all active GameObjects and their components.
@@ -678,11 +703,10 @@ public class Scene : EngineObject, ISerializationCallbackReceiver
     /// </summary>
     public void OnGui(Paper paper)
     {
+        t_guiPaper = paper;
         List<GameObject> activeGOs = GetActiveObjectsNonAlloc();
-        ForeachComponent(activeGOs, (x) =>
-        {
-            x.OnGui(paper);
-        });
+        ForeachComponent(activeGOs, s_onGuiAction);
+        t_guiPaper = null;
 
         Flush();
     }
@@ -695,17 +719,22 @@ public class Scene : EngineObject, ISerializationCallbackReceiver
     public bool Render(RenderTexture? target = null)
     {
         _cameraBuffer.Clear();
-        foreach (GameObject go in GetActiveObjectsNonAlloc())
-            foreach (Camera cam in go.GetComponentsInChildren<Camera>())
-                _cameraBuffer.Add(cam);
 
-        _cameraBuffer.Sort((a, b) => a.Depth.CompareTo(b.Depth));
+        // Use tracked camera set — O(cameras) instead of O(all GameObjects × children).
+        foreach (Camera cam in _trackedCameras)
+        {
+            if (!cam.IsDisposed && cam.EnabledInHierarchy)
+                _cameraBuffer.Add(cam);
+        }
+
+        _cameraBuffer.Sort(s_cameraDepthComparison);
 
         if (_cameraBuffer.Count == 0)
             return false;
 
-        foreach (Camera cam in _cameraBuffer)
+        for (int i = 0; i < _cameraBuffer.Count; i++)
         {
+            Camera cam = _cameraBuffer[i];
             RenderPipeline pipeline = RenderPipeline.Resolve(cam);
 
             // If we have a target and the Camera doesnt, draw into the target
@@ -724,6 +753,13 @@ public class Scene : EngineObject, ISerializationCallbackReceiver
 
         return true;
     }
+
+    // Cached static delegates to avoid per-frame Action<MonoBehaviour> allocation.
+    private static readonly Action<MonoBehaviour> s_updateAction = static x => x.Update();
+    private static readonly Action<MonoBehaviour> s_lateUpdateAction = static x => x.LateUpdate();
+    private static readonly Action<MonoBehaviour> s_fixedUpdateAction = static x => x.FixedUpdate();
+    private static readonly Action<MonoBehaviour> s_drawGizmosAction = static x => x.DrawGizmos();
+    private static readonly Comparison<Camera> s_cameraDepthComparison = static (a, b) => a.Depth.CompareTo(b.Depth);
 
     /// <summary>
     /// Helper method to iterate over all MonoBehaviour components in a collection of GameObjects

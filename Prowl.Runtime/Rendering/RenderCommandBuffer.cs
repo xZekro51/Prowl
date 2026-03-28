@@ -150,11 +150,38 @@ public sealed class RenderCommandBuffer : IDisposable
     }
 
     /// <summary>
+    /// Resolves and sets the pipeline state for a material pass, including
+    /// bind group layouts for Vulkan descriptor set compatibility.
+    /// </summary>
+    public PipelineState SetMaterialPipeline(
+        GraphicsProgram program,
+        VertexLayoutDescriptor vertexLayout,
+        RasterizerState state,
+        Topology topology,
+        BindGroupLayout[]? bindGroupLayouts)
+    {
+        var pipeline = PipelineStateCache.GetOrCreate(
+            program, vertexLayout, state, topology, _currentRenderPassLayout, bindGroupLayouts);
+        _commandList.SetPipeline(pipeline);
+        return pipeline;
+    }
+
+    /// <summary>
     /// Sets the viewport within the current render pass.
+    /// On Vulkan, this automatically applies a Y-flip for 3D rendering compatibility.
     /// </summary>
     public void SetViewport(float x, float y, float width, float height, float minDepth = 0, float maxDepth = 1)
     {
         _commandList.SetViewport(x, y, width, height, minDepth, maxDepth);
+    }
+
+    /// <summary>
+    /// Sets the viewport without any coordinate system transformations.
+    /// Use this for 2D blit operations where Y-flip is not desired.
+    /// </summary>
+    public void SetViewportRaw(float x, float y, float width, float height, float minDepth = 0, float maxDepth = 1)
+    {
+        _commandList.SetViewportRaw(x, y, width, height, minDepth, maxDepth);
     }
 
     /// <summary>
@@ -266,6 +293,27 @@ public sealed class RenderCommandBuffer : IDisposable
 
     #endregion
 
+    #region Synchronization
+
+    /// <summary>
+    /// Inserts a resource barrier to transition a resource between states.
+    /// Must be called outside a render pass.
+    /// </summary>
+    public void ResourceBarrier(in Graphite.ResourceBarrier barrier)
+    {
+        _commandList.ResourceBarrier(in barrier);
+    }
+
+    /// <summary>
+    /// Inserts a memory barrier to ensure all previous writes are visible.
+    /// </summary>
+    public void MemoryBarrier()
+    {
+        _commandList.MemoryBarrier();
+    }
+
+    #endregion
+
     #region Copy Commands
 
     /// <summary>
@@ -318,9 +366,15 @@ public sealed class RenderCommandBuffer : IDisposable
         if (_debugName != null)
             _commandList.PopDebugGroup();
 
+        //if (_debugSubmitTraceFrames > 0)
+        //    Debug.Log($"[RCB] Submit '{_debugName}', IsPresentTarget={(_commandList is Graphite.Vulkan.VKCommandList vk ? vk.IsPresentTarget : false)}");
+
         _commandList.End();
         Graphics.Graphite.SubmitCommands(_commandList);
     }
+
+    // Shared debug trace — logs submissions for the first N frames.
+    private static int _debugSubmitTraceFrames = 3;
 
     /// <summary>
     /// Ends recording and submits the command list, signaling a fence when complete.
@@ -358,9 +412,12 @@ public sealed class RenderCommandBuffer : IDisposable
             foreach (var tex in colorAttachments)
             {
                 if (tex == null) continue;
-                list.Add(colorLoadOp == LoadOp.Clear
-                    ? RenderPassColorAttachment.Clear(tex, clearColor)
-                    : RenderPassColorAttachment.Load(tex));
+                list.Add(colorLoadOp switch
+                {
+                    LoadOp.Clear => RenderPassColorAttachment.Clear(tex, clearColor),
+                    LoadOp.Load  => RenderPassColorAttachment.Load(tex),
+                    _            => new RenderPassColorAttachment { Texture = tex, LoadOp = LoadOp.DontCare, StoreOp = StoreOp.Store },
+                });
             }
             if (list.Count > 0)
                 colors = list.ToArray();

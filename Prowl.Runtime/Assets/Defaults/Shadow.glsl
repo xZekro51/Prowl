@@ -22,7 +22,11 @@ float InterleavedGradientNoise(vec2 position) {
 // Reconstruct world position from depth buffer
 vec3 WorldPosFromDepth(float depth, vec2 texCoord) {
     float z = depth * 2.0 - 1.0;
-    vec4 clipSpacePosition = vec4(texCoord * 2.0 - 1.0, z, 1.0);
+    // Fullscreen passes use non-flipped viewport but the GBuffer was rendered with Y-flip.
+    // We need to flip UV Y for correct NDC reconstruction.
+    // UV Y=0 at screen top needs to map to NDC Y=+1 (not -1).
+    vec2 ndcXY = vec2(texCoord.x * 2.0 - 1.0, 1.0 - texCoord.y * 2.0);
+    vec4 clipSpacePosition = vec4(ndcXY, z, 1.0);
     mat4 invVP = inverse(PROWL_MATRIX_VP);
     vec4 worldSpacePosition = invVP * clipSpacePosition;
     worldSpacePosition /= worldSpacePosition.w;

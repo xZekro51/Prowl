@@ -1,39 +1,29 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <OutputType>Exe</OutputType>
     <TargetFramework>net9.0</TargetFramework>
-    <ImplicitUsings>enable</ImplicitUsings>
+    <ImplicitUsings>disable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <NoWarn>8600;8601;8618;8602;8603;8604;8625;1591</NoWarn>
   </PropertyGroup>
 
-  <ItemGroup>
-    <InternalsVisibleTo Include="Prowl.Editor.Tests" />
-  </ItemGroup>
-
   <PropertyGroup Condition=" '$(Configuration)' == 'Debug' ">
-    <OutputPath>../Build/Editor/Debug/</OutputPath>
+    <OutputPath>../Build/ImGui/Debug/</OutputPath>
   </PropertyGroup>
 
   <PropertyGroup Condition=" '$(Configuration)' == 'Release' ">
-    <OutputPath>../Build/Editor/Release/</OutputPath>
+    <OutputPath>../Build/ImGui/Release/</OutputPath>
   </PropertyGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\Prowl.Runtime\Prowl.Runtime.csproj" />
-    <ProjectReference Include="..\Prowl.ImGui\Prowl.ImGui.csproj" />
   </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="ImGui.NET" Version="1.90.8.1" />
-    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.12.0" />
-    <PackageReference Include="Microsoft.Maui.Core" Version="10.0.50" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <EmbeddedResource Include="Icons\Resources\*.png" />
+    <PackageReference Include="Silk.NET.Input" Version="2.23.0" />
+    <PackageReference Include="Silk.NET.Input.Extensions" Version="2.23.0" />
   </ItemGroup>
 
 </Project>

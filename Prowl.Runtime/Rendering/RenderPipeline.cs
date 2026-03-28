@@ -2,11 +2,13 @@
 // Licensed under the MIT License. See the LICENSE file in the project root for details.
 
 using System.Collections.Generic;
-using System.Linq;
 
+using Prowl.Runtime.Graphite;
 using Prowl.Runtime.Rendering.Shaders;
 using Prowl.Runtime.Resources;
 using Prowl.Vector;
+
+using IndexFormat = Prowl.Runtime.Resources.IndexFormat;
 
 namespace Prowl.Runtime.Rendering;
 
@@ -139,6 +141,14 @@ public abstract class RenderPipeline : EngineObject
     private const int CLEANUP_INTERVAL_FRAMES = 120; // Clean up every 120 frames
     private int s_framesSinceLastCleanup = 0;
 
+    // Reusable per-frame collections to avoid GC pressure
+    private readonly HashSet<int> _reusableCulledSet = [];
+    private readonly List<(IRenderable renderable, float distSq)> _reusableSortPairs = [];
+    private readonly List<IRenderable> _reusableSortResult = [];
+    private readonly List<RenderBatch> _reusableBatches = [];
+    private readonly Dictionary<(ulong, int, Mesh), int> _reusableBatchLookup = [];
+    private readonly List<int> _reusableKeyBuffer = [];
+
     private void CleanupUnusedModelMatrices()
     {
         // Increment frame counter
@@ -150,12 +160,15 @@ public abstract class RenderPipeline : EngineObject
 
         s_framesSinceLastCleanup = 0;
 
-        // Remove all matrices that weren't used in this frame
-        var unusedKeys = s_prevModelMatrices.Keys
-            .Where(key => !ActiveObjectIds.Contains(key))
-            .ToList();
+        // Remove all matrices that weren't used in this frame (no LINQ allocation)
+        _reusableKeyBuffer.Clear();
+        foreach (var key in s_prevModelMatrices.Keys)
+        {
+            if (!ActiveObjectIds.Contains(key))
+                _reusableKeyBuffer.Add(key);
+        }
 
-        foreach (int key in unusedKeys)
+        foreach (int key in _reusableKeyBuffer)
             s_prevModelMatrices.Remove(key);
 
         // Clear the active IDs set for next frame
@@ -184,24 +197,24 @@ public abstract class RenderPipeline : EngineObject
 
     public HashSet<int> CullRenderables(IReadOnlyList<IRenderable> renderables, Frustum? worldFrustum, LayerMask cullingMask)
     {
-        HashSet<int> culledRenderableIndices = [];
+        _reusableCulledSet.Clear();
         for (int renderIndex = 0; renderIndex < renderables.Count; renderIndex++)
         {
             IRenderable renderable = renderables[renderIndex];
 
             if (worldFrustum != null && CullRenderable(renderable, worldFrustum.Value))
             {
-                culledRenderableIndices.Add(renderIndex);
+                _reusableCulledSet.Add(renderIndex);
                 continue;
             }
 
             if (cullingMask.HasLayer(renderable.GetLayer()) == false)
             {
-                culledRenderableIndices.Add(renderIndex);
+                _reusableCulledSet.Add(renderIndex);
                 continue;
             }
         }
-        return culledRenderableIndices;
+        return _reusableCulledSet;
     }
 
     public bool CullRenderable(IRenderable renderable, Frustum cameraFrustum)
@@ -225,11 +238,10 @@ public abstract class RenderPipeline : EngineObject
     public List<IRenderable> SortRenderables(IReadOnlyList<IRenderable> renderables, HashSet<int> culledRenderableIndices, Float3 cameraPosition, SortMode mode)
     {
         int count = renderables?.Count ?? 0;
+        _reusableSortPairs.Clear();
+        _reusableSortResult.Clear();
         if (count == 0)
-            return new List<IRenderable>();
-
-        // Preallocate to the maximum possible count to avoid reallocation
-        var pairs = new List<(IRenderable renderable, float distSq)>(count);
+            return _reusableSortResult;
 
         // Collect only non-culled renderables
         for (int i = 0; i < count; i++)
@@ -239,11 +251,11 @@ public abstract class RenderPipeline : EngineObject
 
             var renderable = renderables[i];
             float distSq = Float3.DistanceSquared(renderable.GetPosition(), cameraPosition);
-            pairs.Add((renderable, distSq));
+            _reusableSortPairs.Add((renderable, distSq));
         }
 
         // Sort by distance squared (avoid sqrt)
-        pairs.Sort((a, b) => mode switch
+        _reusableSortPairs.Sort((a, b) => mode switch
         {
             SortMode.FrontToBack => a.distSq.CompareTo(b.distSq),
             SortMode.BackToFront => b.distSq.CompareTo(a.distSq),
@@ -251,11 +263,10 @@ public abstract class RenderPipeline : EngineObject
         });
 
         // Extract sorted renderables into result list
-        var result = new List<IRenderable>(pairs.Count);
-        for (int i = 0; i < pairs.Count; i++)
-            result.Add(pairs[i].renderable);
+        for (int i = 0; i < _reusableSortPairs.Count; i++)
+            _reusableSortResult.Add(_reusableSortPairs[i].renderable);
 
-        return result;
+        return _reusableSortResult;
     }
 
     public void SetupGlobalUniforms(CameraSnapshot css)
@@ -277,6 +288,10 @@ public abstract class RenderPipeline : EngineObject
         GlobalUniforms.SetCosTime(new Float4(Maths.Cos(Time.TimeSinceStartup / 8), Maths.Cos(Time.TimeSinceStartup / 4), Maths.Cos(Time.TimeSinceStartup / 2), Maths.Cos(Time.TimeSinceStartup)));
         GlobalUniforms.SetDeltaTime(new Float4(Time.DeltaTime, 1.0f / Time.DeltaTime, Time.SmoothDeltaTime, 1.0f / Time.SmoothDeltaTime));
 
+        // Graphics API parameters
+        // x = 1.0 on Vulkan (need to flip UV Y for NDC conversion in fullscreen passes), 0.0 on OpenGL
+        GlobalUniforms.SetGraphicsParams(new Float4(Graphics.IsOpenGL ? 0.0f : 1.0f, 0, 0, 0));
+
         // Upload the global uniform buffer
         GlobalUniforms.Upload();
     }
@@ -293,6 +308,116 @@ public abstract class RenderPipeline : EngineObject
     }
 
     #region Immediate Rendering (DrawMeshNow & Blit)
+
+    /// <summary>
+    /// Begins rendering to a <see cref="RenderTexture"/> target.
+    /// On OpenGL, binds the framebuffer and optionally clears it.
+    /// On Vulkan, begins a Graphite render pass with the appropriate load op.
+    /// Must be paired with <see cref="EndRenderToTarget"/>.
+    /// </summary>
+    /// <param name="target">The render texture to render into.</param>
+    /// <param name="clear">Whether to clear the target.</param>
+    /// <param name="clearColor">The clear color (defaults to black).</param>
+    public static void BeginRenderToTarget(RenderTexture target, bool clear = true, Color? clearColor = null)
+    {
+        if (!target.IsValid()) return;
+
+        if (!Graphics.IsOpenGL
+            && Graphics.ActiveGraphiteCmdBuffer is { InRenderPass: false } cmd)
+        {
+            var loadOp = clear ? Graphite.LoadOp.Clear : Graphite.LoadOp.DontCare;
+            var col = clearColor ?? Color.Black;
+            var clearFloat4 = new Float4((float)col.R, (float)col.G, (float)col.B, (float)col.A);
+            cmd.BeginRenderPass(target, loadOp, clearFloat4, clear);
+            cmd.SetViewport(0, 0, target.Width, target.Height);
+            cmd.SetScissor(0, 0, (uint)target.Width, (uint)target.Height);
+        }
+        else
+        {
+            Graphics.BindFramebuffer(target.frameBuffer);
+            if (clear)
+            {
+                var col = clearColor ?? Color.Black;
+                Graphics.Clear((float)col.R, (float)col.G, (float)col.B, (float)col.A,
+                    ClearFlags.Color | ClearFlags.Depth);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Ends rendering to the current target started by <see cref="BeginRenderToTarget"/>.
+    /// On Vulkan, ends the active Graphite render pass and optionally transitions the
+    /// target's attachments to <see cref="Graphite.ResourceState.ShaderResource"/>.
+    /// </summary>
+    /// <param name="target">If provided, transitions the target's attachments to shader-readable state.</param>
+    public static void EndRenderToTarget(RenderTexture? target = null)
+    {
+        if (!Graphics.IsOpenGL
+            && Graphics.ActiveGraphiteCmdBuffer is { InRenderPass: true } cmd)
+        {
+            cmd.EndRenderPass();
+            if (target != null)
+                TransitionToShaderResource(target);
+        }
+    }
+
+    /// <summary>
+    /// Transitions all color and depth attachments of a <see cref="RenderTexture"/> from
+    /// render-target / depth-write state to <see cref="Graphite.ResourceState.ShaderResource"/>
+    /// so they can be sampled in subsequent passes.
+    /// Must be called outside a render pass.  No-ops on OpenGL.
+    /// </summary>
+    internal static void TransitionToShaderResource(RenderTexture target)
+    {
+        if (Graphics.IsOpenGL) return;
+        if (Graphics.ActiveGraphiteCmdBuffer is not { InRenderPass: false } cmd) return;
+        if (!target.IsValid()) return;
+
+        var colorAttachments = target.frameBuffer.GraphiteColorAttachments;
+        if (colorAttachments != null)
+        {
+            foreach (var tex in colorAttachments)
+            {
+                if (tex != null)
+                    cmd.ResourceBarrier(new Graphite.ResourceBarrier(
+                        tex, Graphite.ResourceState.RenderTarget, Graphite.ResourceState.ShaderResource));
+            }
+        }
+
+        var depthAttachment = target.frameBuffer.GraphiteDepthAttachment;
+        if (depthAttachment != null)
+            cmd.ResourceBarrier(new Graphite.ResourceBarrier(
+                depthAttachment, Graphite.ResourceState.DepthWrite, Graphite.ResourceState.ShaderResource));
+    }
+
+    /// <summary>
+    /// Transitions all color attachments of a <see cref="RenderTexture"/> back from
+    /// <see cref="Graphite.ResourceState.ShaderResource"/> to <see cref="Graphite.ResourceState.RenderTarget"/>
+    /// so the texture can be used as a render target with <see cref="LoadOp.Load"/>.
+    /// Must be called outside a render pass.  No-ops on OpenGL or if already in the correct state.
+    /// </summary>
+    internal static void TransitionToRenderTarget(RenderTexture target)
+    {
+        if (Graphics.IsOpenGL) return;
+        if (Graphics.ActiveGraphiteCmdBuffer is not { InRenderPass: false } cmd) return;
+        if (!target.IsValid()) return;
+
+        var colorAttachments = target.frameBuffer.GraphiteColorAttachments;
+        if (colorAttachments != null)
+        {
+            foreach (var tex in colorAttachments)
+            {
+                if (tex != null)
+                    cmd.ResourceBarrier(new Graphite.ResourceBarrier(
+                        tex, Graphite.ResourceState.ShaderResource, Graphite.ResourceState.RenderTarget));
+            }
+        }
+
+        var depthAttachment = target.frameBuffer.GraphiteDepthAttachment;
+        if (depthAttachment != null)
+            cmd.ResourceBarrier(new Graphite.ResourceBarrier(
+                depthAttachment, Graphite.ResourceState.ShaderResource, Graphite.ResourceState.DepthWrite));
+    }
 
     /// <summary>
     /// Immediately draws a mesh without queuing. Used internally by the render pipeline.
@@ -317,11 +442,20 @@ public abstract class RenderPipeline : EngineObject
         if (!pass.TryGetVariantProgram(mat._localKeywords, out GraphicsProgram? variant))
             throw new System.Exception($"Failed to set shader pass {pass.Name}. No variant found for the current keyword state.");
 
+        // Upload mesh data to GPU - required for BOTH OpenGL and Vulkan paths
+        // to ensure VertexArrayObject and GraphiteVertexLayout are initialized.
+        mesh.Upload();
+
+        if (!Graphics.IsOpenGL)
+        {
+            // Vulkan path: use Graphite command buffer exclusively
+            RecordGraphiteDraw(mesh, pass, variant, mat._properties);
+            return;
+        }
+
         Graphics.SetState(pass.State);
 
         PropertyState.Apply(mat._properties, variant);
-
-        mesh.Upload();
 
         unsafe
         {
@@ -331,35 +465,47 @@ public abstract class RenderPipeline : EngineObject
         }
 
         // Bridge phase: record parallel Graphite draw command
-        RecordGraphiteDraw(mesh, pass, variant);
+        RecordGraphiteDraw(mesh, pass, variant, mat._properties);
     }
 
     /// <summary>
     /// Records a parallel Graphite draw command during the bridge phase.
+    /// On Vulkan, this creates and binds a full bind group from material properties.
     /// Only records if <see cref="Graphics.ActiveGraphiteCmdBuffer"/> is set
     /// and a render pass is currently active.
     /// </summary>
-    private static void RecordGraphiteDraw(Mesh mesh, Shaders.ShaderPass pass, GraphicsProgram variant)
+    private static void RecordGraphiteDraw(
+        Mesh mesh, Shaders.ShaderPass pass, GraphicsProgram variant,
+        PropertyState? materialProps = null,
+        PropertyState? instanceProps = null,
+        Float4x4? objectToWorld = null,
+        Float4x4? worldToObject = null)
     {
         if (Graphics.ActiveGraphiteCmdBuffer is not { InRenderPass: true } cmd)
             return;
 
-        try
-        {
-            var vao = mesh.VertexArrayObject;
-            if (vao?.GraphiteVertexLayout == null ||
-                variant.GraphiteVertexModule == null ||
-                variant.GraphiteFragmentModule == null)
-                return;
+        var vao = mesh.VertexArrayObject;
+        if (vao?.GraphiteVertexLayout == null ||
+            variant.GraphiteVertexModule == null ||
+            variant.GraphiteFragmentModule == null)
+            return;
 
-            cmd.SetMaterialPipeline(variant, vao.GraphiteVertexLayout!.Value, pass.State, mesh.MeshTopology);
-            cmd.DrawMeshIndexed(mesh);
-        }
-        catch
+        // Get bind group layout for pipeline creation
+        var bgl = variant.GetOrCreateBindGroupLayout();
+        var layouts = bgl != null ? new[] { bgl } : null;
+
+        cmd.SetMaterialPipeline(variant, vao.GraphiteVertexLayout!.Value, pass.State, mesh.MeshTopology, layouts);
+
+        // Create and bind descriptor set from material/instance properties
+        if (variant.Reflection != null && bgl != null)
         {
-            // Silently ignore Graphite recording failures during bridge phase.
-            // The legacy rendering path continues unaffected.
+            var bindGroup = GraphiteMaterialBinder.CreateBindGroup(
+                variant.Reflection, bgl, materialProps, instanceProps, objectToWorld, worldToObject);
+            if (bindGroup != null)
+                cmd.SetBindGroup(0, bindGroup);
         }
+
+        cmd.DrawMeshIndexed(mesh);
     }
 
     private static Shader? s_blitShader;
@@ -388,7 +534,39 @@ public abstract class RenderPipeline : EngineObject
     public static void Blit(RenderTexture source, RenderTexture target, Material? mat = null, int pass = 0, bool clearDepth = false, bool clearColor = false, Color color = default)
     {
         mat ??= BlitMaterial;
+
+        // Self-blit (source == target) is a read-write hazard on Vulkan:
+        // the render pass writes the image while the fragment shader reads it.
+        // Resolve by copying source to a temporary RT and sampling from that.
+        if (source == target && !Graphics.IsOpenGL && source.IsValid())
+        {
+            var formats = new TextureImageFormat[source.InternalTextures.Length];
+            for (int i = 0; i < formats.Length; i++)
+                formats[i] = source.InternalTextures[i].ImageFormat;
+            var temp = RenderTexture.GetTemporaryRT(source.Width, source.Height, false, formats);
+            Blit(source, temp);                  // source → temp (default material, simple copy)
+            mat.SetTexture("_MainTex", temp.MainTexture);
+            Blit(target, mat, pass, clearDepth, clearColor, color); // temp → target via composite material
+            RenderTexture.ReleaseTemporaryRT(temp);
+            return;
+        }
+
         mat.SetTexture("_MainTex", source.MainTexture);
+
+        // On Vulkan, transition the source texture to ShaderResource so the
+        // blit shader can sample from it.  The barrier is a no-op if the
+        // texture is already in the correct layout.
+        // Only do this outside an active render pass (resource barriers are
+        // not allowed inside render passes).  When called within an active
+        // render pass (e.g., during lighting), the textures are already in
+        // the correct layout.
+        if (!Graphics.IsOpenGL
+            && Graphics.ActiveGraphiteCmdBuffer is { InRenderPass: false }
+            && source.IsValid())
+        {
+            TransitionToShaderResource(source);
+        }
+
         Blit(target, mat, pass, clearDepth, clearColor, color);
     }
 
@@ -402,6 +580,41 @@ public abstract class RenderPipeline : EngineObject
     public static void Blit(RenderTexture target, Material? mat = null, int pass = 0, bool clearDepth = false, bool clearColor = false, Color color = default)
     {
         mat ??= BlitMaterial;
+
+        // Vulkan path: when called outside an active render pass (e.g., from image effects),
+        // we must begin/end our own Graphite render pass around the draw call.
+        bool isVulkan = !Graphics.IsOpenGL;
+        if (isVulkan
+            && Graphics.ActiveGraphiteCmdBuffer is { InRenderPass: false } cmd
+            && target.IsValid())
+        {
+            var loadOp = clearColor ? LoadOp.Clear : LoadOp.DontCare;
+            var clearFloat4 = clearColor
+                ? new Float4((float)color.R, (float)color.G, (float)color.B, (float)color.A)
+                : Float4.Zero;
+
+            // Ensure color+depth attachments are in the layouts expected by the render pass.
+            // After a prior TransitionToShaderResource (e.g. self-blit, post-process chain)
+            // the attachments may still be in ShaderReadOnlyOptimal, which is incompatible
+            // with LoadOp.Load's initialLayout (ColorAttachmentOptimal / DepthStencilAttachmentOptimal).
+            TransitionToRenderTarget(target);
+
+            cmd.BeginRenderPass(target, loadOp, clearFloat4, clearDepth);
+            // Use SetViewportRaw (no Y-flip) for fullscreen blits.
+            // The GBuffer was rendered with Y-flip which stored scene top at texture row 0.
+            // Without Y-flip here, NDC (-1,-1) maps to framebuffer top, and UV (0,0) samples
+            // texture row 0 (scene top), so the image is correctly oriented.
+            cmd.SetViewportRaw(0, 0, target.Width, target.Height);
+            cmd.SetScissor(0, 0, (uint)target.Width, (uint)target.Height);
+
+            Blit(mat, pass);
+
+            cmd.EndRenderPass();
+            TransitionToShaderResource(target);
+            return;
+        }
+
+        // GL path (or Vulkan with an already-active render pass)
         if (target.IsValid())
         {
             Graphics.BindFramebuffer(target.frameBuffer);
@@ -462,8 +675,8 @@ public abstract class RenderPipeline : EngineObject
 
         // ========== PHASE 1: Build Batches ==========
         // Group renderables by (material hash, shader pass, mesh) for efficient rendering
-        List<RenderBatch> batches = new();
-        Dictionary<(ulong, int, Mesh), int> batchLookup = new();
+        _reusableBatches.Clear();
+        _reusableBatchLookup.Clear();
 
         for (int renderIndex = 0; renderIndex < renderables.Count; renderIndex++)
         {
@@ -512,7 +725,7 @@ public abstract class RenderPipeline : EngineObject
                         InstancedRenderableIndex = renderIndex,
                         RenderableIndices = null  // Not used for instanced batches
                     };
-                    batches.Add(newBatch);
+                    _reusableBatches.Add(newBatch);
                 }
                 continue;
             }
@@ -534,10 +747,10 @@ public abstract class RenderPipeline : EngineObject
                 // Found matching pass - add to appropriate batch
                 // Batch key: (material hash, pass index, mesh) ensures each pass gets its own batch
                 var batchKey = (materialHash, passIndex, mesh);
-                if (batchLookup.TryGetValue(batchKey, out int batchIndex))
+                if (_reusableBatchLookup.TryGetValue(batchKey, out int batchIndex))
                 {
                     // Batch already exists - add this object to it
-                    batches[batchIndex].RenderableIndices.Add(renderIndex);
+                    _reusableBatches[batchIndex].RenderableIndices.Add(renderIndex);
                 }
                 else
                 {
@@ -555,8 +768,8 @@ public abstract class RenderPipeline : EngineObject
                         SortKey = sortKey,
                         RenderableIndices = new() { renderIndex }
                     };
-                    batchLookup[batchKey] = batches.Count;
-                    batches.Add(newBatch);
+                    _reusableBatchLookup[batchKey] = _reusableBatches.Count;
+                    _reusableBatches.Add(newBatch);
                 }
 
                 // Continue to next pass - materials can have multiple passes with the same tag
@@ -567,14 +780,14 @@ public abstract class RenderPipeline : EngineObject
         // Sort batches by their sort key (respects tag offsets like "Transparent+1000")
         if (hasSortOffsets)
         {
-            batches.Sort((a, b) => a.SortKey.CompareTo(b.SortKey));
+            _reusableBatches.Sort((a, b) => a.SortKey.CompareTo(b.SortKey));
         }
 
         RenderStats.Instance.SetRenderableCount(renderables.Count);
 
         // ========== PHASE 2: Draw Batches ==========
         // For each batch, bind state once then draw all objects in that batch
-        foreach (RenderBatch batch in batches)
+        foreach (RenderBatch batch in _reusableBatches)
         {
             // Handle instanced batches separately
             if (batch.IsInstanced)
@@ -607,9 +820,11 @@ public abstract class RenderPipeline : EngineObject
 
             GraphicsProgram variant = variantNullable;
 
+            bool isVulkan = !Graphics.IsOpenGL;
+
             // Handle GrabTexture if this pass requests it
             // NOTE: GrabTexture captures whatever is currently bound, so this works for any render target
-            if (pass.HasGrabTexture)
+            if (pass.HasGrabTexture && !isVulkan)
             {
                 // Get the currently bound framebuffer so we can restore it
                 GraphicsFrameBuffer? currentFB = Graphics.GetCurrentFramebuffer(FBOTarget.Draw);
@@ -636,52 +851,50 @@ public abstract class RenderPipeline : EngineObject
                 }
             }
 
-            // Bind GlobalUniforms buffer (contains camera matrices, time, lighting data, etc.)
-            // This is done per-batch because each shader variant is a separate GPU program object,
-            // and uniform buffer bindings are per-program in OpenGL.
-            //
-            // TODO: Could be optimized with glBindBufferBase() for global binding points (OpenGL >=4.2)
-            // Researched: We're limited to OpenGL <=4.1 for macOS support, which doesn't support
-            // persistent uniform buffer bindings across programs. Current approach is correct for <=4.1.
-            GraphicsBuffer? globalBuffer = GlobalUniforms.GetBuffer();
-            if (globalBuffer != null)
+            if (!isVulkan)
             {
-                Graphics.BindUniformBuffer(variant, "GlobalUniforms", globalBuffer, 0);
+                // Bind GlobalUniforms buffer (contains camera matrices, time, lighting data, etc.)
+                // This is done per-batch because each shader variant is a separate GPU program object,
+                // and uniform buffer bindings are per-program in OpenGL.
+                GraphicsBuffer? globalBuffer = GlobalUniforms.GetBuffer();
+                if (globalBuffer != null)
+                {
+                    Graphics.BindUniformBuffer(variant, "GlobalUniforms", globalBuffer, 0);
+                }
+
+                // Apply global properties (lighting, fog, shadow maps, etc.)
+                GraphicsProgram.UniformCache cache = variant.uniformCache;
+                int texSlot = 0;
+                PropertyState.ApplyGlobals(variant, cache, ref texSlot);
+
+                // *** BATCHING OPTIMIZATION: Bind material uniforms ONCE for entire batch ***
+                PropertyState.ApplyMaterialUniforms(material._properties, variant, ref texSlot);
+
+                // Set render state (depth test, blend mode, cull mode, etc.) once per batch
+                Graphics.SetState(pass.State);
             }
 
-            // Apply global properties (lighting, fog, shadow maps, etc.)
-            // Must be done per-batch because different shader variants may need different globals
-            GraphicsProgram.UniformCache cache = variant.uniformCache;
-            int texSlot = 0;
-            PropertyState.ApplyGlobals(variant, cache, ref texSlot);
-
-            // *** BATCHING OPTIMIZATION: Bind material uniforms ONCE for entire batch ***
-            // All objects in this batch share the same material state
-            PropertyState.ApplyMaterialUniforms(material._properties, variant, ref texSlot);
-
-            // Set render state (depth test, blend mode, cull mode, etc.) once per batch
-            Graphics.SetState(pass.State);
+            int texSlotForGraphite = 0; // Graphite handles textures via bind groups, not slots
 
             // Upload mesh data to GPU once per batch (shared by all objects)
             mesh.Upload();
 
-            // Bridge phase: setup Graphite pipeline and mesh buffers for this batch
+            // Graphite pipeline and mesh buffers setup for this batch
             bool graphiteBatchActive = false;
+            BindGroupLayout? batchBindGroupLayout = null;
             if (Graphics.ActiveGraphiteCmdBuffer is { InRenderPass: true } graphiteCmd)
             {
-                try
+                var vao = mesh.VertexArrayObject;
+                if (vao?.GraphiteVertexLayout != null &&
+                    variant.GraphiteVertexModule != null &&
+                    variant.GraphiteFragmentModule != null)
                 {
-                    var vao = mesh.VertexArrayObject;
-                    if (vao?.GraphiteVertexLayout != null &&
-                        variant.GraphiteVertexModule != null &&
-                        variant.GraphiteFragmentModule != null)
-                    {
-                        graphiteCmd.SetMaterialPipeline(variant, vao.GraphiteVertexLayout!.Value, pass.State, mesh.MeshTopology);
-                        graphiteCmd.SetMeshBuffers(mesh);
-                        graphiteBatchActive = true;
-                    }
+                    batchBindGroupLayout = variant.GetOrCreateBindGroupLayout();
+                    var layouts = batchBindGroupLayout != null ? new[] { batchBindGroupLayout } : null;
+                    graphiteCmd.SetMaterialPipeline(variant, vao.GraphiteVertexLayout!.Value, pass.State, mesh.MeshTopology, layouts);
+                    graphiteCmd.SetMeshBuffers(mesh);
+                    graphiteBatchActive = true;
                 }
-                catch { graphiteBatchActive = false; }
             }
 
             // ========== PHASE 3: Draw Objects in Batch ==========
@@ -691,7 +904,6 @@ public abstract class RenderPipeline : EngineObject
                 IRenderable renderable = renderables[renderIndex];
 
                 // Get per-object data (transform, instance properties)
-                // Note: mesh and instanceData are discarded (we already have them from the batch)
                 renderable.GetRenderingData(viewer, out PropertyState properties, out Mesh _, out Float4x4 model, out InstanceData[]? _);
 
                 // Track model matrix for motion vectors (used in temporal effects like TAA)
@@ -699,29 +911,42 @@ public abstract class RenderPipeline : EngineObject
                 if (updatePreviousMatrices && instanceId != 0)
                     TrackModelMatrix(instanceId, model);
 
-                // Apply instance-specific uniforms (tint colors, bone matrices, etc.)
-                // Texture slot counter continues from where material textures left off
-                int instanceTexSlot = texSlot;
-                PropertyState.ApplyInstanceUniforms(properties, variant, ref instanceTexSlot);
-
-                // Directly bind per-object transform uniforms after all other uniforms to gaurantee they are set correctly
+                // Compute inverse model matrix once (used by both GL and Graphite paths)
                 var fModel = (Float4x4)model;
-                Graphics.SetUniformMatrix(variant, "prowl_ObjectToWorld", false, fModel);
-                Graphics.SetUniformMatrix(variant, "prowl_WorldToObject", false, fModel.Invert());
+                var fModelInv = fModel.Invert();
 
-                // Execute draw call (mesh VAO already uploaded, just bind and draw)
-                unsafe
+                if (!isVulkan)
                 {
-                    Graphics.BindVertexArray(mesh.VertexArrayObject);
-                    Graphics.DrawIndexed(mesh.MeshTopology, (uint)mesh.IndexCount, mesh.IndexFormat == IndexFormat.UInt32, null);
-                    Graphics.BindVertexArray(null);
+                    // Apply instance-specific uniforms (tint colors, bone matrices, etc.)
+                    int instanceTexSlot = texSlotForGraphite;
+                    PropertyState.ApplyInstanceUniforms(properties, variant, ref instanceTexSlot);
+
+                    // Directly bind per-object transform uniforms
+                    Graphics.SetUniformMatrix(variant, "prowl_ObjectToWorld", false, fModel);
+                    Graphics.SetUniformMatrix(variant, "prowl_WorldToObject", false, fModelInv);
+
+                    // Execute draw call (mesh VAO already uploaded, just bind and draw)
+                    unsafe
+                    {
+                        Graphics.BindVertexArray(mesh.VertexArrayObject);
+                        Graphics.DrawIndexed(mesh.MeshTopology, (uint)mesh.IndexCount, mesh.IndexFormat == IndexFormat.UInt32, null);
+                        Graphics.BindVertexArray(null);
+                    }
                 }
 
-                // Bridge phase: record parallel Graphite indexed draw
+                // Record Graphite draw command (primary on Vulkan, parallel on GL)
                 if (graphiteBatchActive)
                 {
-                    try { Graphics.ActiveGraphiteCmdBuffer!.DrawIndexed((uint)mesh.IndexCount); }
-                    catch { graphiteBatchActive = false; }
+                    if (variant.Reflection != null && batchBindGroupLayout != null)
+                    {
+                        var bindGroup = GraphiteMaterialBinder.CreateBindGroup(
+                            variant.Reflection, batchBindGroupLayout,
+                            material._properties, properties,
+                            fModel, fModelInv);
+                        if (bindGroup != null)
+                            Graphics.ActiveGraphiteCmdBuffer!.SetBindGroup(0, bindGroup);
+                    }
+                    Graphics.ActiveGraphiteCmdBuffer!.DrawIndexed((uint)mesh.IndexCount);
                 }
 
                 RenderStats.Instance.AddDrawCall(mesh.VertexCount, mesh.IndexCount);
@@ -777,58 +1002,69 @@ public abstract class RenderPipeline : EngineObject
         }
 
         GraphicsProgram variant = variantNullable;
+        bool isVulkan = !Graphics.IsOpenGL;
 
-        // Bind GlobalUniforms buffer
-        GraphicsBuffer? globalBuffer = GlobalUniforms.GetBuffer();
-        if (globalBuffer != null)
+        if (!isVulkan)
         {
-            Graphics.BindUniformBuffer(variant, "GlobalUniforms", globalBuffer, 0);
+            // Bind GlobalUniforms buffer
+            GraphicsBuffer? globalBuffer = GlobalUniforms.GetBuffer();
+            if (globalBuffer != null)
+            {
+                Graphics.BindUniformBuffer(variant, "GlobalUniforms", globalBuffer, 0);
+            }
+
+            // Apply global properties
+            GraphicsProgram.UniformCache cache = variant.uniformCache;
+            int texSlot = 0;
+            PropertyState.ApplyGlobals(variant, cache, ref texSlot);
+
+            // Apply material uniforms
+            PropertyState.ApplyMaterialUniforms(material._properties, variant, ref texSlot);
+
+            // Apply shared instance properties
+            int instanceTexSlot = texSlot;
+            PropertyState.ApplyInstanceUniforms(sharedProperties, variant, ref instanceTexSlot);
+
+            // Set render state
+            Graphics.SetState(pass.State);
+
+            // Draw with TRUE GPU instancing!
+            unsafe
+            {
+                Graphics.BindVertexArray(vao);
+                Graphics.DrawIndexedInstanced(
+                    Topology.Triangles,
+                    (uint)indexCount,
+                    (uint)instanceCount,
+                    useIndex32
+                );
+                Graphics.BindVertexArray(null);
+            }
         }
 
-        // Apply global properties
-        GraphicsProgram.UniformCache cache = variant.uniformCache;
-        int texSlot = 0;
-        PropertyState.ApplyGlobals(variant, cache, ref texSlot);
-
-        // Apply material uniforms
-        PropertyState.ApplyMaterialUniforms(material._properties, variant, ref texSlot);
-
-        // Apply shared instance properties
-        int instanceTexSlot = texSlot;
-        PropertyState.ApplyInstanceUniforms(sharedProperties, variant, ref instanceTexSlot);
-
-        // Set render state
-        Graphics.SetState(pass.State);
-
-        // Draw with TRUE GPU instancing!
-        unsafe
-        {
-            Graphics.BindVertexArray(vao);
-            Graphics.DrawIndexedInstanced(
-                Topology.Triangles,
-                (uint)indexCount,
-                (uint)instanceCount,
-                useIndex32
-            );
-            Graphics.BindVertexArray(null);
-        }
-
-        // Bridge phase: record parallel Graphite instanced draw
+        // Record Graphite instanced draw (primary on Vulkan, parallel on GL)
         if (Graphics.ActiveGraphiteCmdBuffer is { InRenderPass: true } graphiteCmd)
         {
-            try
+            var meshVao = mesh.VertexArrayObject;
+            if (meshVao?.GraphiteVertexLayout != null &&
+                variant.GraphiteVertexModule != null &&
+                variant.GraphiteFragmentModule != null)
             {
-                var meshVao = mesh.VertexArrayObject;
-                if (meshVao?.GraphiteVertexLayout != null &&
-                    variant.GraphiteVertexModule != null &&
-                    variant.GraphiteFragmentModule != null)
+                var bgl = variant.GetOrCreateBindGroupLayout();
+                var layouts = bgl != null ? new[] { bgl } : null;
+                graphiteCmd.SetMaterialPipeline(variant, meshVao.GraphiteVertexLayout!.Value, pass.State, mesh.MeshTopology, layouts);
+
+                if (variant.Reflection != null && bgl != null)
                 {
-                    graphiteCmd.SetMaterialPipeline(variant, meshVao.GraphiteVertexLayout!.Value, pass.State, mesh.MeshTopology);
-                    graphiteCmd.SetMeshBuffers(mesh);
-                    graphiteCmd.DrawIndexed((uint)indexCount, (uint)instanceCount);
+                    var bindGroup = GraphiteMaterialBinder.CreateBindGroup(
+                        variant.Reflection, bgl, material._properties, sharedProperties);
+                    if (bindGroup != null)
+                        graphiteCmd.SetBindGroup(0, bindGroup);
                 }
+
+                graphiteCmd.SetMeshBuffers(mesh);
+                graphiteCmd.DrawIndexed((uint)indexCount, (uint)instanceCount);
             }
-            catch { /* Silently ignore during bridge phase */ }
         }
 
         RenderStats.Instance.AddDrawCall(mesh.VertexCount * instanceCount, indexCount * instanceCount);

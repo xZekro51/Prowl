@@ -42,6 +42,11 @@ public struct GlobalUniformsData
     public Float4 _CosTime;                   // 16 bytes
     public Float4 prowl_DeltaTime;            // 16 bytes
 
+    // Graphics API parameters
+    // x = 1.0 on Vulkan (need to flip UV Y for NDC conversion), 0.0 on OpenGL
+    // y, z, w = reserved for future use
+    public Float4 _GraphicsParams;            // 16 bytes
+
 #pragma warning restore IDE1006 // Naming Styles
 }
 
@@ -187,6 +192,12 @@ public static class GlobalUniforms
     public static void SetDeltaTime(Float4 value)
     {
         s_data.prowl_DeltaTime = (Float4)value;
+        s_isDirty = true;
+    }
+
+    public static void SetGraphicsParams(Float4 value)
+    {
+        s_data._GraphicsParams = (Float4)value;
         s_isDirty = true;
     }
 

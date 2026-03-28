@@ -14,6 +14,7 @@ public class GLTexture : Texture
 {
     private readonly GLGraphiteDevice _device;
     internal uint Handle { get; private set; }
+    public override uint NativeHandle => Handle;
     internal TextureTarget Target { get; private set; }
 
     internal GLTexture(GLGraphiteDevice device, in TextureDescriptor descriptor)
@@ -269,6 +270,17 @@ public class GLTexture : Texture
         _device.GL.BindTexture(Target, 0);
     }
 
+    internal unsafe void Read(uint mipLevel, Span<byte> destination)
+    {
+        ThrowIfDisposed();
+        _device.GL.BindTexture(Target, Handle);
+        var format = GetPixelFormat(Format);
+        var type = GetPixelType(Format);
+        fixed (byte* ptr = destination)
+            _device.GL.GetTexImage(Target, (int)mipLevel, format, type, ptr);
+        _device.GL.BindTexture(Target, 0);
+    }
+
     private static SizedInternalFormat GetInternalFormat(TextureFormat format) => format switch
     {
         TextureFormat.R8Unorm => SizedInternalFormat.R8,
@@ -295,6 +307,9 @@ public class GLTexture : Texture
         TextureFormat.RGBA16Uint => SizedInternalFormat.Rgba16ui,
         TextureFormat.RGBA16Sint => SizedInternalFormat.Rgba16i,
         TextureFormat.RGBA16Float => SizedInternalFormat.Rgba16f,
+        TextureFormat.R16Unorm => SizedInternalFormat.R16,
+        TextureFormat.RG16Unorm => SizedInternalFormat.RG16,
+        TextureFormat.RGBA16Unorm => SizedInternalFormat.Rgba16,
         TextureFormat.R32Uint => SizedInternalFormat.R32ui,
         TextureFormat.R32Sint => SizedInternalFormat.R32i,
         TextureFormat.R32Float => SizedInternalFormat.R32f,
@@ -336,18 +351,18 @@ public class GLTexture : Texture
         TextureFormat.R8Unorm or TextureFormat.R8Snorm => PixelFormat.Red,
         TextureFormat.R8Uint or TextureFormat.R8Sint => PixelFormat.RedInteger,
         TextureFormat.R16Uint or TextureFormat.R16Sint => PixelFormat.RedInteger,
-        TextureFormat.R16Float or TextureFormat.R32Float => PixelFormat.Red,
+        TextureFormat.R16Unorm or TextureFormat.R16Float or TextureFormat.R32Float => PixelFormat.Red,
         TextureFormat.R32Uint or TextureFormat.R32Sint => PixelFormat.RedInteger,
         TextureFormat.RG8Unorm or TextureFormat.RG8Snorm => PixelFormat.RG,
         TextureFormat.RG8Uint or TextureFormat.RG8Sint => PixelFormat.RGInteger,
         TextureFormat.RG16Uint or TextureFormat.RG16Sint => PixelFormat.RGInteger,
-        TextureFormat.RG16Float or TextureFormat.RG32Float => PixelFormat.RG,
+        TextureFormat.RG16Unorm or TextureFormat.RG16Float or TextureFormat.RG32Float => PixelFormat.RG,
         TextureFormat.RG32Uint or TextureFormat.RG32Sint => PixelFormat.RGInteger,
         TextureFormat.RGBA8Unorm or TextureFormat.RGBA8UnormSrgb or TextureFormat.RGBA8Snorm => PixelFormat.Rgba,
         TextureFormat.RGBA8Uint or TextureFormat.RGBA8Sint => PixelFormat.RgbaInteger,
         TextureFormat.BGRA8Unorm or TextureFormat.BGRA8UnormSrgb => PixelFormat.Bgra,
         TextureFormat.RGBA16Uint or TextureFormat.RGBA16Sint => PixelFormat.RgbaInteger,
-        TextureFormat.RGBA16Float => PixelFormat.Rgba,
+        TextureFormat.RGBA16Unorm or TextureFormat.RGBA16Float => PixelFormat.Rgba,
         TextureFormat.RGBA32Uint or TextureFormat.RGBA32Sint => PixelFormat.RgbaInteger,
         TextureFormat.RGBA32Float => PixelFormat.Rgba,
         TextureFormat.RGB10A2Unorm or TextureFormat.RG11B10Float => PixelFormat.Rgba,
@@ -363,6 +378,7 @@ public class GLTexture : Texture
             or TextureFormat.BGRA8Unorm or TextureFormat.BGRA8UnormSrgb => PixelType.UnsignedByte,
         TextureFormat.R8Snorm or TextureFormat.R8Sint or TextureFormat.RG8Snorm or TextureFormat.RG8Sint
             or TextureFormat.RGBA8Snorm or TextureFormat.RGBA8Sint => PixelType.Byte,
+        TextureFormat.R16Unorm or TextureFormat.RG16Unorm or TextureFormat.RGBA16Unorm => PixelType.UnsignedShort,
         TextureFormat.R16Uint or TextureFormat.RG16Uint or TextureFormat.RGBA16Uint => PixelType.UnsignedShort,
         TextureFormat.R16Sint or TextureFormat.RG16Sint or TextureFormat.RGBA16Sint => PixelType.Short,
         TextureFormat.R16Float or TextureFormat.RG16Float or TextureFormat.RGBA16Float => PixelType.HalfFloat,

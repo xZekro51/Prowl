@@ -5,6 +5,7 @@ using System.Numerics;
 using System.Reflection;
 using ImGuiNET;
 using Prowl.Runtime;
+using Prowl.ImGuiIntegration;
 using Prowl.Runtime.ParticleSystem;
 using Prowl.Runtime.Resources;
 
@@ -111,7 +112,7 @@ public static class EditorIcons
         if (tex == null)
             return 0;
 
-        texId = (nint)tex.Handle.Handle;
+        texId = ImGuiTextureRegistry.GetOrRegister(tex.Handle?.GraphiteTexture);
         _cache[key] = texId;
         _textures[key] = tex;
         return texId;

@@ -163,6 +163,12 @@ internal unsafe class VKPipelineState : PipelineState
             };
 
             ref readonly var rast = ref descriptor.RasterizerState;
+
+            // The VK backend uses a negative viewport height for Y-flip (see VKCommandList.SetViewportCore).
+            // The Y-flip reverses the apparent winding order in framebuffer space, but since Vulkan's
+            // native framebuffer Y-axis is already opposite to OpenGL's window Y-axis, these two
+            // inversions cancel out. The net result is that the winding order in Vulkan framebuffer
+            // space (with Y-flip) matches OpenGL window coordinates, so no front face flip is needed.
             var rasterizer = new PipelineRasterizationStateCreateInfo
             {
                 SType = StructureType.PipelineRasterizationStateCreateInfo,
@@ -198,14 +204,18 @@ internal unsafe class VKPipelineState : PipelineState
                 Back = ToVkStencilOpState(ds.StencilBack, ds.StencilReadMask, ds.StencilWriteMask),
             };
 
-            // Blend state
+            // Blend state — attachment count MUST match render pass color attachment count (Vulkan spec)
+            int colorAttachmentCount = descriptor.RenderPassLayout.ColorFormats?.Length ?? 0;
             var blendAttachments = Array.Empty<PipelineColorBlendAttachmentState>();
-            if (descriptor.BlendState.Attachments != null)
+            if (descriptor.BlendState.Attachments != null && descriptor.BlendState.Attachments.Length > 0)
             {
-                blendAttachments = new PipelineColorBlendAttachmentState[descriptor.BlendState.Attachments.Length];
-                for (int i = 0; i < descriptor.BlendState.Attachments.Length; i++)
+                int srcCount = descriptor.BlendState.Attachments.Length;
+                int count = Math.Max(srcCount, colorAttachmentCount);
+                blendAttachments = new PipelineColorBlendAttachmentState[count];
+                for (int i = 0; i < count; i++)
                 {
-                    ref readonly var ba = ref descriptor.BlendState.Attachments[i];
+                    // Replicate last descriptor entry for any extra color attachments
+                    ref readonly var ba = ref descriptor.BlendState.Attachments[Math.Min(i, srcCount - 1)];
                     blendAttachments[i] = new PipelineColorBlendAttachmentState
                     {
                         BlendEnable = ba.BlendEnable,
@@ -216,6 +226,19 @@ internal unsafe class VKPipelineState : PipelineState
                         DstAlphaBlendFactor = VKFormatHelper.ToVkBlendFactor(ba.DstAlphaFactor),
                         AlphaBlendOp = VKFormatHelper.ToVkBlendOp(ba.AlphaOp),
                         ColorWriteMask = (ColorComponentFlags)VKFormatHelper.ToVkColorWriteMask(ba.WriteMask),
+                    };
+                }
+            }
+            else if (colorAttachmentCount > 0)
+            {
+                // No blend state provided but render pass has color attachments — use opaque defaults
+                blendAttachments = new PipelineColorBlendAttachmentState[colorAttachmentCount];
+                for (int i = 0; i < colorAttachmentCount; i++)
+                {
+                    blendAttachments[i] = new PipelineColorBlendAttachmentState
+                    {
+                        BlendEnable = false,
+                        ColorWriteMask = ColorComponentFlags.RBit | ColorComponentFlags.GBit | ColorComponentFlags.BBit | ColorComponentFlags.ABit,
                     };
                 }
             }

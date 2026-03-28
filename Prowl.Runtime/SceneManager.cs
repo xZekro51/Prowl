@@ -4,6 +4,7 @@
 using System;
 using System.Collections.Generic;
 
+using Prowl.PaperUI;
 using Prowl.Runtime.Resources;
 
 namespace Prowl.Runtime;
@@ -29,6 +30,26 @@ public static class SceneManager
 {
     private static readonly List<Scene> s_loadedScenes = [];
     private static readonly object s_lock = new();
+
+    // Cached snapshot invalidated only when scenes are added/removed.
+    // Hot-path methods read this without allocating.
+    private static Scene[] s_snapshot = [];
+    private static bool s_snapshotDirty = true;
+
+    private static Scene[] GetSnapshot()
+    {
+        if (s_snapshotDirty)
+        {
+            lock (s_lock)
+            {
+                s_snapshot = [.. s_loadedScenes];
+                s_snapshotDirty = false;
+            }
+        }
+        return s_snapshot;
+    }
+
+    private static void InvalidateSnapshot() => s_snapshotDirty = true;
 
     /// <summary>
     /// Raised after a scene is loaded additively via <see cref="LoadSceneAdditive"/>.
@@ -60,17 +81,9 @@ public static class SceneManager
 
     /// <summary>
     /// Returns a read-only snapshot of all currently loaded scenes.
+    /// The array is cached and only rebuilt when scenes are added/removed.
     /// </summary>
-    public static IReadOnlyList<Scene> LoadedScenes
-    {
-        get
-        {
-            lock (s_lock)
-            {
-                return [.. s_loadedScenes];
-            }
-        }
-    }
+    public static IReadOnlyList<Scene> LoadedScenes => GetSnapshot();
 
     /// <summary>
     /// The number of currently loaded scenes.
@@ -98,6 +111,7 @@ public static class SceneManager
             if (s_loadedScenes.Contains(scene))
                 throw new InvalidOperationException("Scene is already loaded.");
             s_loadedScenes.Add(scene);
+            InvalidateSnapshot();
         }
 
         if (!scene.IsActive)
@@ -126,6 +140,7 @@ public static class SceneManager
         lock (s_lock)
         {
             removed = s_loadedScenes.Remove(scene);
+            if (removed) InvalidateSnapshot();
         }
 
         if (!removed)
@@ -202,12 +217,11 @@ public static class SceneManager
     /// </summary>
     internal static void UpdateAll()
     {
-        List<Scene> scenes;
-        lock (s_lock) { scenes = [.. s_loadedScenes]; }
-        foreach (var scene in scenes)
+        Scene[] scenes = GetSnapshot();
+        for (int i = 0; i < scenes.Length; i++)
         {
-            if (scene.IsActive)
-                scene.Update();
+            if (scenes[i].IsActive)
+                scenes[i].Update();
         }
     }
 
@@ -216,12 +230,11 @@ public static class SceneManager
     /// </summary>
     internal static void FixedUpdateAll()
     {
-        List<Scene> scenes;
-        lock (s_lock) { scenes = [.. s_loadedScenes]; }
-        foreach (var scene in scenes)
+        Scene[] scenes = GetSnapshot();
+        for (int i = 0; i < scenes.Length; i++)
         {
-            if (scene.IsActive)
-                scene.FixedUpdate();
+            if (scenes[i].IsActive)
+                scenes[i].FixedUpdate();
         }
     }
 
@@ -233,11 +246,10 @@ public static class SceneManager
     internal static bool RenderAll(RenderTexture? target = null)
     {
         bool anyRendered = false;
-        List<Scene> scenes;
-        lock (s_lock) { scenes = [.. s_loadedScenes]; }
-        foreach (var scene in scenes)
+        Scene[] scenes = GetSnapshot();
+        for (int i = 0; i < scenes.Length; i++)
         {
-            if (scene.IsActive && scene.Render(target))
+            if (scenes[i].IsActive && scenes[i].Render(target))
                 anyRendered = true;
         }
         return anyRendered;
@@ -248,12 +260,24 @@ public static class SceneManager
     /// </summary>
     internal static void DrawGizmosAll()
     {
-        List<Scene> scenes;
-        lock (s_lock) { scenes = [.. s_loadedScenes]; }
-        foreach (var scene in scenes)
+        Scene[] scenes = GetSnapshot();
+        for (int i = 0; i < scenes.Length; i++)
         {
-            if (scene.IsActive)
-                scene.DrawGizmos();
+            if (scenes[i].IsActive)
+                scenes[i].DrawGizmos();
+        }
+    }
+
+    /// <summary>
+    /// Runs OnGui on all loaded scenes. Called from the game loop.
+    /// </summary>
+    internal static void OnGuiAll(Paper paper)
+    {
+        Scene[] scenes = GetSnapshot();
+        for (int i = 0; i < scenes.Length; i++)
+        {
+            if (scenes[i].IsActive)
+                scenes[i].OnGui(paper);
         }
     }
 
@@ -272,6 +296,8 @@ public static class SceneManager
             // Add the new scene if not already tracked
             if (!s_loadedScenes.Contains(newScene))
                 s_loadedScenes.Add(newScene);
+
+            InvalidateSnapshot();
         }
     }
 
@@ -284,6 +310,7 @@ public static class SceneManager
         lock (s_lock)
         {
             s_loadedScenes.Remove(scene);
+            InvalidateSnapshot();
         }
     }
 
@@ -295,6 +322,7 @@ public static class SceneManager
         lock (s_lock)
         {
             s_loadedScenes.Clear();
+            InvalidateSnapshot();
         }
     }
 }

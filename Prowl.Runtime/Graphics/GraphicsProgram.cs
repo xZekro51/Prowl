@@ -4,6 +4,8 @@
 using System;
 using System.Collections.Generic;
 
+using Prowl.Runtime.Graphite;
+using Prowl.Runtime.Rendering;
 using Prowl.Vector;
 
 using Silk.NET.OpenGL;
@@ -59,6 +61,24 @@ public class GraphicsProgram : IDisposable
     /// <summary>Whether this program was created for a non-GL backend (Vulkan).
     /// When true, only Graphite modules are valid; GL <see cref="Handle"/> is 0.</summary>
     private bool _isGraphiteOnly;
+
+    /// <summary>Merged SPIR-V reflection data (Vulkan only). Null on OpenGL.</summary>
+    internal SpirvReflection.ReflectionResult? Reflection { get; private set; }
+
+    /// <summary>Cached bind group layout derived from <see cref="Reflection"/>.</summary>
+    private BindGroupLayout? _bindGroupLayout;
+
+    /// <summary>
+    /// Returns a cached <see cref="BindGroupLayout"/> derived from the SPIR-V reflection.
+    /// Creates it on first call.  Returns null if no reflection data is available.
+    /// </summary>
+    internal BindGroupLayout? GetOrCreateBindGroupLayout()
+    {
+        if (_bindGroupLayout != null) return _bindGroupLayout;
+        if (Reflection == null) return null;
+        _bindGroupLayout = GraphiteMaterialBinder.CreateBindGroupLayout(Reflection);
+        return _bindGroupLayout;
+    }
 
     public GraphicsProgram(string fragmentSource, string vertexSource, string geometrySource) : base()
     {
@@ -209,21 +229,35 @@ public class GraphicsProgram : IDisposable
     private void CreateGraphiteModulesVulkan(string vertexSource, string fragmentSource, string geometrySource)
     {
         // Cross-compile GLSL → SPIR-V, then create Vulkan shader modules.
+        // Also run SPIR-V reflection to discover auto-assigned descriptor bindings.
+        SpirvReflection.ReflectionResult? vertRefl = null, fragRefl = null, geomRefl = null;
+
         if (!string.IsNullOrEmpty(vertexSource))
         {
             byte[] spirv = Graphite.ShaderCrossCompiler.CompileGLSLToSPIRV(vertexSource, Graphite.ShaderStage.Vertex);
             GraphiteVertexModule = Graphics.Graphite.CreateShaderModule(Graphite.ShaderModuleDescriptor.VertexSPIRV(spirv));
+            vertRefl = SpirvReflection.Reflect(spirv);
         }
         if (!string.IsNullOrEmpty(fragmentSource))
         {
             byte[] spirv = Graphite.ShaderCrossCompiler.CompileGLSLToSPIRV(fragmentSource, Graphite.ShaderStage.Fragment);
             GraphiteFragmentModule = Graphics.Graphite.CreateShaderModule(Graphite.ShaderModuleDescriptor.FragmentSPIRV(spirv));
+            fragRefl = SpirvReflection.Reflect(spirv);
         }
         if (!string.IsNullOrEmpty(geometrySource))
         {
             byte[] spirv = Graphite.ShaderCrossCompiler.CompileGLSLToSPIRV(geometrySource, Graphite.ShaderStage.Geometry);
             GraphiteGeometryModule = Graphics.Graphite.CreateShaderModule(Graphite.ShaderModuleDescriptor.GeometrySPIRV(spirv));
+            geomRefl = SpirvReflection.Reflect(spirv);
         }
+
+        // Merge reflection from all stages
+        var results = new List<SpirvReflection.ReflectionResult>();
+        if (vertRefl != null) results.Add(vertRefl);
+        if (fragRefl != null) results.Add(fragRefl);
+        if (geomRefl != null) results.Add(geomRefl);
+        if (results.Count > 0)
+            Reflection = SpirvReflection.Merge(results.ToArray());
     }
 
     #endregion
@@ -255,6 +289,10 @@ public class GraphicsProgram : IDisposable
         GraphiteVertexModule = null;
         GraphiteFragmentModule = null;
         GraphiteGeometryModule = null;
+
+        _bindGroupLayout?.Dispose();
+        _bindGroupLayout = null;
+        Reflection = null;
 
         if (!_isGraphiteOnly)
             Graphics.GL.DeleteProgram(Handle);

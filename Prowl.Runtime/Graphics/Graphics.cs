@@ -321,9 +321,14 @@ public static unsafe class Graphics
     public static void Viewport(int x, int y, uint width, uint height)
     {
         GLDevice?.Viewport(x, y, width, height);
-        // Bridge phase: mirror viewport to active Graphite command buffer
+        // Bridge phase: mirror viewport and scissor to active Graphite command buffer.
+        // Vulkan dynamic state requires both to be set; shadow atlas rendering
+        // uses per-tile viewports so scissor must match to avoid bleeding.
         if (ActiveGraphiteCmdBuffer is { InRenderPass: true } cmd)
+        {
             cmd.SetViewport(x, y, width, height);
+            cmd.SetScissor(x, y, width, height);
+        }
     }
 
     public static void Clear(float r, float g, float b, float a, ClearFlags v) => GLDevice?.Clear(r, g, b, a, v);
@@ -388,7 +393,7 @@ public static unsafe class Graphics
         => GLDevice?.BindFramebuffer(frameBuffer, readFramebuffer);
 
     public static GraphicsFrameBuffer? GetCurrentFramebuffer(FBOTarget target = FBOTarget.Framebuffer)
-        => RequireGLDevice.GetCurrentFramebuffer(target);
+        => GLDevice?.GetCurrentFramebuffer(target);
 
     public static void BlitFramebuffer(int srcX, int srcY, int srcWidth, int srcHeight, int destX, int destY, int destWidth, int destHeight, ClearFlags mask, BlitFilter filter)
         => GLDevice?.BlitFramebuffer(srcX, srcY, srcWidth, srcHeight, destX, destY, destWidth, destHeight, mask, filter);

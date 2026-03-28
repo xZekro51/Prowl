@@ -235,7 +235,8 @@ Pass "PointLight"
 			vec3 worldNormal = normalize(mat3(PROWL_MATRIX_I_V) * viewNormal);
 
 			// Check shading mode (0 = Unlit, 1 = Lit)
-			if (shadingMode != 1.0) {
+			// Use threshold comparison to handle floating point precision
+			if (shadingMode < 0.5) {
 				finalColor = vec4(0.0, 0.0, 0.0, 0.0);
 				return;
 			}

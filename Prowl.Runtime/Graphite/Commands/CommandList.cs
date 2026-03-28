@@ -143,12 +143,24 @@ public abstract class CommandList : IDisposable
 
     /// <summary>
     /// Sets the viewport. Must be called within a render pass.
+    /// On Vulkan, this automatically applies a Y-flip for 3D rendering compatibility.
     /// </summary>
     public void SetViewport(float x, float y, float width, float height, float minDepth = 0, float maxDepth = 1)
     {
         ThrowIfNotRecording();
         ThrowIfNotInRenderPass();
         SetViewportCore(x, y, width, height, minDepth, maxDepth);
+    }
+
+    /// <summary>
+    /// Sets the viewport without any coordinate system transformations.
+    /// Use this for 2D blit operations where Y-flip is not desired.
+    /// </summary>
+    public void SetViewportRaw(float x, float y, float width, float height, float minDepth = 0, float maxDepth = 1)
+    {
+        ThrowIfNotRecording();
+        ThrowIfNotInRenderPass();
+        SetViewportRawCore(x, y, width, height, minDepth, maxDepth);
     }
 
     /// <summary>
@@ -182,6 +194,12 @@ public abstract class CommandList : IDisposable
     }
 
     protected abstract void SetViewportCore(float x, float y, float width, float height, float minDepth, float maxDepth);
+    protected virtual void SetViewportRawCore(float x, float y, float width, float height, float minDepth, float maxDepth)
+    {
+        // Default implementation calls the normal SetViewportCore.
+        // Vulkan overrides this to skip the Y-flip.
+        SetViewportCore(x, y, width, height, minDepth, maxDepth);
+    }
     protected abstract void SetScissorCore(int x, int y, uint width, uint height);
     protected abstract void SetBlendConstantsCore(Float4 color);
     protected abstract void SetStencilReferenceCore(uint reference);

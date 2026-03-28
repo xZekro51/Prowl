@@ -2,6 +2,11 @@
 // Licensed under the MIT License. See the LICENSE file in the project root for details.
 
 using System;
+using System.Collections.Generic;
+
+using Prowl.Vector;
+
+using LegacyVertexFormat = Prowl.Runtime.VertexFormat;
 
 namespace Prowl.Runtime.Graphite;
 
@@ -252,6 +257,15 @@ public abstract class GraphiteDevice : IDisposable
     public abstract void UpdateTexture(Texture texture, in TextureUpdateDescriptor descriptor, ReadOnlySpan<byte> data);
 
     /// <summary>
+    /// Reads texture data back from the GPU into a CPU buffer. Blocks until complete.
+    /// </summary>
+    /// <param name="texture">The texture to read from.</param>
+    /// <param name="mipLevel">The mip level to read.</param>
+    /// <param name="arrayLayer">The array layer to read.</param>
+    /// <param name="destination">A span that receives the pixel data. Must be large enough to hold the entire mip level.</param>
+    public abstract void ReadbackTexture(Texture texture, uint mipLevel, uint arrayLayer, Span<byte> destination);
+
+    /// <summary>
     /// Generates mipmaps for a texture.
     /// </summary>
     public abstract void GenerateMipmaps(Texture texture);
@@ -278,6 +292,151 @@ public abstract class GraphiteDevice : IDisposable
     /// Returns false if the swapchain is out of date and needs resizing.
     /// </summary>
     public virtual bool Present() => true;
+
+    #endregion
+
+    #region Legacy Immediate-Mode API
+
+    // Virtual methods for backward compatibility during the migration from
+    // direct GL calls to the Graphite abstraction.  The OpenGL backend
+    // overrides these with real GL implementations.  Non-GL backends
+    // (Vulkan) inherit the no-op defaults.
+
+    /// <summary>
+    /// Whether this backend needs an explicit blit to the swapchain image.
+    /// OpenGL renders to the default framebuffer directly; Vulkan needs
+    /// an explicit copy/blit from the off-screen render target.
+    /// </summary>
+    public virtual bool NeedsExplicitSwapchainBlit => false;
+
+    /// <summary>
+    /// Returns the native graphics context (e.g. <c>Silk.NET.OpenGL.GL</c>) if available, or <c>null</c>.
+    /// Used by subsystems that need raw API access (e.g. Dear ImGui).
+    /// </summary>
+    public virtual object? NativeContext => null;
+
+    // ── Viewport &amp; Clear ──────────────────────────────────────────
+
+    public virtual void Viewport(int x, int y, uint width, uint height) { }
+
+    public virtual void Clear(float r, float g, float b, float a, ClearFlags v) { }
+
+    // ── Rasterizer State ──────────────────────────────────────────
+
+    public virtual void SetState(RasterizerState state, bool force = false) { }
+
+    public virtual RasterizerState GetState() => new RasterizerState();
+
+    // ── Buffers ───────────────────────────────────────────────────
+
+    public virtual void BindBuffer(GraphicsBuffer buffer) { }
+
+    public virtual uint GetBlockIndex(GraphicsProgram program, string blockName) => 0xFFFFFFFF;
+
+    public virtual void BindUniformBuffer(GraphicsProgram program, string blockName, GraphicsBuffer buffer, uint bindingPoint = 0) { }
+
+    // ── Vertex Arrays ─────────────────────────────────────────────
+
+    public virtual void BindVertexArray(GraphicsVertexArray? vertexArrayObject) { }
+
+    // ── Frame Buffers ─────────────────────────────────────────────
+
+    public virtual void UnbindFramebuffer() { }
+
+    public virtual void BindFramebuffer(GraphicsFrameBuffer frameBuffer, FBOTarget target = FBOTarget.Framebuffer) { }
+
+    public virtual GraphicsFrameBuffer? GetCurrentFramebuffer(FBOTarget target = FBOTarget.Framebuffer) => null;
+
+    public virtual void BlitFramebuffer(int srcX, int srcY, int srcWidth, int srcHeight,
+        int destX, int destY, int destWidth, int destHeight, ClearFlags mask, BlitFilter filter) { }
+
+    public virtual unsafe T ReadPixel<T>(int attachment, int x, int y, TextureImageFormat format) where T : unmanaged => default;
+
+    // ── Shaders ───────────────────────────────────────────────────
+
+    public virtual void BindProgram(GraphicsProgram program) { }
+
+    public virtual int GetUniformLocation(GraphicsProgram program, string name) => -1;
+
+    public virtual int GetAttribLocation(GraphicsProgram program, string name) => -1;
+
+    public virtual void SetUniformF(GraphicsProgram program, string name, float value) { }
+
+    public virtual void SetUniformI(GraphicsProgram program, string name, int value) { }
+
+    public virtual void SetUniformV2(GraphicsProgram program, string name, Float2 value) { }
+
+    public virtual void SetUniformV3(GraphicsProgram program, string name, Float3 value) { }
+
+    public virtual void SetUniformV4(GraphicsProgram program, string name, Float4 value) { }
+
+    public virtual unsafe void SetUniformMatrix(GraphicsProgram program, string name, uint count, bool transpose, in float matrix) { }
+
+    public virtual void SetUniformMatrix(GraphicsProgram program, string name, bool transpose, Float4x4 matrix) { }
+
+    public virtual void SetUniformMatrix(GraphicsProgram program, string name, bool transpose, in float matrix) { }
+
+    public virtual void SetUniformTexture(GraphicsProgram program, string name, int slot, GraphicsTexture texture) { }
+
+    // ── Drawing ───────────────────────────────────────────────────
+
+    public virtual void Draw(Topology primitiveType, uint count) { }
+
+    public virtual void Draw(Topology primitiveType, int offset, uint count) { }
+
+    public virtual unsafe void DrawIndexed(Topology primitiveType, uint indexCount, bool index32bit, void* value) { }
+
+    public virtual unsafe void DrawIndexed(Topology primitiveType, uint indexCount, int startIndex, int baseVertex, bool index32bit) { }
+
+    public virtual unsafe void DrawIndexedInstanced(Topology primitiveType, uint indexCount, uint instanceCount, bool index32bit) { }
+
+    // ── Capability Accessors ─────────────────────────────────────
+
+    public virtual int MaxTextureSize => (int)(Capabilities.MaxTextureSize);
+
+    public virtual int MaxCubeMapTextureSize => (int)(Capabilities.MaxTextureSize);
+
+    public virtual int MaxArrayTextureLayers => 256;
+
+    public virtual int MaxFramebufferColorAttachments => (int)(Capabilities.MaxColorAttachments);
+
+    // ── Caches ────────────────────────────────────────────────────
+
+    public virtual Dictionary<ulong, uint> CachedBlockLocations { get; } = [];
+
+    public virtual Dictionary<ulong, int> CachedUniformLocations { get; } = [];
+
+    public virtual Dictionary<ulong, int> CachedAttribLocations { get; } = [];
+
+    // ── Legacy Resource Creation ──────────────────────────────────
+    // Backend-specific resource creation for legacy engine types.
+    // GL backend creates real GL objects; VK returns 0/no-ops.
+
+    public virtual uint CreateLegacyFramebuffer(GraphicsFrameBuffer.Attachment[] attachments, uint width, uint height) => 0;
+
+    public virtual void DeleteLegacyFramebuffer(uint handle) { }
+
+    public virtual uint CompileLegacyProgram(string fragmentSource, string vertexSource, string geometrySource) => 0;
+
+    public virtual void UseLegacyProgram(uint handle) { }
+
+    public virtual void DeleteLegacyProgram(uint handle) { }
+
+    public virtual uint CreateLegacyVertexArray(LegacyVertexFormat format, GraphicsBuffer vertices, GraphicsBuffer? indices,
+        LegacyVertexFormat? instanceFormat = null, GraphicsBuffer? instanceBuffer = null) => 0;
+
+    public virtual void DeleteLegacyVertexArray(uint handle) { }
+
+    // ── Legacy Texture Operations ────────────────────────────────
+    // Texture state operations that GL sets per-texture but Vulkan handles via Samplers.
+
+    public virtual void LegacySetTextureWrap(GraphicsTexture texture, int axis, TextureWrap wrap) { }
+
+    public virtual void LegacySetTextureFilters(GraphicsTexture texture, TextureMin min, TextureMag mag) { }
+
+    // ── Wireframe Mode ───────────────────────────────────────────
+
+    public virtual void SetWireframeMode(bool enabled) { }
 
     #endregion
 

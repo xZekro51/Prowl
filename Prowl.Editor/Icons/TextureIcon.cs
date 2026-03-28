@@ -4,6 +4,7 @@
 using System;
 using System.Numerics;
 using ImGuiNET;
+using Prowl.ImGuiIntegration;
 using Prowl.Runtime.Resources;
 
 namespace Prowl.Editor.Icons;
@@ -17,8 +18,8 @@ public sealed class TextureIcon : IIcon, IDisposable
     private readonly Texture2D _texture;
     private bool _disposed;
 
-    /// <summary>The raw OpenGL texture handle usable with <c>ImGui.Image</c>.</summary>
-    public nint TextureId => _disposed ? 0 : (nint)_texture.Handle.Handle;
+    /// <summary>The texture ID usable with <c>ImGui.Image</c> (via Graphite texture registry).</summary>
+    public nint TextureId => _disposed ? 0 : ImGuiTextureRegistry.GetOrRegister(_texture.Handle?.GraphiteTexture);
 
     public TextureIcon(Texture2D texture)
     {

@@ -4,6 +4,7 @@
 using System.Numerics;
 using ImGuiNET;
 using Prowl.Runtime;
+using Prowl.ImGuiIntegration;
 using Prowl.Runtime.Resources;
 using Prowl.Vector;
 using Prowl.Editor.Docking;
@@ -76,10 +77,14 @@ public sealed class ScenePanel : EditorPanel
             var rt = rendering!.SceneViewRT;
             if (rt != null && rt.MainTexture != null)
             {
-                nint texId = (nint)rt.MainTexture.Handle.Handle;
-                Vector2 imgMax = new(contentScreenPos.X + regionAvail.X, contentScreenPos.Y + regionAvail.Y);
-                // UV flipped vertically because OpenGL framebuffer is bottom-up
-                windowDrawList.AddImage(texId, contentScreenPos, imgMax, new Vector2(0, 1), new Vector2(1, 0));
+                var graphiteTex = rt.MainTexture?.Handle?.GraphiteTexture;
+                nint texId = ImGuiTextureRegistry.GetOrRegister(graphiteTex);
+                if (texId != 0)
+                {
+                    Vector2 imgMax = new(contentScreenPos.X + regionAvail.X, contentScreenPos.Y + regionAvail.Y);
+                    // UV flipped vertically because framebuffer is bottom-up
+                    windowDrawList.AddImage(texId, contentScreenPos, imgMax, new Vector2(0, 1), new Vector2(1, 0));
+                }
             }
         }
 

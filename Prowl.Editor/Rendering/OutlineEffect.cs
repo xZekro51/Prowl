@@ -53,14 +53,15 @@ public sealed class OutlineEffect
         RenderTexture silhouetteRT = RenderTexture.GetTemporaryRT(w, h, false,
             [TextureImageFormat.Color4b]);
 
-        Graphics.BindFramebuffer(silhouetteRT.frameBuffer);
-        Graphics.Clear(0, 0, 0, 0, ClearFlags.Color | ClearFlags.Depth);
+        RenderPipeline.BeginRenderToTarget(silhouetteRT, clear: true, clearColor: new Color(0, 0, 0, 0));
 
         foreach (var go in selectedObjects)
         {
             if (go == null) continue;
             DrawSilhouettes(go);
         }
+
+        RenderPipeline.EndRenderToTarget(silhouetteRT);
 
         // ── 2. Horizontal blur ─────────────────────────────────
         RenderTexture blurH = RenderTexture.GetTemporaryRT(w, h, false,

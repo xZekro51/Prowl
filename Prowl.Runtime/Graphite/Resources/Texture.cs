@@ -46,4 +46,9 @@ public abstract class Texture : GraphiteResource
     /// <summary>Whether this format includes a stencil component.</summary>
     public bool HasStencil => Format is TextureFormat.Depth24PlusStencil8
         or TextureFormat.Depth32FloatStencil8;
+
+    /// <summary>
+    /// Backend-native handle (e.g. GL texture name). Zero when not applicable.
+    /// </summary>
+    public virtual uint NativeHandle => 0;
 }

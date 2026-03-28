@@ -17,4 +17,9 @@ public abstract class Buffer : GraphiteResource
 
     /// <summary>Memory access pattern.</summary>
     public MemoryAccess MemoryAccess { get; protected set; }
+
+    /// <summary>
+    /// Backend-native handle (e.g. GL buffer name). Zero when not applicable.
+    /// </summary>
+    public virtual uint NativeHandle => 0;
 }

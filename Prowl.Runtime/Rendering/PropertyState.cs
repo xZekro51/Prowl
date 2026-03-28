@@ -2,7 +2,6 @@
 // Licensed under the MIT License. See the LICENSE file in the project root for details.
 
 using System.Collections.Generic;
-using System.Linq;
 
 using Prowl.Echo;
 using Prowl.Runtime.Resources;
@@ -50,7 +49,7 @@ public partial class PropertyState
 
     private ulong HashDictionary<T>(Dictionary<string, T> dict, ulong hash)
     {
-        foreach (var kvp in dict.OrderBy(x => x.Key))
+        foreach (var kvp in dict)
         {
             hash ^= (ulong)kvp.Key.GetHashCode();
             hash *= 1099511628211UL;
@@ -93,7 +92,13 @@ public partial class PropertyState
     public void SetFloat(string name, float value) => _floats[name] = value;
     public void SetInt(string name, int value) => _ints[name] = value;
     public void SetMatrix(string name, Float4x4 value) => _matrices[name] = (Float4x4)value;
-    public void SetMatrices(string name, Float4x4[] value) => _matrixArr[name] = [.. value.Select(x => (Float4x4)x)];
+    public void SetMatrices(string name, Float4x4[] value)
+    {
+        var arr = new Float4x4[value.Length];
+        for (int i = 0; i < value.Length; i++)
+            arr[i] = (Float4x4)value[i];
+        _matrixArr[name] = arr;
+    }
     public void SetTexture(string name, Texture2D value) => _textures[name] = value;
     public void SetTexture3D(string name, Texture3D value) => _textures3D[name] = value;
     public void SetBuffer(string name, GraphicsBuffer value, uint bindingPoint = 0)
@@ -697,7 +702,13 @@ public partial class PropertyState
     public static void SetGlobalFloat(string name, float value) => s_globalFloats[name] = (float)value;
     public static void SetGlobalInt(string name, int value) => s_globalInts[name] = value;
     public static void SetGlobalMatrix(string name, Float4x4 value) => s_globalMatrices[name] = value;
-    public static void SetGlobalMatrices(string name, Float4x4[] value) => s_globalMatrixArr[name] = [.. value.Select(x => (System.Numerics.Matrix4x4)(Float4x4)x)];
+    public static void SetGlobalMatrices(string name, Float4x4[] value)
+    {
+        var arr = new System.Numerics.Matrix4x4[value.Length];
+        for (int i = 0; i < value.Length; i++)
+            arr[i] = (System.Numerics.Matrix4x4)(Float4x4)value[i];
+        s_globalMatrixArr[name] = arr;
+    }
     public static void SetGlobalTexture(string name, Texture2D value) => s_globalTextures[name] = value;
     public static void SetGlobalTexture3D(string name, Texture3D value) => s_globalTextures3D[name] = value;
     public static void SetGlobalBuffer(string name, GraphicsBuffer value, uint bindingPoint = 0)

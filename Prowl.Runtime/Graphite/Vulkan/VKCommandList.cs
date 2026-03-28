@@ -35,6 +35,12 @@ internal unsafe class VKCommandList : CommandList
     // Track framebuffers created during recording so we can destroy them after submission
     private readonly List<Framebuffer> _framebuffers = new();
 
+    // Track textures attached to the current render pass so EndRenderPassCore
+    // can update their tracked layouts to match the render pass's finalLayout.
+    private readonly List<VKTexture> _currentRPColorAttachments = new();
+    private VKTexture? _currentRPDepthAttachment;
+    private bool _currentRPIsPresentTarget;
+
     internal VKCommandList(VKGraphiteDevice device)
     {
         _device = device;
@@ -90,6 +96,10 @@ internal unsafe class VKCommandList : CommandList
         uint width = 0, height = 0;
         var imageViews = new List<ImageView>();
 
+        // Clear per-pass attachment tracking
+        _currentRPColorAttachments.Clear();
+        _currentRPDepthAttachment = null;
+
         for (int i = 0; i < colorCount; i++)
         {
             ref readonly var att = ref descriptor.ColorAttachments![i];
@@ -102,6 +112,7 @@ internal unsafe class VKCommandList : CommandList
             if (att.Texture is VKTexture vkTex)
             {
                 imageViews.Add(vkTex.ImageView);
+                _currentRPColorAttachments.Add(vkTex);
                 if (width == 0) { width = vkTex.Width; height = vkTex.Height; }
             }
             else if (att.Texture is VKSwapchainImageTexture swapTex)
@@ -129,11 +140,13 @@ internal unsafe class VKCommandList : CommandList
             if (depth.Texture is VKTexture vkDepth)
             {
                 imageViews.Add(vkDepth.ImageView);
+                _currentRPDepthAttachment = vkDepth;
                 if (width == 0) { width = vkDepth.Width; height = vkDepth.Height; }
             }
         }
 
         rpKey.IsPresentTarget = isPresentTarget;
+        _currentRPIsPresentTarget = isPresentTarget;
         if (isPresentTarget)
             IsPresentTarget = true;
         _currentRenderPass = _device.GetOrCreateRenderPass(in rpKey);
@@ -201,6 +214,20 @@ internal unsafe class VKCommandList : CommandList
     {
         _device.Vk.CmdEndRenderPass(Handle);
         _currentPipeline = null;
+
+        // Sync tracked layouts with the render pass's finalLayout.
+        // Without this, VKTexture._mipLayouts would remain stale after
+        // the render pass automatically transitions image layouts.
+        var colorFinalLayout = _currentRPIsPresentTarget
+            ? ImageLayout.PresentSrcKhr
+            : ImageLayout.ColorAttachmentOptimal;
+        foreach (var tex in _currentRPColorAttachments)
+            tex.SetTrackedLayout(colorFinalLayout);
+
+        _currentRPDepthAttachment?.SetTrackedLayout(ImageLayout.DepthStencilAttachmentOptimal);
+
+        _currentRPColorAttachments.Clear();
+        _currentRPDepthAttachment = null;
     }
 
     #endregion
@@ -260,8 +287,15 @@ internal unsafe class VKCommandList : CommandList
 
     protected override void SetViewportCore(float x, float y, float width, float height, float minDepth, float maxDepth)
     {
-        // Vulkan viewport Y is flipped relative to OpenGL
+        // Vulkan viewport Y is flipped relative to OpenGL for 3D rendering compatibility
         var viewport = new Viewport(x, y + height, width, -height, minDepth, maxDepth);
+        _device.Vk.CmdSetViewport(Handle, 0, 1, &viewport);
+    }
+
+    protected override void SetViewportRawCore(float x, float y, float width, float height, float minDepth, float maxDepth)
+    {
+        // Raw viewport without Y-flip - used for 2D blit operations
+        var viewport = new Viewport(x, y, width, height, minDepth, maxDepth);
         _device.Vk.CmdSetViewport(Handle, 0, 1, &viewport);
     }
 

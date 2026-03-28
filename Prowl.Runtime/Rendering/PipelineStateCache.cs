@@ -31,7 +31,7 @@ internal static class PipelineStateCache
         RenderPassLayout renderPassLayout,
         BindGroupLayout[]? bindGroupLayouts = null)
     {
-        ulong hash = ComputeHash(program, rasterizerState, topology, renderPassLayout);
+        ulong hash = ComputeHash(program, rasterizerState, topology, renderPassLayout, bindGroupLayouts);
 
         if (s_cache.TryGetValue(hash, out var cached))
             return cached;
@@ -70,7 +70,8 @@ internal static class PipelineStateCache
         GraphicsProgram program,
         RasterizerState rasterizerState,
         Topology topology,
-        RenderPassLayout renderPassLayout)
+        RenderPassLayout renderPassLayout,
+        BindGroupLayout[]? bindGroupLayouts)
     {
         // FNV-1a 64-bit hash
         ulong hash = 14695981039346656037UL;
@@ -101,6 +102,15 @@ internal static class PipelineStateCache
         if (renderPassLayout.DepthStencilFormat.HasValue)
             hash = FnvMix(hash, (ulong)renderPassLayout.DepthStencilFormat.Value);
         hash = FnvMix(hash, (ulong)renderPassLayout.SampleCount);
+
+        // Hash bind group layouts by identity — different layout objects
+        // produce different Vulkan pipeline layouts and are NOT interchangeable.
+        if (bindGroupLayouts != null)
+        {
+            hash = FnvMix(hash, (ulong)bindGroupLayouts.Length);
+            foreach (var bgl in bindGroupLayouts)
+                hash = FnvMix(hash, (ulong)System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(bgl));
+        }
 
         return hash;
     }

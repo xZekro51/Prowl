@@ -41,8 +41,52 @@ public abstract class Game
     protected int frameCounter;
 
     private readonly WindowManager _windowManager = new();
-    private readonly ImGuiManager _imguiManager = new();
+    private IOverlayManager? _overlayManager;
     private readonly StringBuilder _titleBuilder = new();
+
+    // Pre-computed KeyCode→PaperKey mapping table to avoid per-frame
+    // Enum.GetValues allocation, ToString(), and TryParse overhead.
+    private static readonly (KeyCode key, PaperKey paper)[] s_keyMapping = BuildKeyMapping();
+
+    private static (KeyCode, PaperKey)[] BuildKeyMapping()
+    {
+        var keyCodes = (KeyCode[])Enum.GetValues(typeof(KeyCode));
+        var list = new System.Collections.Generic.List<(KeyCode, PaperKey)>(keyCodes.Length);
+        foreach (KeyCode k in keyCodes)
+        {
+            if (k == KeyCode.Unknown) continue;
+            if (Enum.TryParse(k.ToString(), out PaperKey paperKey))
+                list.Add((k, paperKey));
+        }
+        // Add the manual mappings that don't share names
+        list.Add((KeyCode.Equal, PaperKey.Equals));
+        list.Add((KeyCode.BackSlash, PaperKey.Backslash));
+        list.Add((KeyCode.GraveAccent, PaperKey.Grave));
+        list.Add((KeyCode.KeypadEqual, PaperKey.KeypadEquals));
+        list.Add((KeyCode.Number0, PaperKey.Num0));
+        list.Add((KeyCode.Number1, PaperKey.Num1));
+        list.Add((KeyCode.Number2, PaperKey.Num2));
+        list.Add((KeyCode.Number3, PaperKey.Num3));
+        list.Add((KeyCode.Number4, PaperKey.Num4));
+        list.Add((KeyCode.Number5, PaperKey.Num5));
+        list.Add((KeyCode.Number6, PaperKey.Num6));
+        list.Add((KeyCode.Number7, PaperKey.Num7));
+        list.Add((KeyCode.Number8, PaperKey.Num8));
+        list.Add((KeyCode.Number9, PaperKey.Num9));
+        list.Add((KeyCode.KeypadSubtract, PaperKey.KeypadMinus));
+        list.Add((KeyCode.KeypadAdd, PaperKey.KeypadPlus));
+        list.Add((KeyCode.LeftBracket, PaperKey.LeftBracket));
+        list.Add((KeyCode.RightBracket, PaperKey.RightBracket));
+        list.Add((KeyCode.ShiftLeft, PaperKey.LeftShift));
+        list.Add((KeyCode.ShiftRight, PaperKey.RightShift));
+        list.Add((KeyCode.AltLeft, PaperKey.LeftAlt));
+        list.Add((KeyCode.AltRight, PaperKey.RightAlt));
+        list.Add((KeyCode.ControlLeft, PaperKey.LeftControl));
+        list.Add((KeyCode.ControlRight, PaperKey.RightControl));
+        list.Add((KeyCode.SuperLeft, PaperKey.LeftSuper));
+        list.Add((KeyCode.SuperRight, PaperKey.RightSuper));
+        return [.. list];
+    }
 
     public static EventSystem.EventManager<EventSystem.BaseEvents> BaseEventManager { get; } = new();
 
@@ -60,9 +104,10 @@ public abstract class Game
     protected WindowManager WindowManager => _windowManager;
 
     /// <summary>
-    /// The ImGui manager handling the Dear ImGui lifecycle.
+    /// The overlay manager handling the Dear ImGui (or similar) lifecycle.
+    /// Set by subclasses via <see cref="CreateOverlayManager"/> before the window loads.
     /// </summary>
-    protected ImGuiManager ImGuiManager => _imguiManager;
+    protected IOverlayManager? OverlayManager => _overlayManager;
 
     /// <summary>
     /// The DPI scale factor for the current monitor (1.0 at 96 DPI, 1.5 at 144 DPI, 2.0 at 192 DPI, etc.).
@@ -87,26 +132,33 @@ public abstract class Game
 
             BeginUpdate();
 
+            // Cache once — each access takes a lock.
+            int loadedScenes = SceneManager.LoadedSceneCount;
+
             // Fixed update loop — update all loaded scenes
             fixedTimeAccumulator += delta;
             int count = 0;
             while (fixedTimeAccumulator >= Time.FixedDeltaTime && count++ < 10)
             {
-                if (SceneManager.LoadedSceneCount > 0)
+                if (loadedScenes > 0)
                     SceneManager.FixedUpdateAll();
                 else
                     Scene.Current?.FixedUpdate();
                 fixedTimeAccumulator -= Time.FixedDeltaTime;
             }
+            // Clamp accumulator to prevent spiral-of-death: if physics can't
+            // keep up, drop the excess time instead of queuing more steps.
+            if (fixedTimeAccumulator > Time.FixedDeltaTime)
+                fixedTimeAccumulator = 0;
 
-            if (SceneManager.LoadedSceneCount > 0)
+            if (loadedScenes > 0)
                 SceneManager.UpdateAll();
             else
                 Scene.Current?.Update();
 
             if (DrawGizmos)
             {
-                if (SceneManager.LoadedSceneCount > 0)
+                if (loadedScenes > 0)
                     SceneManager.DrawGizmosAll();
                 else
                     Scene.Current?.DrawGizmos();
@@ -124,7 +176,7 @@ public abstract class Game
                 _titleBuilder.Append(Window.InternalWindow.FramebufferSize.Y);
                 _titleBuilder.Append(" - FPS: ");
                 _titleBuilder.Append(1.0 / Time.DeltaTime);
-                Console.Title = _titleBuilder.ToString();
+                Window.InternalWindow.Title = _titleBuilder.ToString();
             }
 
         }
@@ -137,7 +189,7 @@ public abstract class Game
         }
     }
 
-    public virtual void Run(string title, int width, int height, GraphicsBackendType backend = GraphicsBackendType.OpenGL)
+    public virtual void Run(string title, int width, int height, GraphicsBackendType backend = GraphicsBackendType.Vulkan)
     {
         _title = title;
 
@@ -196,8 +248,9 @@ public abstract class Game
             // Refine DPI using per-window detection (handles multi-monitor setups).
             _windowManager.RefineWindowDpi(systemScale);
 
-            // Initialize Dear ImGui (Silk.NET controller handles GL backend + input)
-            _imguiManager.Initialize();
+            // Initialize overlay manager (e.g. Dear ImGui) if the subclass provides one.
+            _overlayManager = CreateOverlayManager();
+            _overlayManager?.Initialize();
 
             // Subscribe to dynamic DPI changes
             DpiManager.DpiChanged += OnDpiChangedInternal;
@@ -275,6 +328,8 @@ public abstract class Game
 
                     EndGui(_paper);
 
+                    PaperStatsMonitor.Draw(_paper);
+
                     _paperRenderer.RenderTarget = null; // Render to swapchain
                     _paper.EndFrame();
                 }
@@ -300,16 +355,16 @@ public abstract class Game
                     Graphics.SetState(new(), true);
                 }
 
-                // Dear ImGui frame (editor / launcher UI) — requires OpenGL backend.
-                if (_imguiManager.IsReady)
+                // Overlay UI frame (editor / launcher UI) — works on all backends via Graphite.
+                if (_overlayManager is { IsReady: true } overlay)
                 {
-                    _imguiManager.Update((float)delta);
-                    _imguiManager.BeginFrame();
+                    overlay.Update((float)delta);
+                    overlay.BeginFrame();
 
-                    BeginImGui(_imguiManager.Renderer!);
-                    EndImGui(_imguiManager.Renderer!);
+                    BeginImGui(overlay.Renderer!);
+                    EndImGui(overlay.Renderer!);
 
-                    _imguiManager.Render();
+                    overlay.Render();
                 }
 
                 // === End Graphics ===
@@ -337,15 +392,15 @@ public abstract class Game
         };
 
         // Monitor DPI changes when the window moves between monitors or framebuffer resizes.
-        Window.Move += (_) => { if (_imguiManager.IsReady) DpiManager.CheckForChange(); };
-        Window.FramebufferResize += (_) => { if (_imguiManager.IsReady) DpiManager.CheckForChange(); };
+        Window.Move += (_) => { if (_overlayManager is { IsReady: true }) DpiManager.CheckForChange(); };
+        Window.FramebufferResize += (_) => { if (_overlayManager is { IsReady: true }) DpiManager.CheckForChange(); };
 
         Window.Closing += () =>
         {
             DpiManager.DpiChanged -= OnDpiChangedInternal;
             Closing();
 
-            _imguiManager.Dispose();
+            _overlayManager?.Dispose();
 
             // Unload all scenes (additive + primary)
             SceneManager.UnloadAllExcept();
@@ -369,9 +424,19 @@ public abstract class Game
     public virtual void RenderScenes()
     {
         if (SceneManager.LoadedSceneCount > 0)
+        {
+            //Debug.Log($"[Game.RenderScenes] Rendering via SceneManager ({SceneManager.LoadedSceneCount} scenes)");
             SceneManager.RenderAll();
-        else
+        }
+        else if (Scene.Current != null)
+        {
+            //Debug.Log($"[Game.RenderScenes] Rendering Scene.Current (active={Scene.Current.IsActive})");
             Scene.Current?.Render();
+        }
+        else
+        {
+            Debug.LogWarning("[Game.RenderScenes] No scenes to render! SceneManager empty and Scene.Current is null.");
+        }
     }
     public virtual void EndRender() { }
     public virtual void BeginGui(Paper paper) { }
@@ -384,19 +449,21 @@ public abstract class Game
     protected virtual void RenderScenePaperGui(Paper paper)
     {
         if (SceneManager.LoadedSceneCount > 0)
-        {
-            foreach (var scene in SceneManager.LoadedScenes)
-                if (scene.IsActive) scene.OnGui(paper);
-        }
+            SceneManager.OnGuiAll(paper);
         else
-        {
             Scene.Current?.OnGui(paper);
-        }
     }
 
     public virtual void EndGui(Paper paper) { }
     public virtual void BeginImGui(IUIRenderer ui) { }
     public virtual void EndImGui(IUIRenderer ui) { }
+
+    /// <summary>
+    /// Factory method that subclasses override to provide an overlay manager
+    /// (e.g. Dear ImGui). Returns <c>null</c> for standalone game builds
+    /// that don't need an editor overlay.
+    /// </summary>
+    protected virtual IOverlayManager? CreateOverlayManager() => null;
 
     public virtual void Resize(int width, int height) { }
     public virtual void Closing() { }
@@ -419,8 +486,8 @@ public abstract class Game
 
     private void OnDpiChangedInternal(float oldScale, float newScale)
     {
-        // Adjust ImGui font rendering to match the new DPI without rebuilding the font atlas.
-        _imguiManager.OnDpiChanged(newScale);
+        // Adjust overlay font rendering to match the new DPI without rebuilding the font atlas.
+        _overlayManager?.OnDpiChanged(newScale);
 
         // Resize the window to maintain the same logical size (based on monitor DPI only).
         _windowManager.ResizeForDpi();
@@ -467,44 +534,9 @@ public abstract class Game
             c = Input.GetPressedChar();
         }
 
-        // Handle key states for keys
-        // Fortunately Papers key enums have almost all the same names
-        // So we only need to map a few keys manually, the rest we can use reflection
-        foreach (KeyCode k in Enum.GetValues(typeof(KeyCode)))
-            if (k != KeyCode.Unknown)
-                if (Enum.TryParse(k.ToString(), out PaperKey paperKey))
-                    HandleKey(k, paperKey);
-
-        // Handle the few keys that are not the same
-        HandleKey(KeyCode.Equal, PaperKey.Equals);
-        HandleKey(KeyCode.BackSlash, PaperKey.Backslash);
-        HandleKey(KeyCode.GraveAccent, PaperKey.Grave);
-        HandleKey(KeyCode.KeypadEqual, PaperKey.KeypadEquals);
-
-        HandleKey(KeyCode.Number0, PaperKey.Num0);
-        HandleKey(KeyCode.Number1, PaperKey.Num1);
-        HandleKey(KeyCode.Number2, PaperKey.Num2);
-        HandleKey(KeyCode.Number3, PaperKey.Num3);
-        HandleKey(KeyCode.Number4, PaperKey.Num4);
-        HandleKey(KeyCode.Number5, PaperKey.Num5);
-        HandleKey(KeyCode.Number6, PaperKey.Num6);
-        HandleKey(KeyCode.Number7, PaperKey.Num7);
-        HandleKey(KeyCode.Number8, PaperKey.Num8);
-        HandleKey(KeyCode.Number9, PaperKey.Num9);
-
-        HandleKey(KeyCode.KeypadSubtract, PaperKey.KeypadMinus);
-        HandleKey(KeyCode.KeypadAdd, PaperKey.KeypadPlus);
-
-        HandleKey(KeyCode.LeftBracket, PaperKey.LeftBracket);
-        HandleKey(KeyCode.RightBracket, PaperKey.RightBracket);
-        HandleKey(KeyCode.ShiftLeft, PaperKey.LeftShift);
-        HandleKey(KeyCode.ShiftRight, PaperKey.RightShift);
-        HandleKey(KeyCode.AltLeft, PaperKey.LeftAlt);
-        HandleKey(KeyCode.AltRight, PaperKey.RightAlt);
-        HandleKey(KeyCode.ControlLeft, PaperKey.LeftControl);
-        HandleKey(KeyCode.ControlRight, PaperKey.RightControl);
-        HandleKey(KeyCode.SuperLeft, PaperKey.LeftSuper);
-        HandleKey(KeyCode.SuperRight, PaperKey.RightSuper);
+        // Use pre-computed mapping (zero allocation per frame)
+        foreach (var (key, paper) in s_keyMapping)
+            HandleKey(key, paper);
     }
 
     void HandleKey(KeyCode silkKey, PaperKey paperKey)

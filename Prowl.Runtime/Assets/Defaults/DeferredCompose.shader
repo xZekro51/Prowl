@@ -86,7 +86,10 @@ Pass "Compose"
 		// Reconstruct world position from depth
 		vec3 WorldPosFromDepth(float depth, vec2 texCoord) {
 			float z = depth * 2.0 - 1.0;
-			vec4 clipSpacePosition = vec4(texCoord * 2.0 - 1.0, z, 1.0);
+			// Fullscreen passes use non-flipped viewport but the GBuffer was rendered with Y-flip.
+			// We need to flip UV Y for correct NDC reconstruction.
+			vec2 ndcXY = vec2(texCoord.x * 2.0 - 1.0, 1.0 - texCoord.y * 2.0);
+			vec4 clipSpacePosition = vec4(ndcXY, z, 1.0);
 			mat4 invVP = inverse(PROWL_MATRIX_VP);
 			vec4 worldSpacePosition = invVP * clipSpacePosition;
 			worldSpacePosition /= worldSpacePosition.w;
@@ -111,13 +114,14 @@ Pass "Compose"
 
 			// Check shading mode
 			// 0 = Unlit, 1 = Lit
-			if (shadingMode != 1.0) {
+			// Use threshold comparison to handle floating point precision
+			if (shadingMode < 0.5) {
 				// Unlit mode - use albedo + emission from GBuffer
-			    vec3 emission = gbufferD.rgb;
+				vec3 emission = gbufferD.rgb;
 				color = albedo + emission;
 			} else {
 				// Lit mode - combine ambient + light accumulation + emissive
-                vec3 worldNormal = normalize((inverse(transpose(PROWL_MATRIX_V)) * vec4(gbufferB.rgb * 2.0 - 1.0, 0.0)).xyz);
+				vec3 worldNormal = normalize((inverse(transpose(PROWL_MATRIX_V)) * vec4(gbufferB.rgb * 2.0 - 1.0, 0.0)).xyz);
 				vec3 ambient = CalculateAmbient(worldNormal) * albedo * ao * _AmbientStrength;
 				color = ambient + lightAccumulation;
 			}

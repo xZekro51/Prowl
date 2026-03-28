@@ -209,17 +209,18 @@ Pass "DirectionalLight"
 			// Sample depth
 			float depth = texture(_CameraDepthTexture, TexCoords).r;
 
+			// Check shading mode (0 = Unlit, 1 = Lit)
+			// Use threshold comparison to handle floating point precision
+			if (shadingMode < 0.5) {
+				finalColor = vec4(0.0, 0.0, 0.0, 0.0);
+				return;
+			}
+
 			// Reconstruct world position
 			vec3 worldPos = WorldPosFromDepth(depth, TexCoords);
 
 			// Transform normal from view space to world space
 			vec3 worldNormal = normalize(mat3(PROWL_MATRIX_I_V) * viewNormal);
-
-			// Check shading mode (0 = Unlit, 1 = Lit)
-			if (shadingMode != 1.0) {
-				finalColor = vec4(0.0, 0.0, 0.0, 0.0);
-				return;
-			}
 
 			// Calculate directional light contribution only
 			// Note: Ambient lighting is applied in the DeferredCompose shader

@@ -20,11 +20,10 @@ internal class Program
 
         string? projectPath = ParseProjectPath(args);
 
-        // The editor window always uses the OpenGL backend because the Dear ImGui
-        // integration (Silk.NET.OpenGL.Extensions.ImGui) requires a GL context.
-        // Scene and game views render through the Graphite abstraction layer which
-        // can target whichever backend the project settings define.
-        GraphicsBackendType backend = GraphicsBackendType.OpenGL;
+        // The editor can now run on any backend (OpenGL or Vulkan) because the
+        // ImGui integration uses the Graphite abstraction layer instead of
+        // Silk.NET.OpenGL.Extensions.ImGui. Game.Run() has Vulkan → OpenGL fallback.
+        GraphicsBackendType backend = GraphicsBackendType.Vulkan;
 
         var editor = new EditorApplication(projectPath);
         string title = projectPath != null

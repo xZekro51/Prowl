@@ -19,6 +19,11 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Prowl.Runtime\Prowl.Runtime.csproj" />
+    <ProjectReference Include="..\Prowl.ImGui\Prowl.ImGui.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="ImGui.NET" Version="1.90.8.1" />
   </ItemGroup>
 
 </Project>

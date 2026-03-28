@@ -85,11 +85,17 @@ public static class Window
 
         GraphicsAPI api = backend switch
         {
-            GraphicsBackendType.Vulkan => new GraphicsAPI(ContextAPI.Vulkan, ContextProfile.Core, ContextFlags.Default, new APIVersion(1, 2)),
+            GraphicsBackendType.Vulkan => new GraphicsAPI(ContextAPI.Vulkan, ContextProfile.Core, ContextFlags.Default, new APIVersion(1, 3)),
             _ => new GraphicsAPI(ContextAPI.OpenGL, ContextProfile.Core, ContextFlags.ForwardCompatible, new APIVersion(4, 1)),
         };
         options.API = api;
+
+        Debug.Log($"Defined window options...");
+
         InternalWindow = Silk.NET.Windowing.Window.Create(options);
+
+        Debug.Log($"Created Window through options...");
+
 
         InternalWindow.Load += OnLoad;
         InternalWindow.Update += OnUpdate;
@@ -99,6 +105,8 @@ public static class Window
         InternalWindow.FramebufferResize += OnFramebufferResize;
         InternalWindow.Move += OnMove;
         InternalWindow.Closing += OnClose;
+
+        Debug.Log($"Added all stuff to callbacks");
 
         InternalWindow.StateChanged += (state) => { StateChanged?.Invoke(state); };
         InternalWindow.FileDrop += (files) => { FileDrop?.Invoke(files); };
@@ -145,7 +153,8 @@ public static class Window
     {
         InternalInput = InternalWindow.CreateInput();
         WindowInputHandler = new DefaultInputHandler(InternalInput);
-        Graphics.Initialize(ActiveBackend, false);
+        Debug.Log($"[SILK] INITIALIZING GRAPHICS WITH BACKEND: {ActiveBackend}");
+        Graphics.Initialize(ActiveBackend, true); // Enable debug/validation for troubleshooting
 
         // Push Default Handler
         Input.PushHandler(WindowInputHandler);
@@ -156,6 +165,8 @@ public static class Window
     {
         if (!Graphics.Graphite.BeginFrame())
             return;
+
+        Rendering.GraphiteMaterialBinder.BeginFrame();
 
         Render?.Invoke((float)delta);
         PostRender?.Invoke((float)delta);

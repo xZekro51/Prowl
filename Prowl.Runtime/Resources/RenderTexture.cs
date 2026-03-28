@@ -254,9 +254,12 @@ public sealed class RenderTexture : EngineObject, ISerializable
         list.Add((renderTexture, Time.FrameCount));
     }
 
+    // Reusable buffer for UpdatePool to avoid per-frame List allocation.
+    private static readonly List<RenderTexture> s_disposableBuffer = [];
+
     public static void UpdatePool()
     {
-        var disposableTextures = new List<RenderTexture>();
+        s_disposableBuffer.Clear();
 
         // Check for leaked active render textures (held longer than MaxActiveFrames)
         foreach (KeyValuePair<RenderTextureKey, List<(RenderTexture, long frameAcquired)>> pair in active)
@@ -269,7 +272,7 @@ public sealed class RenderTexture : EngineObject, ISerializable
                 if (framesActive > MaxActiveFrames)
                 {
                     Debug.LogWarning($"RenderTexture leak detected! Texture ({renderTexture.Width}x{renderTexture.Height}) has been active for {framesActive} frames (max: {MaxActiveFrames}). Auto-disposing to prevent memory leak.");
-                    disposableTextures.Add(renderTexture);
+                    s_disposableBuffer.Add(renderTexture);
                     pair.Value.RemoveAt(i);
                 }
             }
@@ -283,14 +286,14 @@ public sealed class RenderTexture : EngineObject, ISerializable
                 (RenderTexture renderTexture, long frameCreated) = pair.Value[i];
                 if (Time.FrameCount - frameCreated > MaxUnusedFrames)
                 {
-                    disposableTextures.Add(renderTexture);
+                    s_disposableBuffer.Add(renderTexture);
                     pair.Value.RemoveAt(i);
                 }
             }
         }
 
-        foreach (RenderTexture renderTexture in disposableTextures)
-            renderTexture.Dispose();
+        for (int i = 0; i < s_disposableBuffer.Count; i++)
+            s_disposableBuffer[i].Dispose();
     }
 
     #endregion

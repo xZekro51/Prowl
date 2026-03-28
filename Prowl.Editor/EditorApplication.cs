@@ -16,6 +16,7 @@ using Prowl.Editor.Rendering;
 using Prowl.Editor.Services;
 using Prowl.Editor.Toolbar;
 using Prowl.Editor.Undo;
+using Prowl.ImGuiIntegration;
 using Prowl.Runtime;
 using Prowl.Runtime.Resources;
 using Prowl.PaperUI;
@@ -114,6 +115,8 @@ public sealed class EditorApplication : Game
     {
         ProjectPath = projectPath;
     }
+
+    protected override IOverlayManager? CreateOverlayManager() => new ImGuiManager();
 
     public override void Initialize()
     {

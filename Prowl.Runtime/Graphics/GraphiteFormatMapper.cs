@@ -45,11 +45,11 @@ internal static class GraphiteFormatMapper
         TextureImageFormat.Int3 => Graphite.TextureFormat.RGBA32Sint, // RGB → RGBA
         TextureImageFormat.Int4 => Graphite.TextureFormat.RGBA32Sint,
 
-        // Unsigned short channels
-        TextureImageFormat.UnsignedShort => Graphite.TextureFormat.R16Float,
-        TextureImageFormat.UnsignedShort2 => Graphite.TextureFormat.RG16Float,
-        TextureImageFormat.UnsignedShort3 => Graphite.TextureFormat.RGBA16Float, // RGB → RGBA
-        TextureImageFormat.UnsignedShort4 => Graphite.TextureFormat.RGBA16Float,
+        // Unsigned short channels (normalized 0–65535 → 0.0–1.0)
+        TextureImageFormat.UnsignedShort => Graphite.TextureFormat.R16Unorm,
+        TextureImageFormat.UnsignedShort2 => Graphite.TextureFormat.RG16Unorm,
+        TextureImageFormat.UnsignedShort3 => Graphite.TextureFormat.RGBA16Unorm, // RGB → RGBA
+        TextureImageFormat.UnsignedShort4 => Graphite.TextureFormat.RGBA16Unorm,
 
         // Unsigned int channels
         TextureImageFormat.UnsignedInt => Graphite.TextureFormat.R32Uint,

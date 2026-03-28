@@ -65,6 +65,8 @@ public class PaperRenderer : ICanvasRenderer
 
     // View properties
     private Float4x4 _projection;
+    private int _viewportWidth;
+    private int _viewportHeight;
 
     // CPU staging buffer for the UBO ring
     private byte[]? _uboStagingBuffer;
@@ -74,6 +76,14 @@ public class PaperRenderer : ICanvasRenderer
     /// When <c>null</c>, renders to the swapchain (screen).
     /// </summary>
     public RenderTexture? RenderTarget { get; set; }
+
+    /// <summary>
+    /// When <c>true</c>, the next flush will clear the render target instead of
+    /// preserving existing content (LoadOp.Clear vs LoadOp.Load).  Automatically
+    /// reset to <c>false</c> after the flush.  Use this for off-screen canvases
+    /// that need a fresh clear each frame (e.g. <see cref="WorldCanvas"/>).
+    /// </summary>
+    public bool ShouldClear { get; set; }
 
     public void Initialize(int width, int height)
     {
@@ -88,6 +98,8 @@ public class PaperRenderer : ICanvasRenderer
     public void UpdateProjection(int width, int height)
     {
         _projection = Float4x4.CreateOrthoOffCenter(0, width, height, 0, -1, 1);
+        _viewportWidth = width;
+        _viewportHeight = height;
     }
 
     public void Cleanup()
@@ -302,9 +314,34 @@ public class PaperRenderer : ICanvasRenderer
 
         // Begin render pass
         Graphite.Texture? swapchainTex = null;
+        bool clearRT = ShouldClear;
+        ShouldClear = false;
         if (RenderTarget != null)
         {
-            cmd.BeginRenderPass(RenderTarget, LoadOp.Load, clearDepth: false);
+            if (clearRT)
+            {
+                // LoadOp.Clear uses initialLayout=Undefined, so no pre-barrier needed.
+                cmd.BeginRenderPass(RenderTarget, LoadOp.Clear, clearDepth: true);
+            }
+            else
+            {
+                // Ensure target attachments are in RenderTarget state for LoadOp.Load.
+                // The main pipeline or a prior frame may have left them in ShaderResource.
+                if (!Graphics.IsOpenGL)
+                {
+                    var colorAttachments = RenderTarget.frameBuffer.GraphiteColorAttachments;
+                    if (colorAttachments != null)
+                    {
+                        foreach (var tex in colorAttachments)
+                        {
+                            if (tex != null)
+                                cmd.ResourceBarrier(new Graphite.ResourceBarrier(
+                                    tex, ResourceState.ShaderResource, ResourceState.RenderTarget));
+                        }
+                    }
+                }
+                cmd.BeginRenderPass(RenderTarget, LoadOp.Load, clearDepth: false);
+            }
         }
         else
         {
@@ -344,6 +381,7 @@ public class PaperRenderer : ICanvasRenderer
             renderPassLayout, _bindGroupLayouts);
 
         cmd.SetPipeline(pipeline);
+        cmd.SetViewport(0, 0, _viewportWidth, _viewportHeight);
 
         // Bind vertex and index buffers
         cmd.SetVertexBuffer(0, _vertexBuffer!);

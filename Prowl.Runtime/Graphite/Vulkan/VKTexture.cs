@@ -211,6 +211,17 @@ internal unsafe class VKTexture : Texture
             _mipLayouts[m] = newLayout;
     }
 
+    /// <summary>
+    /// Updates the tracked layout for all mip levels without issuing a barrier.
+    /// Called by <see cref="VKCommandList.EndRenderPassCore"/> to sync the tracked
+    /// layout with the render pass's <c>finalLayout</c>, which Vulkan applies
+    /// automatically at render pass end.
+    /// </summary>
+    internal void SetTrackedLayout(ImageLayout layout)
+    {
+        Array.Fill(_mipLayouts, layout);
+    }
+
     protected override void DisposeResources()
     {
         _device.Vk.DestroyImageView(_device.Device, ImageView, null);

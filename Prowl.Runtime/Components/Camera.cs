@@ -158,6 +158,23 @@ public class Camera : MonoBehaviour
     public override void OnEnable()
     {
         _firstFrame = true;
+        GameObject?.Scene?.RegisterCamera(this);
+    }
+
+    public override void OnDisable()
+    {
+        GameObject?.Scene?.UnregisterCamera(this);
+    }
+
+    public override void OnAddedToScene()
+    {
+        if (Enabled && EnabledInHierarchy)
+            GameObject?.Scene?.RegisterCamera(this);
+    }
+
+    public override void OnRemovedFromScene()
+    {
+        GameObject?.Scene?.UnregisterCamera(this);
     }
 
     public void Render(in RenderingData? data = null)

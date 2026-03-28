@@ -155,12 +155,12 @@ Pass "Standard"
             }
 
 			void main()
-			{
-				// Albedo
-				vec4 albedo = texture(_MainTex, texCoord0) * vColor * _MainColor;
+				{
+					// Albedo
+					vec4 albedo = texture(_MainTex, texCoord0) * vColor * _MainColor;
 
-				// Normals
-                vec3 worldNormal;
+					// Normals
+					vec3 worldNormal;
 #ifdef HAS_TANGENTS
 				// Create tangent to world matrix
 				mat3 TBN = mat3(normalize(vTangent), normalize(vBitangent), normalize(vNormal));

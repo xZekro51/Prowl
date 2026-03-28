@@ -14,6 +14,7 @@ public class GLBuffer : Buffer
 {
     private readonly GLGraphiteDevice _device;
     internal uint Handle { get; private set; }
+    public override uint NativeHandle => Handle;
 
     internal GLBuffer(GLGraphiteDevice device, in BufferDescriptor descriptor)
     {

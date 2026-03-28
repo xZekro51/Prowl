@@ -220,11 +220,13 @@ public class WorldCanvas : MonoBehaviour, IRenderable
     {
         if (_renderTexture.IsNotValid() || _paper == null) return;
 
-        // Begin rendering to the render texture
-        _renderTexture.Begin();
-
-        // Clear the render texture
-        Graphics.Clear(0f, 0f, 0f, 0f, ClearFlags.Color);
+        // Legacy GL path: bind framebuffer and clear via GL calls.
+        // On Vulkan these are no-ops; PaperRenderer handles everything via Graphite.
+        if (Graphics.IsOpenGL)
+        {
+            _renderTexture.Begin();
+            Graphics.Clear(0f, 0f, 0f, 0f, ClearFlags.Color);
+        }
 
         // Begin Paper frame
         _paper.BeginFrame(Time.DeltaTime);
@@ -234,10 +236,12 @@ public class WorldCanvas : MonoBehaviour, IRenderable
 
         // End Paper frame (this will render to the texture)
         _paperRenderer!.RenderTarget = _renderTexture;
+        _paperRenderer.ShouldClear = true; // Clear the RT before drawing UI each frame
         _paper.EndFrame();
 
-        // End rendering to the render texture
-        _renderTexture.End();
+        // Legacy GL path: unbind framebuffer.
+        if (Graphics.IsOpenGL)
+            _renderTexture.End();
     }
 
     // IRenderable implementation

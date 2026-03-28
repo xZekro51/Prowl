@@ -3,7 +3,6 @@
 
 using System;
 using System.Collections.Generic;
-using System.Linq;
 
 using Prowl.Runtime.Resources;
 using Prowl.Vector;
@@ -66,6 +65,17 @@ public class DefaultRenderPipeline : RenderPipeline
     private Graphite.Texture? _graphiteBlitLastSourceTex;
     private Graphite.BindGroup? _graphiteBlitBindGroup;
 
+    // Reusable per-frame collections to avoid GC pressure in GatherImageEffects
+    private readonly Dictionary<RenderStage, List<ImageEffect>> _reusableEffectsByStage = new()
+    {
+        { RenderStage.BeforeGBuffer, new List<ImageEffect>() },
+        { RenderStage.AfterGBuffer, new List<ImageEffect>() },
+        { RenderStage.DuringLighting, new List<ImageEffect>() },
+        { RenderStage.AfterLighting, new List<ImageEffect>() },
+        { RenderStage.PostProcess, new List<ImageEffect>() }
+    };
+    private readonly List<ImageEffect> _reusableAllEffects = [];
+
     #endregion
 
     #region Configuration
@@ -122,6 +132,11 @@ public class DefaultRenderPipeline : RenderPipeline
         // Main rendering with correct order of operations
         Internal_Render(camera, data);
 
+        // Clear reusable effect buffers after rendering
+        _reusableAllEffects.Clear();
+        foreach (var list in _reusableEffectsByStage.Values)
+            list.Clear();
+
         PropertyState.ClearGlobals();
 
         // Publish per-frame render stats
@@ -132,14 +147,9 @@ public class DefaultRenderPipeline : RenderPipeline
 
     private Dictionary<RenderStage, List<ImageEffect>> GatherImageEffects(Camera camera)
     {
-        var effectsByStage = new Dictionary<RenderStage, List<ImageEffect>>
-        {
-            { RenderStage.BeforeGBuffer, new List<ImageEffect>() },
-            { RenderStage.AfterGBuffer, new List<ImageEffect>() },
-            { RenderStage.DuringLighting, new List<ImageEffect>() },
-            { RenderStage.AfterLighting, new List<ImageEffect>() },
-            { RenderStage.PostProcess, new List<ImageEffect>() }
-        };
+        // Clear reusable lists instead of allocating new ones
+        foreach (var list in _reusableEffectsByStage.Values)
+            list.Clear();
 
         foreach (ImageEffect effect in camera.Effects)
         {
@@ -154,10 +164,10 @@ public class DefaultRenderPipeline : RenderPipeline
             }
             #pragma warning restore CS0618
 
-            effectsByStage[stage].Add(effect);
+            _reusableEffectsByStage[stage].Add(effect);
         }
 
-        return effectsByStage;
+        return _reusableEffectsByStage;
     }
 
     private void ExecuteImageEffects(RenderContext context, List<ImageEffect> effects)
@@ -167,7 +177,14 @@ public class DefaultRenderPipeline : RenderPipeline
 
         foreach (var effect in effects)
         {
-            effect.OnRenderEffect(context);
+            try
+            {
+                effect.OnRenderEffect(context);
+            }
+            catch (System.Exception ex)
+            {
+                Debug.LogError($"Image effect {effect.GetType().Name} threw: {ex}");
+            }
         }
     }
 
@@ -181,23 +198,24 @@ public class DefaultRenderPipeline : RenderPipeline
         // 0. Setup variables, and prepare the camera
         bool isHDR = camera.HDR;
         var effectsByStage = GatherImageEffects(camera);
-        var allEffects = new List<ImageEffect>();
+        _reusableAllEffects.Clear();
         foreach (var effects in effectsByStage.Values)
-            allEffects.AddRange(effects);
+            _reusableAllEffects.AddRange(effects);
+        var allEffects = _reusableAllEffects;
 
         IReadOnlyList<IRenderableLight> lights = camera.GameObject.Scene.Lights;
         RenderTexture target = camera.UpdateRenderData();
 
-        // Bridge phase: create Graphite command buffer for parallel recording.
-        // Commands are recorded alongside legacy GL calls but NOT submitted —
-        // this validates the RenderCommandBuffer API and pipeline structure.
+        // Create Graphite command buffer for rendering.
+        // On Vulkan this is the primary rendering path; on OpenGL it records
+        // parallel commands alongside legacy GL calls.
         RenderCommandBuffer? graphiteCmd = null;
         if (Graphics.IsGraphiteReady)
         {
-            try { graphiteCmd = Graphics.CreateCommandBuffer("DefaultPipeline"); }
-            catch { /* Graphite not fully ready */ }
+            graphiteCmd = Graphics.CreateCommandBuffer("DefaultPipeline");
         }
         Graphics.ActiveGraphiteCmdBuffer = graphiteCmd;
+        bool isVulkan = !Graphics.IsOpenGL;
 
         // =======================================================
         // 1. Pre Cull
@@ -241,71 +259,73 @@ public class DefaultRenderPipeline : RenderPipeline
             ]);
 
         // Bind GBuffer as the target
-        Graphics.BindFramebuffer(gBuffer.frameBuffer);
+        if (!isVulkan)
+            Graphics.BindFramebuffer(gBuffer.frameBuffer);
 
-        // Bridge phase: begin Graphite render pass for GBuffer (clear handled by LoadOp.Clear)
+        // Begin Graphite render pass for GBuffer (clear handled by LoadOp.Clear)
         if (graphiteCmd != null)
         {
-            try
-            {
-                var clearFloat4 = new Float4(
-                    (float)camera.ClearColor.R,
-                    (float)camera.ClearColor.G,
-                    (float)camera.ClearColor.B,
-                    (float)camera.ClearColor.A);
-                var loadOp = camera.ClearFlags == CameraClearFlags.Nothing
-                    ? Graphite.LoadOp.DontCare
-                    : Graphite.LoadOp.Clear;
-                graphiteCmd.BeginRenderPass(gBuffer, loadOp, clearFloat4, camera.ClearFlags != CameraClearFlags.Nothing);
-            }
-            catch { /* Graphite render pass setup failed */ }
+            var clearFloat4 = new Float4(
+                (float)camera.ClearColor.R,
+                (float)camera.ClearColor.G,
+                (float)camera.ClearColor.B,
+                (float)camera.ClearColor.A);
+            var loadOp = camera.ClearFlags == CameraClearFlags.Nothing
+                ? Graphite.LoadOp.DontCare
+                : Graphite.LoadOp.Clear;
+            graphiteCmd.BeginRenderPass(gBuffer, loadOp, clearFloat4, camera.ClearFlags != CameraClearFlags.Nothing);
+            graphiteCmd.SetViewport(0, 0, gBuffer.Width, gBuffer.Height);
+            graphiteCmd.SetScissor(0, 0, (uint)gBuffer.Width, (uint)gBuffer.Height);
         }
 
-        // 6.1 Clear GBuffer
-        switch (camera.ClearFlags)
+        // 6.1 Clear GBuffer (on Vulkan, LoadOp.Clear already handles this)
+        if (!isVulkan)
         {
-            case CameraClearFlags.Skybox:
-                Graphics.Clear(
-                    (float)camera.ClearColor.R,
-                    (float)camera.ClearColor.G,
-                    (float)camera.ClearColor.B,
-                    (float)camera.ClearColor.A,
-                    ClearFlags.Color | ClearFlags.Depth
-                );
+            switch (camera.ClearFlags)
+            {
+                case CameraClearFlags.Skybox:
+                    Graphics.Clear(
+                        (float)camera.ClearColor.R,
+                        (float)camera.ClearColor.G,
+                        (float)camera.ClearColor.B,
+                        (float)camera.ClearColor.A,
+                        ClearFlags.Color | ClearFlags.Depth
+                    );
+                    break;
 
-                if (css.Scene.Skybox.Enabled)
-                    RenderSkybox(css);
-                break;
+                case CameraClearFlags.SolidColor:
+                    Graphics.Clear(
+                        (float)camera.ClearColor.R,
+                        (float)camera.ClearColor.G,
+                        (float)camera.ClearColor.B,
+                        (float)camera.ClearColor.A,
+                        ClearFlags.Color | ClearFlags.Depth
+                    );
+                    break;
 
-            case CameraClearFlags.SolidColor:
-                Graphics.Clear(
-                    (float)camera.ClearColor.R,
-                    (float)camera.ClearColor.G,
-                    (float)camera.ClearColor.B,
-                    (float)camera.ClearColor.A,
-                    ClearFlags.Color | ClearFlags.Depth
-                );
-                break;
+                case CameraClearFlags.Depth:
+                    Graphics.Clear(0, 0, 0, 0, ClearFlags.Depth);
+                    break;
 
-            case CameraClearFlags.Depth:
-                Graphics.Clear(0, 0, 0, 0, ClearFlags.Depth);
-                break;
-
-            case CameraClearFlags.Nothing:
-                // Do not clear anything
-                break;
+                case CameraClearFlags.Nothing:
+                    break;
+            }
         }
+
+        // Render skybox (works on both backends via DrawMeshNow)
+        if (camera.ClearFlags == CameraClearFlags.Skybox && css.Scene.Skybox.Enabled)
+            RenderSkybox(css);
 
         // 6.2 Draw opaque geometry to GBuffer
         //List<IRenderable> sortFrontToBack = SortRenderables(renderables, culledRenderableIndices, css.CameraPosition, SortMode.FrontToBack);
         DrawRenderables(renderables, "RenderOrder", "Opaque", new ViewerData(css), culledRenderableIndices, false); // Its deffered rendering, overdraw is cheap
 
-        // Bridge phase: end GBuffer Graphite render pass
+        // End GBuffer Graphite render pass
         if (graphiteCmd?.InRenderPass == true)
-        {
-            try { graphiteCmd.EndRenderPass(); }
-            catch { }
-        }
+            graphiteCmd.EndRenderPass();
+
+        // Transition GBuffer attachments to ShaderResource for lighting sampling
+        TransitionToShaderResource(gBuffer);
 
         // =======================================================
         // 7. Deferred Lighting Pass - Render each light's contribution
@@ -322,31 +342,40 @@ public class DefaultRenderPipeline : RenderPipeline
         PropertyState.SetGlobalTexture("_CameraDepthTexture", gBuffer.InternalDepth);
 
         // Clear light accumulation to black
-        Graphics.BindFramebuffer(lightAccumulation.frameBuffer);
-        Graphics.Clear(0, 0, 0, 0, ClearFlags.Color);
+        if (!isVulkan)
+        {
+            Graphics.BindFramebuffer(lightAccumulation.frameBuffer);
+            Graphics.Clear(0, 0, 0, 0, ClearFlags.Color);
+        }
 
-        // Bridge phase: begin Graphite render pass for light accumulation
+        // Begin Graphite render pass for light accumulation
         if (graphiteCmd != null)
         {
-            try { graphiteCmd.BeginRenderPass(lightAccumulation, Graphite.LoadOp.Clear, Float4.Zero, false); }
-            catch { }
+            graphiteCmd.BeginRenderPass(lightAccumulation, Graphite.LoadOp.Clear, Float4.Zero, false);
+            // Use SetViewportRaw (no Y-flip) for fullscreen passes that sample GBuffer.
+            // GBuffer was rendered with Y-flip, storing scene top at texture row 0.
+            // Without Y-flip, NDC (-1,-1) maps to framebuffer top, UV (0,0) samples row 0 = scene top.
+            graphiteCmd.SetViewportRaw(0, 0, lightAccumulation.Width, lightAccumulation.Height);
+            graphiteCmd.SetScissor(0, 0, (uint)lightAccumulation.Width, (uint)lightAccumulation.Height);
         }
 
         // Render each light's contribution (additive blending)
+        int renderedLightCount = 0;
         foreach (IRenderableLight light in lights)
         {
             if (css.CullingMask.HasLayer(light.GetLayer()) == false)
                 continue;
 
             light.OnRenderLight(gBuffer, lightAccumulation, css);
+            renderedLightCount++;
         }
 
-        // Bridge phase: end lighting Graphite render pass
+        // End lighting Graphite render pass
         if (graphiteCmd?.InRenderPass == true)
-        {
-            try { graphiteCmd.EndRenderPass(); }
-            catch { }
-        }
+            graphiteCmd.EndRenderPass();
+
+        // Transition light accumulation to ShaderResource for compose/effects sampling
+        TransitionToShaderResource(lightAccumulation);
 
         // =======================================================
         // 7.5. Apply DuringLighting effects (e.g., SSPT, GTAO that need light accumulation)
@@ -406,30 +435,64 @@ public class DefaultRenderPipeline : RenderPipeline
         _deferredCompose.SetColor("_AmbientGroundColor", ambient.GroundColor);
         _deferredCompose.SetFloat("_AmbientStrength", (float)ambient.Strength);
 
-        // Bridge phase: begin Graphite render pass for composition
+        // Begin Graphite render pass for composition
         if (graphiteCmd != null)
         {
-            try { graphiteCmd.BeginRenderPass(composedOutput, Graphite.LoadOp.Clear, Float4.Zero, true); }
-            catch { }
+            graphiteCmd.BeginRenderPass(composedOutput, Graphite.LoadOp.Clear, Float4.Zero, true);
+            // Use SetViewportRaw (no Y-flip) for fullscreen passes that sample previous render targets
+            graphiteCmd.SetViewportRaw(0, 0, composedOutput.Width, composedOutput.Height);
+            graphiteCmd.SetScissor(0, 0, (uint)composedOutput.Width, (uint)composedOutput.Height);
         }
 
         // Perform composition
         Blit(lightAccumulation, composedOutput, _deferredCompose, 0, false, false);
 
-        // Bridge phase: end compose Graphite render pass
+        // End compose Graphite render pass
         if (graphiteCmd?.InRenderPass == true)
-        {
-            try { graphiteCmd.EndRenderPass(); }
-            catch { }
-        }
+            graphiteCmd.EndRenderPass();
 
         // Copy depth from GBuffer to composed output for transparent rendering
-        Graphics.BindFramebuffer(gBuffer.frameBuffer, FBOTarget.Read);
-        Graphics.BindFramebuffer(composedOutput.frameBuffer, FBOTarget.Draw);
-        Graphics.BlitFramebuffer(0, 0, gBuffer.Width, gBuffer.Height, 0, 0, composedOutput.Width, composedOutput.Height, ClearFlags.Depth, BlitFilter.Nearest);
+        if (isVulkan)
+        {
+            // Vulkan: copy depth texture via Graphite command
+            var srcDepth = gBuffer.frameBuffer.GraphiteDepthAttachment;
+            var dstDepth = composedOutput.frameBuffer.GraphiteDepthAttachment;
+            if (srcDepth != null && dstDepth != null && graphiteCmd != null)
+            {
+                graphiteCmd.ResourceBarrier(new Graphite.ResourceBarrier(
+                    srcDepth, Graphite.ResourceState.DepthWrite, Graphite.ResourceState.CopySource));
+                graphiteCmd.ResourceBarrier(new Graphite.ResourceBarrier(
+                    dstDepth, Graphite.ResourceState.DepthWrite, Graphite.ResourceState.CopyDestination));
+
+                graphiteCmd.CopyTextureToTexture(new Graphite.TextureTextureCopy
+                {
+                    Source = srcDepth,
+                    Destination = dstDepth,
+                    Width = (uint)gBuffer.Width,
+                    Height = (uint)gBuffer.Height,
+                    Depth = 1,
+                });
+
+                graphiteCmd.ResourceBarrier(new Graphite.ResourceBarrier(
+                    srcDepth, Graphite.ResourceState.CopySource, Graphite.ResourceState.ShaderResource));
+                graphiteCmd.ResourceBarrier(new Graphite.ResourceBarrier(
+                    dstDepth, Graphite.ResourceState.CopyDestination, Graphite.ResourceState.DepthWrite));
+            }
+        }
+        else
+        {
+            Graphics.BindFramebuffer(gBuffer.frameBuffer, FBOTarget.Read);
+            Graphics.BindFramebuffer(composedOutput.frameBuffer, FBOTarget.Draw);
+            Graphics.BlitFramebuffer(0, 0, gBuffer.Width, gBuffer.Height, 0, 0, composedOutput.Width, composedOutput.Height, ClearFlags.Depth, BlitFilter.Nearest);
+        }
 
         // Bind composed output for transparent rendering
-        Graphics.BindFramebuffer(composedOutput.frameBuffer);
+        if (!isVulkan)
+            Graphics.BindFramebuffer(composedOutput.frameBuffer);
+
+        // Transition composedOutput to ShaderResource for AfterLighting effects
+        // that may sample it via manually-set textures in Blit(target, mat)
+        TransitionToShaderResource(composedOutput);
 
         // =======================================================
         // 9. Apply AfterLighting effects (opaque post-processing)
@@ -451,22 +514,25 @@ public class DefaultRenderPipeline : RenderPipeline
 
         // =======================================================
         // 10. Transparent geometry (Forward rendered on top of composed result)
-        // Bridge phase: begin Graphite render pass for forward transparent (load existing content)
+        // Begin Graphite render pass for forward transparent (load existing content)
+        // Ensure composedOutput is in RenderTarget state for LoadOp.Load
+        TransitionToRenderTarget(composedOutput);
         if (graphiteCmd != null)
         {
-            try { graphiteCmd.BeginRenderPass(composedOutput, Graphite.LoadOp.Load, null, false); }
-            catch { }
+            graphiteCmd.BeginRenderPass(composedOutput, Graphite.LoadOp.Load, null, false);
+            graphiteCmd.SetViewport(0, 0, composedOutput.Width, composedOutput.Height);
+            graphiteCmd.SetScissor(0, 0, (uint)composedOutput.Width, (uint)composedOutput.Height);
         }
 
         List<IRenderable> sortBackToFront = SortRenderables(renderables, culledRenderableIndices, css.CameraPosition, SortMode.BackToFront);
         DrawRenderables(sortBackToFront, "RenderOrder", "Transparent", new ViewerData(css), null, false);
 
-        // Bridge phase: end forward transparent Graphite render pass
+        // End forward transparent Graphite render pass
         if (graphiteCmd?.InRenderPass == true)
-        {
-            try { graphiteCmd.EndRenderPass(); }
-            catch { }
-        }
+            graphiteCmd.EndRenderPass();
+
+        // Transition composedOutput to ShaderResource for PostProcess effects
+        TransitionToShaderResource(composedOutput);
 
         // =======================================================
         // 11. Apply PostProcess effects (final post-processing)
@@ -501,27 +567,52 @@ public class DefaultRenderPipeline : RenderPipeline
         }
 
         // =======================================================
-        // 12. Render Gizmos
+        // 12. Render Gizmos (needs an active render pass on composedOutput for Vulkan)
+        // Ensure composedOutput is in RenderTarget state for LoadOp.Load
+        TransitionToRenderTarget(composedOutput);
+        if (graphiteCmd != null)
+        {
+            graphiteCmd.BeginRenderPass(composedOutput, Graphite.LoadOp.Load, null, false);
+            graphiteCmd.SetViewport(0, 0, composedOutput.Width, composedOutput.Height);
+            graphiteCmd.SetScissor(0, 0, (uint)composedOutput.Width, (uint)composedOutput.Height);
+        }
+
         RenderGizmos(css);
+
+        if (graphiteCmd?.InRenderPass == true)
+            graphiteCmd.EndRenderPass();
+
+        // Submit the main Graphite command buffer BEFORE the final blit so that
+        // all scene rendering (GBuffer, lighting, composition, etc.) is submitted
+        // to the GPU before the swapchain/target blit reads composedOutput.
+        // On Vulkan, command buffers execute in submission order within the same
+        // queue, so the blit must be submitted after the main pipeline.
+        Graphics.ActiveGraphiteCmdBuffer = null;
+        if (graphiteCmd != null)
+        {
+            graphiteCmd.Submit();
+            graphiteCmd.Dispose();
+            graphiteCmd = null;
+        }
 
         // =======================================================
         // 13. Blit Result to target, If target is null Blit will go to the Screen/Window
-        Blit(composedOutput, target, null, 0, false, false);
-
-        // On non-GL backends (Vulkan), the legacy GL Blit above is a no-op.
-        // Blit the composed scene output to the swapchain via Graphite so the
-        // rendered content is actually visible.  This must happen before the
-        // temporary render textures are released back to the pool.
-        if (!Graphics.IsOpenGL && target == null)
+        if (isVulkan)
         {
-            try
+            if (target == null)
             {
+                // Vulkan swapchain blit via dedicated Graphite command buffer
                 BlitToSwapchainGraphite(composedOutput);
             }
-            catch (Exception e)
+            else if (target.IsValid())
             {
-                Debug.LogWarning($"[DefaultRenderPipeline] Failed to blit to swapchain: {e.Message}");
+                // Vulkan: blit composedOutput into camera render target via Graphite
+                BlitToRenderTargetGraphite(composedOutput, target, null);
             }
+        }
+        else
+        {
+            Blit(composedOutput, target, null, 0, false, false);
         }
 
         // =======================================================
@@ -535,15 +626,12 @@ public class DefaultRenderPipeline : RenderPipeline
         RenderTexture.ReleaseTemporaryRT(lightAccumulation);
         RenderTexture.ReleaseTemporaryRT(composedOutput);
 
-        // Bridge phase: dispose the Graphite command buffer recorded alongside
-        // legacy GL calls.  The recorded commands lack bind group bindings and
-        // cannot produce correct output yet (Phase 4).
-        Graphics.ActiveGraphiteCmdBuffer = null;
-        graphiteCmd?.Dispose();
-
         // Reset bound framebuffer if any is bound
-        Graphics.UnbindFramebuffer();
-        Graphics.Viewport(0, 0, (uint)Window.InternalWindow.FramebufferSize.X, (uint)Window.InternalWindow.FramebufferSize.Y);
+        if (!isVulkan)
+        {
+            Graphics.UnbindFramebuffer();
+            Graphics.Viewport(0, 0, (uint)Window.InternalWindow.FramebufferSize.X, (uint)Window.InternalWindow.FramebufferSize.Y);
+        }
     }
 
     /// <summary>
@@ -600,11 +688,20 @@ public class DefaultRenderPipeline : RenderPipeline
         };
 
         using var cmd = Graphics.CreateCommandBuffer("SwapchainBlit");
+
+        // Transition the source texture to ShaderReadOnlyOptimal before sampling.
+        // Without this barrier the texture layout may still be Undefined or
+        // ColorAttachmentOptimal, causing the fragment shader to read garbage.
+        cmd.ResourceBarrier(new Graphite.ResourceBarrier(
+            sourceGraphiteTex, Graphite.ResourceState.RenderTarget, Graphite.ResourceState.ShaderResource));
+
         cmd.BeginRenderPass(in desc, renderPassLayout);
 
         // Vulkan pipelines use dynamic viewport/scissor state — these MUST be set
         // before any draw call or the GPU will read uninitialised dynamic state.
-        cmd.SetViewport(0, 0, swapchainTex.Width, swapchainTex.Height);
+        // Use SetViewportRaw for the swapchain blit to avoid double Y-flip
+        // (the source texture was already rendered with Y-flip applied).
+        cmd.SetViewportRaw(0, 0, swapchainTex.Width, swapchainTex.Height);
         cmd.SetScissor(0, 0, swapchainTex.Width, swapchainTex.Height);
 
         var pipeline = PipelineStateCache.GetOrCreate(
@@ -621,6 +718,117 @@ public class DefaultRenderPipeline : RenderPipeline
         Graphics.SwapchainClearedThisFrame = true;
     }
 
+    /// <summary>
+    /// Blits the composed scene output to a camera render target using Graphite commands.
+    /// Called on Vulkan when the camera renders to a texture instead of the swapchain.
+    /// </summary>
+    private void BlitToRenderTargetGraphite(RenderTexture source, RenderTexture target, RenderCommandBuffer? existingCmd)
+    {
+        var sourceGraphiteTex = source.frameBuffer.GraphiteColorAttachments is { Length: > 0 }
+            ? source.frameBuffer.GraphiteColorAttachments[0]
+            : null;
+        if (sourceGraphiteTex == null)
+            return;
+
+        var device = Graphics.Graphite;
+
+        // Lazy-initialize shared resources
+        _graphiteBlitSampler ??= device.CreateSampler(Graphite.SamplerDescriptor.LinearClamp);
+        _graphiteBlitTexBGL ??= device.CreateBindGroupLayout(new Graphite.BindGroupLayoutDescriptor(
+            Graphite.BindGroupLayoutEntry.CombinedTextureSampler(0, Graphite.ShaderStage.Fragment, name: "_MainTex")));
+
+        // Create a bind group for this source texture
+        var texBindGroup = device.CreateBindGroup(new Graphite.BindGroupDescriptor(
+            _graphiteBlitTexBGL,
+            Graphite.BindGroupEntry.ForTextureSampler(0, sourceGraphiteTex, _graphiteBlitSampler)));
+
+        // Resolve the blit shader program
+        var blitMat = BlitMaterial;
+        var pass = blitMat.Shader.GetPass(0);
+        if (!pass.TryGetVariantProgram(blitMat._localKeywords, out var program))
+            return;
+
+        var quad = Mesh.GetFullscreenQuad();
+        quad.Upload();
+        var vao = quad.VertexArrayObject;
+        if (vao?.GraphiteVertexLayout == null)
+            return;
+
+        var renderPassLayout = GraphiteFormatMapper.MapRenderPassLayout(target.frameBuffer);
+
+        // Use the existing command buffer if provided, otherwise create a new one
+        var cmd = existingCmd ?? Graphics.CreateCommandBuffer("RenderTargetBlit");
+        bool ownCmd = existingCmd == null;
+
+        cmd.ResourceBarrier(new Graphite.ResourceBarrier(
+            sourceGraphiteTex, Graphite.ResourceState.RenderTarget, Graphite.ResourceState.ShaderResource));
+
+        cmd.BeginRenderPass(target, Graphite.LoadOp.Clear, Float4.Zero, false);
+        // Use SetViewportRaw (no Y-flip) for fullscreen blits that sample render targets
+        cmd.SetViewportRaw(0, 0, target.Width, target.Height);
+        cmd.SetScissor(0, 0, (uint)target.Width, (uint)target.Height);
+
+        var pipeline = PipelineStateCache.GetOrCreate(
+            program, vao.GraphiteVertexLayout.Value, pass.State, Topology.Triangles,
+            renderPassLayout, [_graphiteBlitTexBGL]);
+        cmd.SetPipeline(pipeline);
+        cmd.SetBindGroup(0, texBindGroup);
+        cmd.SetMeshBuffers(quad);
+        cmd.DrawIndexed((uint)quad.IndexCount);
+
+        cmd.EndRenderPass();
+
+        if (ownCmd)
+        {
+            cmd.Submit();
+            cmd.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// Vulkan fallback: clears the swapchain to the camera's clear color when
+    /// the legacy GL scene rendering pipeline cannot be used.
+    /// </summary>
+    private void ClearSwapchainFallback(Camera camera)
+    {
+        if (!Graphics.IsGraphiteReady)
+            return;
+
+        try
+        {
+            var device = Graphics.Graphite;
+            var swapchainTex = device.GetSwapchainTexture();
+
+            var clearColor = camera.ClearFlags == CameraClearFlags.Nothing
+                ? Float4.Zero
+                : new Float4(
+                    (float)camera.ClearColor.R,
+                    (float)camera.ClearColor.G,
+                    (float)camera.ClearColor.B,
+                    (float)camera.ClearColor.A);
+
+            var colorAtt = Graphite.RenderPassColorAttachment.Clear(swapchainTex, clearColor);
+            var desc = new Graphite.RenderPassDescriptor
+            {
+                ColorAttachments = [colorAtt],
+            };
+            var renderPassLayout = new Graphite.RenderPassLayout([swapchainTex.Format]);
+
+            using var cmd = Graphics.CreateCommandBuffer("VulkanFallbackClear");
+            cmd.BeginRenderPass(in desc, renderPassLayout);
+            cmd.SetViewport(0, 0, swapchainTex.Width, swapchainTex.Height);
+            cmd.SetScissor(0, 0, swapchainTex.Width, swapchainTex.Height);
+            cmd.EndRenderPass();
+            cmd.Submit();
+
+            Graphics.SwapchainClearedThisFrame = true;
+        }
+        catch (Exception e)
+        {
+            Debug.LogWarning($"[DefaultRenderPipeline] Vulkan fallback clear failed: {e.Message}");
+        }
+    }
+
     private void RenderShadowAtlas(CameraSnapshot css, IReadOnlyList<IRenderableLight> lights, IReadOnlyList<IRenderable> renderables)
     {
         // Ensure the shadow atlas texture exists
@@ -631,25 +839,30 @@ public class DefaultRenderPipeline : RenderPipeline
 
         var atlas = ShadowAtlas.GetAtlas();
 
-        Graphics.BindFramebuffer(atlas.frameBuffer);
-        // Ensure clean state for shadow rendering: depth test/write enabled, no blending.
-        // Prevents stale state from image effects or prior passes from corrupting the shadow map.
-        Graphics.SetState(new RasterizerState
-        {
-            DepthTest = true,
-            DepthWrite = true,
-            Depth = RasterizerState.DepthMode.Lequal,
-            DoBlend = false,
-            CullFace = RasterizerState.PolyFace.Back,
-        }, true);
-        Graphics.Clear(0.0f, 0.0f, 0.0f, 1.0f, ClearFlags.Depth);
+        bool isVulkanShadow = !Graphics.IsOpenGL;
 
-        // Bridge phase: begin depth-only Graphite render pass for shadow atlas
+        if (!isVulkanShadow)
+        {
+            Graphics.BindFramebuffer(atlas.frameBuffer);
+            // Ensure clean state for shadow rendering: depth test/write enabled, no blending.
+            Graphics.SetState(new RasterizerState
+            {
+                DepthTest = true,
+                DepthWrite = true,
+                Depth = RasterizerState.DepthMode.Lequal,
+                DoBlend = false,
+                CullFace = RasterizerState.PolyFace.Back,
+            }, true);
+            Graphics.Clear(0.0f, 0.0f, 0.0f, 1.0f, ClearFlags.Depth);
+        }
+
+        // Begin depth-only Graphite render pass for shadow atlas
         var graphiteCmd = Graphics.ActiveGraphiteCmdBuffer;
         if (graphiteCmd != null)
         {
-            try { graphiteCmd.BeginDepthOnlyRenderPass(atlas); }
-            catch { }
+            graphiteCmd.BeginDepthOnlyRenderPass(atlas);
+            graphiteCmd.SetViewport(0, 0, atlas.Width, atlas.Height);
+            graphiteCmd.SetScissor(0, 0, (uint)atlas.Width, (uint)atlas.Height);
         }
 
         // Process all lights - each light handles its own shadow rendering
@@ -664,12 +877,12 @@ public class DefaultRenderPipeline : RenderPipeline
             }
         }
 
-        // Bridge phase: end shadow atlas Graphite render pass
+        // End shadow atlas Graphite render pass
         if (graphiteCmd?.InRenderPass == true)
-        {
-            try { graphiteCmd.EndRenderPass(); }
-            catch { }
-        }
+            graphiteCmd.EndRenderPass();
+
+        // Transition shadow atlas depth to ShaderResource for shadow sampling
+        TransitionToShaderResource(atlas);
     }
 
     private void RenderSkybox(CameraSnapshot css)
@@ -677,11 +890,15 @@ public class DefaultRenderPipeline : RenderPipeline
         // Always set a safe default sun direction to avoid NaN from normalize(vec3(0)) in the shader
         _skybox.SetVector("_SunDir", new Float3(0, -1, 0));
 
-        // Override with the actual directional light direction if one exists
-        var sun = css.Scene.Lights.FirstOrDefault(l => l is IRenderableLight rl && rl.GetLightType() == LightType.Directional);
-        if (sun != null)
+        // Override with the actual directional light direction if one exists (no LINQ allocation)
+        IReadOnlyList<IRenderableLight> lights = css.Scene.Lights;
+        for (int i = 0; i < lights.Count; i++)
         {
-            _skybox.SetVector("_SunDir", sun.GetLightDirection());
+            if (lights[i].GetLightType() == LightType.Directional)
+            {
+                _skybox.SetVector("_SunDir", lights[i].GetLightDirection());
+                break;
+            }
         }
 
         DrawMeshNow(_skyDome, _skybox);

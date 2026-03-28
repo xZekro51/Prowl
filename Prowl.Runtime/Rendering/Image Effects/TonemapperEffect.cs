@@ -6,6 +6,8 @@ using Prowl.Runtime.Resources;
 using Material = Prowl.Runtime.Resources.Material;
 using Shader = Prowl.Runtime.Resources.Shader;
 
+using Graphite = Prowl.Runtime.Graphite;
+
 namespace Prowl.Runtime.Rendering;
 
 public sealed class TonemapperEffect : ImageEffect
@@ -34,13 +36,43 @@ public sealed class TonemapperEffect : ImageEffect
         // Copy depth from current buffer if it has one
         if (context.SceneColor.InternalDepth != null)
         {
-            Graphics.BindFramebuffer(context.SceneColor.frameBuffer, FBOTarget.Read);
-            Graphics.BindFramebuffer(ldrBuffer.frameBuffer, FBOTarget.Draw);
-            Graphics.BlitFramebuffer(
-                0, 0, context.Width, context.Height,
-                0, 0, context.Width, context.Height,
-                ClearFlags.Depth, BlitFilter.Nearest
-            );
+            if (!Graphics.IsOpenGL && Graphics.ActiveGraphiteCmdBuffer is { InRenderPass: false } cmd)
+            {
+                // Vulkan: copy depth texture via Graphite command
+                var srcDepth = context.SceneColor.frameBuffer.GraphiteDepthAttachment;
+                var dstDepth = ldrBuffer.frameBuffer.GraphiteDepthAttachment;
+                if (srcDepth != null && dstDepth != null)
+                {
+                    cmd.ResourceBarrier(new Graphite.ResourceBarrier(
+                        srcDepth, Graphite.ResourceState.DepthWrite, Graphite.ResourceState.CopySource));
+                    cmd.ResourceBarrier(new Graphite.ResourceBarrier(
+                        dstDepth, Graphite.ResourceState.DepthWrite, Graphite.ResourceState.CopyDestination));
+
+                    cmd.CopyTextureToTexture(new Graphite.TextureTextureCopy
+                    {
+                        Source = srcDepth,
+                        Destination = dstDepth,
+                        Width = (uint)context.Width,
+                        Height = (uint)context.Height,
+                        Depth = 1,
+                    });
+
+                    cmd.ResourceBarrier(new Graphite.ResourceBarrier(
+                        srcDepth, Graphite.ResourceState.CopySource, Graphite.ResourceState.ShaderResource));
+                    cmd.ResourceBarrier(new Graphite.ResourceBarrier(
+                        dstDepth, Graphite.ResourceState.CopyDestination, Graphite.ResourceState.DepthWrite));
+                }
+            }
+            else
+            {
+                Graphics.BindFramebuffer(context.SceneColor.frameBuffer, FBOTarget.Read);
+                Graphics.BindFramebuffer(ldrBuffer.frameBuffer, FBOTarget.Draw);
+                Graphics.BlitFramebuffer(
+                    0, 0, context.Width, context.Height,
+                    0, 0, context.Width, context.Height,
+                    ClearFlags.Depth, BlitFilter.Nearest
+                );
+            }
         }
 
         // Tonemap HDR to LDR

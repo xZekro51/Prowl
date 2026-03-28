@@ -2,6 +2,7 @@
 // Licensed under the MIT License. See the LICENSE file in the project root for details.
 
 using System;
+using System.Buffers;
 
 using Silk.NET.OpenGL;
 
@@ -87,8 +88,57 @@ public unsafe class GraphicsTexture : IDisposable
             Graphics.GL.GenerateMipmap(Target);
         }
 
-        if (GraphiteTexture != null)
+        if (GraphiteTexture != null && Graphics.IsGraphiteReady)
+        {
+            // Vulkan requires mip storage to be allocated upfront (unlike OpenGL which
+            // auto-allocates during glGenerateMipmap).  If the Graphite texture only has
+            // 1 mip level, recreate it with a full mip chain and copy mip 0 data over.
+            if (!IsGL && GraphiteTexture.MipLevels <= 1)
+            {
+                var oldTex = GraphiteTexture;
+
+                // Compute per-pixel size in the Graphite format (accounts for RGB→RGBA padding).
+                uint legacyBpp = GetBytesPerPixel(ImageFormat);
+                uint graphiteBpp = GraphiteFormatMapper.IsRgbFormat(ImageFormat)
+                    ? (legacyBpp / 3 * 4)
+                    : legacyBpp;
+
+                int dataSize = (int)(oldTex.Width * oldTex.Height * Math.Max(1u, oldTex.Depth) * graphiteBpp);
+                byte[] mip0Data = ArrayPool<byte>.Shared.Rent(dataSize);
+                try
+                {
+                    Graphics.Graphite.ReadbackTexture(oldTex, 0, 0, mip0Data.AsSpan(0, dataSize));
+
+                    var desc = new Graphite.TextureDescriptor
+                    {
+                        Dimension = oldTex.Dimension,
+                        Width = oldTex.Width,
+                        Height = oldTex.Height,
+                        Depth = oldTex.Depth,
+                        Format = oldTex.Format,
+                        Usage = oldTex.Usage,
+                        ArrayLayers = oldTex.ArrayLayers,
+                        SampleCount = oldTex.SampleCount,
+                        DebugName = oldTex.DebugName,
+                    };
+                    desc.MipLevels = desc.CalculateMaxMipLevels();
+
+                    GraphiteTexture = Graphics.Graphite.CreateTexture(in desc);
+
+                    var updateDesc = Graphite.TextureUpdateDescriptor.FullMip(oldTex.Width, oldTex.Height, 0);
+                    updateDesc.Depth = Math.Max(1u, oldTex.Depth);
+                    Graphics.Graphite.UpdateTexture(GraphiteTexture, in updateDesc, mip0Data.AsSpan(0, dataSize));
+
+                    oldTex.Dispose();
+                }
+                finally
+                {
+                    ArrayPool<byte>.Shared.Return(mip0Data);
+                }
+            }
+
             Graphics.Graphite.GenerateMipmaps(GraphiteTexture);
+        }
     }
 
     public void SetWrapS(TextureWrap wrap)
@@ -166,11 +216,25 @@ public unsafe class GraphicsTexture : IDisposable
 
     public void GetTexImage(int level, void* ptr)
     {
-        if (!IsGL)
-            throw new NotSupportedException("GetTexImage is only supported with the OpenGL backend. Use Graphite readback APIs instead.");
+        if (IsGL)
+        {
+            Bind(false);
+            Graphics.GL.GetTexImage(Target, level, PixelFormat, PixelType, ptr);
+            return;
+        }
 
-        Bind(false);
-        Graphics.GL.GetTexImage(Target, level, PixelFormat, PixelType, ptr);
+        // Non-GL path: use the Graphite readback API
+        if (GraphiteTexture == null)
+            throw new InvalidOperationException("No Graphite texture available for readback.");
+
+        uint mipWidth = Math.Max(1, GraphiteTexture.Width >> level);
+        uint mipHeight = Math.Max(1, GraphiteTexture.Height >> level);
+        uint mipDepth = Math.Max(1, GraphiteTexture.Depth >> level);
+        uint bpp = GetBytesPerPixel(ImageFormat);
+        uint dataSize = mipWidth * mipHeight * mipDepth * bpp;
+
+        var span = new Span<byte>(ptr, (int)dataSize);
+        Graphics.Graphite.ReadbackTexture(GraphiteTexture, (uint)level, 0, span);
     }
 
     public bool IsDisposed { get; protected set; }

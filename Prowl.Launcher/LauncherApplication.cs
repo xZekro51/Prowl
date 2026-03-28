@@ -3,6 +3,7 @@
 
 using System.Numerics;
 using ImGuiNET;
+using Prowl.ImGuiIntegration;
 using Prowl.Runtime;
 using Prowl.UI;
 
@@ -46,6 +47,8 @@ public sealed class LauncherApplication : Game
     private bool _showDeleteModal;
 
     // ── Lifecycle ────────────────────────────────────────────────────
+
+    protected override IOverlayManager? CreateOverlayManager() => new ImGuiManager();
 
     public override void Initialize()
     {

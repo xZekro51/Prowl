@@ -5,6 +5,7 @@ using System.IO;
 using System.Numerics;
 using ImGuiNET;
 using Prowl.Runtime;
+using Prowl.ImGuiIntegration;
 using Prowl.Runtime.Rendering;
 using Prowl.Runtime.Rendering.Shaders;
 using Prowl.Runtime.Resources;
@@ -435,7 +436,7 @@ public static class MaterialInspector
             // Thumbnail preview
             if (tex != null && tex.IsValid())
             {
-                nint texId = (nint)tex.Handle.Handle;
+                nint texId = ImGuiTextureRegistry.GetOrRegister(tex.Handle?.GraphiteTexture);
                 ImGui.Image(texId, new Vector2(thumbSz, thumbSz));
             }
             else

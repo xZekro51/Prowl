@@ -4,6 +4,7 @@
 using System.Numerics;
 using ImGuiNET;
 using Prowl.Runtime;
+using Prowl.ImGuiIntegration;
 using Prowl.Runtime.Rendering;
 using Prowl.Runtime.Resources;
 using Prowl.Vector;
@@ -122,7 +123,7 @@ public sealed class GamePanel : EditorPanel
             var rt = rendering!.GameViewRT;
             if (rt != null && rt.MainTexture != null)
             {
-                nint texId = (nint)rt.MainTexture.Handle.Handle;
+                nint texId = ImGuiTextureRegistry.GetOrRegister(rt.MainTexture?.Handle?.GraphiteTexture);
                 ImGui.SetCursorScreenPos(new Vector2(cursorScreen.X + offsetX, cursorScreen.Y + offsetY));
                 ImGui.Image(texId, new Vector2(displayW, displayH), new Vector2(0, 1), new Vector2(1, 0));
                 drewImage = true;

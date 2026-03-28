@@ -121,6 +121,9 @@ public enum TextureFormat
     RGBA16Uint,
     RGBA16Sint,
     RGBA16Float,
+    R16Unorm,
+    RG16Unorm,
+    RGBA16Unorm,
 
     // 32-bit per channel formats
     R32Uint,

@@ -32,6 +32,11 @@ layout(std140) uniform GlobalUniforms
     vec4 _SinTime;
     vec4 _CosTime;
     vec4 prowl_DeltaTime;
+
+    // Graphics API parameters
+    // x = 1.0 on Vulkan (need to flip UV Y for NDC conversion), 0.0 on OpenGL
+    // y, z, w = reserved for future use
+    vec4 _GraphicsParams;
 };
 
 // Per-object uniforms (set per draw call)

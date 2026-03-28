@@ -72,11 +72,12 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
     // corresponding fence has been signaled, guaranteeing the GPU is no longer using them.
     private List<(List<Framebuffer> Framebuffers, CommandBuffer CommandBuffer)>[] _retiredResources = [];
 
-    public override string BackendName => "Vulkan 1.0";
+    public override string BackendName => "Vulkan 1.3";
     public override GraphicsBackendType BackendType => GraphicsBackendType.Vulkan;
     public override DeviceCapabilities Capabilities => _capabilities;
     public override uint SwapchainWidth => _swapchainWidth;
     public override uint SwapchainHeight => _swapchainHeight;
+    public override bool NeedsExplicitSwapchainBlit => true;
 
     public override void Initialize(GraphiteDeviceOptions options)
     {
@@ -117,7 +118,7 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
             ApplicationVersion = new Version32(1, 0, 0),
             PEngineName = (byte*)SilkMarshal.StringToPtr("Prowl"),
             EngineVersion = new Version32(1, 0, 0),
-            ApiVersion = Vk.Version10,
+            ApiVersion = Vk.Version13,
         };
 
         var extensions = new List<string>();
@@ -133,8 +134,37 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
 
         if (enableDebug)
         {
-            extensions.Add("VK_EXT_debug_utils");
-            layers.Add("VK_LAYER_KHRONOS_validation");
+            // Check if validation layer is actually available before requesting it
+            uint layerCount = 0;
+            Vk.EnumerateInstanceLayerProperties(&layerCount, null);
+            var availableLayers = new LayerProperties[layerCount];
+            fixed (LayerProperties* pLayers = availableLayers)
+                Vk.EnumerateInstanceLayerProperties(&layerCount, pLayers);
+
+            bool hasValidation = false;
+            for (int i = 0; i < layerCount; i++)
+            {
+                fixed (byte* pName = availableLayers[i].LayerName)
+                {
+                    var name = SilkMarshal.PtrToString((nint)pName);
+                    if (name == "VK_LAYER_KHRONOS_validation")
+                    {
+                        hasValidation = true;
+                        break;
+                    }
+                }
+            }
+
+            if (hasValidation)
+            {
+                extensions.Add("VK_EXT_debug_utils");
+                layers.Add("VK_LAYER_KHRONOS_validation");
+                Debug.Log("[Vulkan] Validation layers enabled.");
+            }
+            else
+            {
+                Debug.LogWarning("[Vulkan] Validation layers requested but VK_LAYER_KHRONOS_validation not available. Install the Vulkan SDK for validation.");
+            }
         }
 
         var extPtrs = SilkMarshal.StringArrayToPtr(extensions.ToArray());
@@ -244,7 +274,7 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
             DepthClamp = true,
         };
 
-        var extensions = new List<string> { "VK_KHR_swapchain" };
+        var extensions = new List<string> { "VK_KHR_swapchain", "VK_KHR_dynamic_rendering" };
         var extPtrs = SilkMarshal.StringArrayToPtr(extensions.ToArray());
 
         fixed (DeviceQueueCreateInfo* pQueueInfos = queueCreateInfos)
@@ -779,6 +809,54 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
         EndSingleTimeCommands(cmd);
     }
 
+    public override void ReadbackTexture(Texture texture, uint mipLevel, uint arrayLayer, Span<byte> destination)
+    {
+        ThrowIfDisposed();
+        if (texture is not VKTexture vkTexture)
+            return;
+
+        uint mipWidth = Math.Max(1, vkTexture.Width >> (int)mipLevel);
+        uint mipHeight = Math.Max(1, vkTexture.Height >> (int)mipLevel);
+        uint dataSize = (uint)destination.Length;
+
+        // Create a host-visible staging buffer for the readback
+        var stagingDesc = new BufferDescriptor(dataSize, BufferUsage.CopyDestination, MemoryAccess.GpuToCpu);
+        using var staging = new VKBuffer(this, in stagingDesc);
+
+        var cmd = BeginSingleTimeCommands();
+
+        // Transition image to TransferSrcOptimal
+        vkTexture.TransitionLayout(cmd, ImageLayout.TransferSrcOptimal, mipLevel, 1, arrayLayer, 1);
+
+        var region = new BufferImageCopy
+        {
+            BufferOffset = 0,
+            BufferRowLength = 0,
+            BufferImageHeight = 0,
+            ImageSubresource = new ImageSubresourceLayers
+            {
+                AspectMask = VKFormatHelper.GetAspectFlags(vkTexture.Format),
+                MipLevel = mipLevel,
+                BaseArrayLayer = arrayLayer,
+                LayerCount = 1,
+            },
+            ImageOffset = new Offset3D(0, 0, 0),
+            ImageExtent = new Extent3D(mipWidth, mipHeight, Math.Max(1, vkTexture.Depth)),
+        };
+        Vk.CmdCopyImageToBuffer(cmd, vkTexture.Image, ImageLayout.TransferSrcOptimal, staging.Handle, 1, &region);
+
+        // Transition back to ShaderReadOnlyOptimal
+        vkTexture.TransitionLayout(cmd, ImageLayout.ShaderReadOnlyOptimal, mipLevel, 1, arrayLayer, 1);
+
+        EndSingleTimeCommands(cmd);
+
+        // Map the staging buffer and copy data to the destination span
+        void* mapped;
+        Check(Vk.MapMemory(Device, staging.Memory, 0, dataSize, 0, &mapped));
+        new ReadOnlySpan<byte>(mapped, (int)dataSize).CopyTo(destination);
+        Vk.UnmapMemory(Device, staging.Memory);
+    }
+
     public override void GenerateMipmaps(Texture texture)
     {
         ThrowIfDisposed();
@@ -1028,10 +1106,13 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
         {
             bool resolve = key.HasResolve != null && i < key.HasResolve.Length && key.HasResolve[i];
 
-            // Swapchain images are always in Undefined layout after AcquireNextImage
-            // and must end in PresentSrcKhr for QueuePresent.
+            // Swapchain present-target images start Undefined after AcquireNextImage
+            // (first touch uses Clear/DontCare) and end in PresentSrcKhr.
+            // When a *subsequent* render pass uses LoadOp.Load to preserve the
+            // content already rendered to the swapchain, initialLayout must be
+            // PresentSrcKhr — using Undefined would discard the contents.
             var initialLayout = key.IsPresentTarget
-                ? ImageLayout.Undefined
+                ? (key.ColorLoadOps[i] == LoadOp.Load ? ImageLayout.PresentSrcKhr : ImageLayout.Undefined)
                 : (key.ColorLoadOps[i] == LoadOp.Load ? ImageLayout.ColorAttachmentOptimal : ImageLayout.Undefined);
             var finalLayout = key.IsPresentTarget
                 ? ImageLayout.PresentSrcKhr
@@ -1113,6 +1194,20 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
                 DstAccessMask = AccessFlags.ColorAttachmentWriteBit | AccessFlags.DepthStencilAttachmentWriteBit,
             };
 
+            // Exit dependency: ensure render pass writes are complete before
+            // subsequent fragment shader reads or transfer operations.
+            var exitDependency = new SubpassDependency
+            {
+                SrcSubpass = 0,
+                DstSubpass = Vk.SubpassExternal,
+                SrcStageMask = PipelineStageFlags.ColorAttachmentOutputBit | PipelineStageFlags.LateFragmentTestsBit,
+                SrcAccessMask = AccessFlags.ColorAttachmentWriteBit | AccessFlags.DepthStencilAttachmentWriteBit,
+                DstStageMask = PipelineStageFlags.FragmentShaderBit | PipelineStageFlags.TransferBit,
+                DstAccessMask = AccessFlags.ShaderReadBit | AccessFlags.TransferReadBit,
+            };
+
+            var dependencies = stackalloc SubpassDependency[] { dependency, exitDependency };
+
             var rpInfo = new RenderPassCreateInfo
             {
                 SType = StructureType.RenderPassCreateInfo,
@@ -1120,8 +1215,8 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
                 PAttachments = pAttachments,
                 SubpassCount = 1,
                 PSubpasses = &subpass,
-                DependencyCount = 1,
-                PDependencies = &dependency,
+                DependencyCount = 2,
+                PDependencies = dependencies,
             };
 
             Check(Vk.CreateRenderPass(Device, &rpInfo, null, out var renderPass));

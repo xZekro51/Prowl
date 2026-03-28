@@ -5,7 +5,7 @@ using System;
 using System.Numerics;
 using System.Runtime.InteropServices;
 
-namespace Prowl.UI;
+namespace Prowl.ImGuiIntegration;
 
 /// <summary>
 /// P/Invoke bindings for the ImGui DockBuilder API which is not exposed by ImGui.NET

@@ -33,7 +33,6 @@ public sealed class DesktopBuildPipeline : IBuildPipeline
         ("Silk.NET",                        "2.22.0"),
         ("Silk.NET.Assimp",                 "2.22.0"),
         ("Silk.NET.OpenAL.Soft.Native",     "1.23.1"),
-        ("Silk.NET.OpenGL.Extensions.ImGui","2.22.0"),
         ("Silk.NET.Shaderc",                "2.22.0"),
         ("Silk.NET.Shaderc.Native",         "2.22.0"),
     ];
