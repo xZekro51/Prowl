@@ -131,17 +131,19 @@ internal static class GraphiteMaterialBinder
                 case SpirvReflection.ResourceType.UniformBuffer:
                     if (binding.Name == "GlobalUniforms")
                     {
-                        var globalBuf = GlobalUniforms.GetBuffer();
-                        if (globalBuf?.GraphiteBuffer != null)
+                        // Use the per-upload Graphite snapshot so each camera
+                        // render binds its own immutable copy of the data.
+                        var globalGraphiteBuf = GlobalUniforms.GetGraphiteBuffer();
+                        if (globalGraphiteBuf != null)
                         {
                             entries.Add(BindGroupEntry.ForBuffer(
-                                binding.Binding, globalBuf.GraphiteBuffer, 0,
+                                binding.Binding, globalGraphiteBuf, 0,
                                 (uint)GlobalUniformsData.SizeInBytes));
                             if (DebugBindGroups) Debug.Log($"[BindGroup]     -> GlobalUniforms bound OK");
                         }
                         else
                         {
-                            if (DebugBindGroups) Debug.LogError($"[BindGroup]     -> GlobalUniforms FAILED: buffer={globalBuf != null}, graphite={globalBuf?.GraphiteBuffer != null}");
+                            if (DebugBindGroups) Debug.LogError($"[BindGroup]     -> GlobalUniforms FAILED: no graphite snapshot");
                             return null; // Can't render without global uniforms
                         }
                     }
@@ -507,7 +509,7 @@ internal static class GraphiteMaterialBinder
 
         if (!Graphics.IsGraphiteReady) return;
 
-        s_defaultSampler = Graphics.Graphite.CreateSampler(SamplerDescriptor.LinearRepeat);
+        s_defaultSampler = Graphics.Graphite.CreateSampler(SamplerDescriptor.Anisotropic(16));
 
         // Create a 1×1 white fallback texture
         var texDesc = new TextureDescriptor

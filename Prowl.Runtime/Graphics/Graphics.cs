@@ -304,12 +304,25 @@ public static unsafe class Graphics
     /// Initializes the graphics subsystem with the specified backend.
     /// Creates a <see cref="GraphiteDevice"/> which now also provides
     /// the legacy immediate-mode API during the migration.
+    /// If initialization fails the device reference is cleared so that
+    /// <see cref="IsGraphiteReady"/> returns <c>false</c> and subsequent
+    /// code does not attempt to use a partially-initialized device.
     /// </summary>
     public static void Initialize(GraphicsBackendType backend, bool debug)
     {
-        _graphiteDevice = GraphiteDevice.Create(backend);
-        _graphiteDevice.Initialize(debug ? GraphiteDeviceOptions.Debug : GraphiteDeviceOptions.Default);
+        var device = GraphiteDevice.Create(backend);
+        try
+        {
+            device.Initialize(debug ? GraphiteDeviceOptions.Debug : GraphiteDeviceOptions.Default);
+        }
+        catch
+        {
+            try { device.Dispose(); } catch { }
+            _graphiteDevice = null;
+            throw;
+        }
 
+        _graphiteDevice = device;
         Debug.Log($"[Graphics] Device initialized: {_graphiteDevice.BackendName}");
     }
 
@@ -324,9 +337,12 @@ public static unsafe class Graphics
         // Bridge phase: mirror viewport and scissor to active Graphite command buffer.
         // Vulkan dynamic state requires both to be set; shadow atlas rendering
         // uses per-tile viewports so scissor must match to avoid bleeding.
+        // Use raw viewport (no Y-flip) because this bridge is only reached
+        // during shadow rendering on Vulkan, where the atlas is self-contained
+        // and the Y-flip would corrupt the shadow UV ↔ depth mapping.
         if (ActiveGraphiteCmdBuffer is { InRenderPass: true } cmd)
         {
-            cmd.SetViewport(x, y, width, height);
+            cmd.SetViewportRaw(x, y, width, height);
             cmd.SetScissor(x, y, width, height);
         }
     }

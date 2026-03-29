@@ -85,7 +85,11 @@ Pass "Compose"
 
 		// Reconstruct world position from depth
 		vec3 WorldPosFromDepth(float depth, vec2 texCoord) {
+#ifdef PROWL_VULKAN
+			float z = depth;  // Vulkan: gl_FragCoord.z is NDC Z directly [0,1]
+#else
 			float z = depth * 2.0 - 1.0;
+#endif
 			// Fullscreen passes use non-flipped viewport but the GBuffer was rendered with Y-flip.
 			// We need to flip UV Y for correct NDC reconstruction.
 			vec2 ndcXY = vec2(texCoord.x * 2.0 - 1.0, 1.0 - texCoord.y * 2.0);

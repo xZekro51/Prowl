@@ -85,20 +85,41 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
         if (_initialized)
             throw new InvalidOperationException("Device is already initialized.");
 
-        Vk = Vk.GetApi();
+        Debug.Log("[Vulkan] Acquiring Vulkan API...");
+        try
+        {
+            Vk = Vk.GetApi();
+        }
+        catch (Exception ex)
+        {
+            throw new InvalidOperationException(
+                $"Vulkan runtime not available. Ensure Vulkan drivers are installed. ({ex.GetType().Name}: {ex.Message})", ex);
+        }
 
+        Debug.Log("[Vulkan] Creating instance...");
         CreateInstance(options.EnableDebugLayer);
+
+        Debug.Log("[Vulkan] Creating surface...");
         CreateSurface();
+
+        Debug.Log("[Vulkan] Picking physical device...");
         PickPhysicalDevice();
+
+        Debug.Log("[Vulkan] Creating logical device...");
         CreateLogicalDevice();
+
+        Debug.Log("[Vulkan] Creating command pool...");
         CreateCommandPool();
 
         Vk.GetPhysicalDeviceMemoryProperties(PhysicalDevice, out var memProps);
         MemoryProperties = memProps;
 
         // Create swapchain from initial window size
+        Debug.Log("[Vulkan] Creating swapchain...");
         var fbSize = Window.InternalWindow.FramebufferSize;
         CreateSwapchain((uint)fbSize.X, (uint)fbSize.Y);
+
+        Debug.Log("[Vulkan] Creating sync objects...");
         CreateSyncObjects();
 
         _retiredResources = new List<(List<Framebuffer>, CommandBuffer)>[MaxFramesInFlight];
@@ -107,6 +128,7 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
 
         _capabilities = QueryCapabilities();
         _initialized = true;
+        Debug.Log($"[Vulkan] Initialization complete — {_capabilities.DeviceName}");
     }
 
     private void CreateInstance(bool enableDebug)
@@ -204,12 +226,16 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
         for (int i = 0; i < count; i++)
         {
             Vk.GetPhysicalDeviceProperties(devices[i], out var props);
+            var name = SilkMarshal.PtrToString((nint)props.DeviceName);
+            Debug.Log($"[Vulkan]   GPU {i}: {name} (type={props.DeviceType})");
             if (props.DeviceType == PhysicalDeviceType.DiscreteGpu)
             {
                 PhysicalDevice = devices[i];
-                break;
             }
         }
+
+        Vk.GetPhysicalDeviceProperties(PhysicalDevice, out var selectedProps);
+        Debug.Log($"[Vulkan] Selected GPU: {SilkMarshal.PtrToString((nint)selectedProps.DeviceName)}");
     }
 
     private void CreateLogicalDevice()
@@ -247,6 +273,7 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
 
         GraphicsQueueFamily = graphicsFamily;
         PresentQueueFamily = presentFamily;
+        Debug.Log($"[Vulkan] Queue families — graphics: {graphicsFamily}, present: {presentFamily}");
 
         // Build unique queue create infos
         float priority = 1.0f;
@@ -264,17 +291,56 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
             };
         }
 
+        // ── Query supported features and only request available ones ──
+        Vk.GetPhysicalDeviceFeatures(PhysicalDevice, out var supportedFeatures);
         var features = new PhysicalDeviceFeatures
         {
-            SamplerAnisotropy = true,
-            FillModeNonSolid = true,
-            GeometryShader = true,
-            TessellationShader = true,
-            MultiDrawIndirect = true,
-            DepthClamp = true,
+            SamplerAnisotropy = supportedFeatures.SamplerAnisotropy,
+            FillModeNonSolid = supportedFeatures.FillModeNonSolid,
+            GeometryShader = supportedFeatures.GeometryShader,
+            TessellationShader = supportedFeatures.TessellationShader,
+            MultiDrawIndirect = supportedFeatures.MultiDrawIndirect,
+            DepthClamp = supportedFeatures.DepthClamp,
         };
 
-        var extensions = new List<string> { "VK_KHR_swapchain", "VK_KHR_dynamic_rendering" };
+        Debug.Log($"[Vulkan] GPU features — Anisotropy={supportedFeatures.SamplerAnisotropy}, " +
+                  $"FillModeNonSolid={supportedFeatures.FillModeNonSolid}, Geometry={supportedFeatures.GeometryShader}, " +
+                  $"Tessellation={supportedFeatures.TessellationShader}, MultiDraw={supportedFeatures.MultiDrawIndirect}, " +
+                  $"DepthClamp={supportedFeatures.DepthClamp}");
+
+        // ── Query supported device extensions ──
+        uint extCount = 0;
+        Vk.EnumerateDeviceExtensionProperties(PhysicalDevice, (byte*)null, &extCount, null);
+        var availableExts = new ExtensionProperties[extCount];
+        fixed (ExtensionProperties* pExts = availableExts)
+            Vk.EnumerateDeviceExtensionProperties(PhysicalDevice, (byte*)null, &extCount, pExts);
+
+        var supportedExtNames = new HashSet<string>();
+        for (int i = 0; i < extCount; i++)
+        {
+            fixed (byte* pName = availableExts[i].ExtensionName)
+                supportedExtNames.Add(SilkMarshal.PtrToString((nint)pName) ?? string.Empty);
+        }
+
+        var extensions = new List<string>();
+
+        if (supportedExtNames.Contains("VK_KHR_swapchain"))
+            extensions.Add("VK_KHR_swapchain");
+        else
+            throw new InvalidOperationException("Required device extension VK_KHR_swapchain is not supported by this GPU.");
+
+        if (supportedExtNames.Contains("VK_KHR_dynamic_rendering"))
+        {
+            extensions.Add("VK_KHR_dynamic_rendering");
+            Debug.Log("[Vulkan] VK_KHR_dynamic_rendering is supported.");
+        }
+        else
+        {
+            Debug.LogWarning("[Vulkan] VK_KHR_dynamic_rendering not supported — some features may be limited.");
+        }
+
+        Debug.Log($"[Vulkan] Requesting {extensions.Count} device extensions: {string.Join(", ", extensions)}");
+
         var extPtrs = SilkMarshal.StringArrayToPtr(extensions.ToArray());
 
         fixed (DeviceQueueCreateInfo* pQueueInfos = queueCreateInfos)
@@ -294,6 +360,7 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
         }
 
         SilkMarshal.Free(extPtrs);
+        Debug.Log("[Vulkan] Logical device created successfully.");
 
         Vk.GetDeviceQueue(Device, graphicsFamily, 0, out var gQueue);
         GraphicsQueue = gQueue;
@@ -703,7 +770,8 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
     public override void WaitForIdle()
     {
         ThrowIfDisposed();
-        Vk.DeviceWaitIdle(Device);
+        if (Device.Handle != 0)
+            Vk.DeviceWaitIdle(Device);
     }
 
     #endregion
@@ -1258,39 +1326,58 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
 
     protected override void DisposeResources()
     {
+        // Guard: if Vk API was never obtained, nothing to tear down.
+        if (Vk is null)
+            return;
+
+        bool hasDevice = Device.Handle != 0;
+
         // Flush all deferred deletions before tearing down
-        for (int i = 0; i < _retiredResources.Length; i++)
-            FlushRetiredResources(i);
+        if (hasDevice)
+        {
+            for (int i = 0; i < _retiredResources.Length; i++)
+                FlushRetiredResources(i);
+        }
 
         // Destroy sync objects
-        for (int i = 0; i < MaxFramesInFlight; i++)
+        if (hasDevice)
         {
-            if (i < _imageAvailableSemaphores.Length && _imageAvailableSemaphores[i].Handle != 0)
-                Vk.DestroySemaphore(Device, _imageAvailableSemaphores[i], null);
-            if (i < _renderFinishedSemaphores.Length && _renderFinishedSemaphores[i].Handle != 0)
-                Vk.DestroySemaphore(Device, _renderFinishedSemaphores[i], null);
-            if (i < _inFlightFences.Length && _inFlightFences[i].Handle != 0)
-                Vk.DestroyFence(Device, _inFlightFences[i], null);
+            for (int i = 0; i < MaxFramesInFlight; i++)
+            {
+                if (i < _imageAvailableSemaphores.Length && _imageAvailableSemaphores[i].Handle != 0)
+                    Vk.DestroySemaphore(Device, _imageAvailableSemaphores[i], null);
+                if (i < _renderFinishedSemaphores.Length && _renderFinishedSemaphores[i].Handle != 0)
+                    Vk.DestroySemaphore(Device, _renderFinishedSemaphores[i], null);
+                if (i < _inFlightFences.Length && _inFlightFences[i].Handle != 0)
+                    Vk.DestroyFence(Device, _inFlightFences[i], null);
+            }
         }
 
         // Destroy swapchain resources
-        CleanupSwapchainResources();
-        if (_khrSwapchain != null && _swapchain.Handle != 0)
-            _khrSwapchain.DestroySwapchain(Device, _swapchain, null);
+        if (hasDevice)
+        {
+            CleanupSwapchainResources();
+            if (_khrSwapchain != null && _swapchain.Handle != 0)
+                _khrSwapchain.DestroySwapchain(Device, _swapchain, null);
 
-        foreach (var rp in _renderPassCache.Values)
-            Vk.DestroyRenderPass(Device, rp, null);
-        _renderPassCache.Clear();
+            foreach (var rp in _renderPassCache.Values)
+                Vk.DestroyRenderPass(Device, rp, null);
+            _renderPassCache.Clear();
 
-        Vk.DestroyCommandPool(Device, CommandPool, null);
+            if (CommandPool.Handle != 0)
+                Vk.DestroyCommandPool(Device, CommandPool, null);
+        }
 
-        Vk.DestroyDevice(Device, null);
+        if (hasDevice)
+            Vk.DestroyDevice(Device, null);
 
         // Destroy surface before instance
-        if (_khrSurface != null && _surface.Handle != 0)
+        if (_khrSurface != null && _surface.Handle != 0 && VkInstance.Handle != 0)
             _khrSurface.DestroySurface(VkInstance, _surface, null);
 
-        Vk.DestroyInstance(VkInstance, null);
+        if (VkInstance.Handle != 0)
+            Vk.DestroyInstance(VkInstance, null);
+
         Vk.Dispose();
     }
 }

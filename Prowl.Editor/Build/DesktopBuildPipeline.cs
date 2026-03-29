@@ -30,11 +30,11 @@ public sealed class DesktopBuildPipeline : IBuildPipeline
         ("Magick.NET-Q16-AnyCPU",           "14.11.0"),
         ("Prowl.Echo",                      "2.0.0"),
         ("Prowl.Paper",                     "0.7.0"),
-        ("Silk.NET",                        "2.22.0"),
-        ("Silk.NET.Assimp",                 "2.22.0"),
+        ("Silk.NET",                        "2.23.0"),
+        ("Silk.NET.Assimp",                 "2.23.0"),
         ("Silk.NET.OpenAL.Soft.Native",     "1.23.1"),
-        ("Silk.NET.Shaderc",                "2.22.0"),
-        ("Silk.NET.Shaderc.Native",         "2.22.0"),
+        ("Silk.NET.Shaderc",                "2.23.0"),
+        ("Silk.NET.Shaderc.Native",         "2.23.0"),
     ];
 
     /// <summary>

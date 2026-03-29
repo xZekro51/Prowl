@@ -126,7 +126,11 @@ Pass "DirectionalLight"
 			vec3 worldPosBiased = worldPos + (normalize(worldNormal) * _ShadowNormalBias);
 			vec4 lightSpacePos = cascadeMatrix * vec4(worldPosBiased, 1.0);
 			vec3 projCoords = lightSpacePos.xyz / lightSpacePos.w;
+#ifdef PROWL_VULKAN
+			projCoords.xy = projCoords.xy * 0.5 + 0.5;  // Vulkan: only remap XY; Z is already [0,1]
+#else
 			projCoords = projCoords * 0.5 + 0.5;
+#endif
 
 			// Early exit if outside shadow map
 			if (projCoords.z > 1.0 || projCoords.x < 0.0 || projCoords.x > 1.0 || projCoords.y < 0.0 || projCoords.y > 1.0) {

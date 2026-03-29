@@ -410,6 +410,23 @@ public class PaperRenderer : ICanvasRenderer
         }
 
         cmd.EndRenderPass();
+
+        // Transition RT back to ShaderResource so downstream consumers
+        // (e.g. ImGui) can sample it without a Vulkan layout mismatch.
+        if (RenderTarget != null && !Graphics.IsOpenGL)
+        {
+            var colorAttachments = RenderTarget.frameBuffer.GraphiteColorAttachments;
+            if (colorAttachments != null)
+            {
+                foreach (var tex in colorAttachments)
+                {
+                    if (tex != null)
+                        cmd.ResourceBarrier(new Graphite.ResourceBarrier(
+                            tex, ResourceState.RenderTarget, ResourceState.ShaderResource));
+                }
+            }
+        }
+
         cmd.Submit();
     }
 

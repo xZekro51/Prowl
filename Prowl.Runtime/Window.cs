@@ -68,6 +68,25 @@ public static class Window
     private static bool isFocused = true;
     private static DefaultInputHandler WindowInputHandler;
 
+    /// <summary>
+    /// Stores an exception that occurred during <see cref="OnLoad"/> so it can
+    /// be rethrown after <see cref="Start"/> returns.  This guarantees the
+    /// exception reaches <see cref="Game.Run"/>'s fallback logic even if
+    /// Silk.NET's event pump does not propagate exceptions from callbacks.
+    /// </summary>
+    private static Exception? _loadException;
+
+    /// <summary>
+    /// When <c>true</c>, all Silk.NET window callbacks become no-ops.
+    /// Set after a fatal error in <see cref="OnLoad"/> to prevent subsequent
+    /// Render/Update callbacks from executing against uninitialized state.
+    /// Without this guard, GLFW may fire one more frame callback after
+    /// <see cref="Silk.NET.Windowing.IWindow.Close"/> is called, causing
+    /// exceptions to propagate through the native event loop boundary and
+    /// terminate the process before the managed fallback logic can run.
+    /// </summary>
+    private static bool _fatalError;
+
     public static bool IsFocused
     {
         get { return isFocused; }
@@ -122,6 +141,7 @@ public static class Window
     {
         try { WindowInputHandler?.Dispose(); } catch { }
         try { InternalInput?.Dispose(); } catch { }
+        try { Graphics.Dispose(); } catch { }
         try { InternalWindow?.Reset(); } catch { }
         try { InternalWindow?.Dispose(); } catch { }
 
@@ -129,6 +149,8 @@ public static class Window
         InternalInput = null!;
         WindowInputHandler = null!;
         isFocused = true;
+        _loadException = null;
+        _fatalError = false;
 
         // Clear all static event subscribers so the next setup
         // can resubscribe cleanly without duplicate handlers.
@@ -146,23 +168,69 @@ public static class Window
     }
 
     private static void OnMove(Vector2D<int> d) => Move?.Invoke(d);
-    public static void Start() => InternalWindow.Run();
+
+    public static void Start()
+    {
+        _loadException = null;
+        _fatalError = false;
+        Debug.Log("[Window] Starting event loop...");
+        try
+        {
+            InternalWindow.Run();
+        }
+        catch (Exception ex)
+        {
+            Debug.LogError($"[Window] Exception escaped from event loop: {ex}");
+            // If we already captured an init exception in OnLoad, prefer it —
+            // the current exception is a secondary failure from cleanup.
+            _loadException ??= ex;
+        }
+        Debug.Log($"[Window] Event loop exited. _loadException={(_loadException != null ? _loadException.GetType().Name : "null")}");
+
+        // If OnLoad caught an exception, rethrow it now so callers
+        // (Game.Run) can fall back to another backend.
+        if (_loadException is { } loadEx)
+        {
+            _loadException = null;
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw(loadEx);
+        }
+    }
+
     public static void Stop() => InternalWindow.Close();
 
     public static void OnLoad()
     {
-        InternalInput = InternalWindow.CreateInput();
-        WindowInputHandler = new DefaultInputHandler(InternalInput);
-        Debug.Log($"[SILK] INITIALIZING GRAPHICS WITH BACKEND: {ActiveBackend}");
-        Graphics.Initialize(ActiveBackend, true); // Enable debug/validation for troubleshooting
+        try
+        {
+            Debug.Log($"[SILK] OnLoad fired — creating input context...");
+            InternalInput = InternalWindow.CreateInput();
+            WindowInputHandler = new DefaultInputHandler(InternalInput);
+            Debug.Log($"[SILK] INITIALIZING GRAPHICS WITH BACKEND: {ActiveBackend}");
+            Graphics.Initialize(ActiveBackend, false);
+            Debug.Log($"[SILK] Graphics initialized successfully.");
 
-        // Push Default Handler
-        Input.PushHandler(WindowInputHandler);
-        Load?.Invoke();
+            // Push Default Handler
+            Input.PushHandler(WindowInputHandler);
+            Load?.Invoke();
+            Debug.Log($"[SILK] OnLoad completed successfully.");
+        }
+        catch (Exception ex)
+        {
+            Debug.LogError($"[SILK] Fatal error during window load ({ActiveBackend}): {ex.GetType().Name}: {ex.Message}");
+            Debug.LogError($"[SILK] Stack trace: {ex.StackTrace}");
+            if (ex.InnerException != null)
+                Debug.LogError($"[SILK] Inner: {ex.InnerException.GetType().Name}: {ex.InnerException.Message}");
+            _loadException = ex;
+            _fatalError = true;
+            try { InternalWindow.Close(); } catch { }
+        }
     }
 
     public static void OnRender(double delta)
     {
+        if (_fatalError || !Graphics.IsGraphiteReady)
+            return;
+
         if (!Graphics.Graphite.BeginFrame())
             return;
 
@@ -193,16 +261,19 @@ public static class Window
 
     public static void OnUpdate(double delta)
     {
+        if (_fatalError)
+            return;
+
         Update?.Invoke((float)delta);
-        WindowInputHandler.LateUpdate();
+        WindowInputHandler?.LateUpdate();
     }
 
     public static void OnClose()
     {
-        Closing?.Invoke();
-        WindowInputHandler.Dispose();
-        Input.PopHandler();
-        Graphics.Dispose();
+        try { Closing?.Invoke(); } catch { }
+        try { WindowInputHandler?.Dispose(); } catch { }
+        try { Input.PopHandler(); } catch { }
+        try { Graphics.Dispose(); } catch { }
     }
 
 }

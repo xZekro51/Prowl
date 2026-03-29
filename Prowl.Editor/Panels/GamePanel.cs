@@ -125,7 +125,10 @@ public sealed class GamePanel : EditorPanel
             {
                 nint texId = ImGuiTextureRegistry.GetOrRegister(rt.MainTexture?.Handle?.GraphiteTexture);
                 ImGui.SetCursorScreenPos(new Vector2(cursorScreen.X + offsetX, cursorScreen.Y + offsetY));
-                ImGui.Image(texId, new Vector2(displayW, displayH), new Vector2(0, 1), new Vector2(1, 0));
+                // OpenGL framebuffers are bottom-up and need a V-flip; Vulkan framebuffers are top-down.
+                Vector2 uv0 = Graphics.IsOpenGL ? new Vector2(0, 1) : new Vector2(0, 0);
+                Vector2 uv1 = Graphics.IsOpenGL ? new Vector2(1, 0) : new Vector2(1, 1);
+                ImGui.Image(texId, new Vector2(displayW, displayH), uv0, uv1);
                 drewImage = true;
             }
         }

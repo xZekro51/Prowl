@@ -732,14 +732,33 @@ public class Scene : EngineObject, ISerializationCallbackReceiver
         if (_cameraBuffer.Count == 0)
             return false;
 
+        // Pre-identify the highest-priority (highest Depth) camera without its
+        // own target.  Only this camera renders into the provided target; all
+        // other cameras without their own target are skipped to prevent
+        // multiple cameras fighting over the same render texture.
+        int targetCameraIndex = -1;
+        if (target.IsValid())
+        {
+            for (int i = _cameraBuffer.Count - 1; i >= 0; i--)
+            {
+                if (_cameraBuffer[i].Target.IsNotValid())
+                {
+                    targetCameraIndex = i;
+                    break;
+                }
+            }
+        }
+
         for (int i = 0; i < _cameraBuffer.Count; i++)
         {
             Camera cam = _cameraBuffer[i];
             RenderPipeline pipeline = RenderPipeline.Resolve(cam);
 
-            // If we have a target and the Camera doesnt, draw into the target
             if (target.IsValid() && cam.Target.IsNotValid())
             {
+                if (i != targetCameraIndex)
+                    continue;
+
                 cam.Target = target;
                 pipeline.Render(cam, new());
                 cam.Target = null;

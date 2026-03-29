@@ -49,8 +49,12 @@ Pass "DeferredLighting"
 
 		// Reconstruct world position from depth
 		vec3 WorldPosFromDepth(float depth, vec2 texCoord) {
-			// Convert depth from [0,1] to NDC [-1,1]
+			// Convert depth to NDC Z
+#ifdef PROWL_VULKAN
+			float z = depth;  // Vulkan: gl_FragCoord.z is NDC Z directly [0,1]
+#else
 			float z = depth * 2.0 - 1.0;
+#endif
 
 			// Convert texCoord to NDC
 			vec4 clipSpacePosition = vec4(texCoord * 2.0 - 1.0, z, 1.0);

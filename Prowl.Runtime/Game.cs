@@ -193,23 +193,40 @@ public abstract class Game
     {
         _title = title;
 
+        // Install a last-resort handler so native crashes or unobserved exceptions
+        // are written to the log before the process terminates.
+        AppDomain.CurrentDomain.UnhandledException += (_, args) =>
+        {
+            Debug.LogError($"[FATAL] Unhandled exception (isTerminating={args.IsTerminating}): {args.ExceptionObject}");
+        };
+
         // Create a fresh engine context for this game instance.
         EngineContext.Current = new EngineContext();
+
+        Debug.Log($"[Game.Run] Requested backend: {backend}");
 
         // Try with the requested backend; fall back to OpenGL on failure.
         if (backend != GraphicsBackendType.OpenGL)
         {
             try
             {
+                Debug.LogSuccess($"[Graphics] Initializing Window...");
                 SetupWindowAndStart(title, width, height, backend);
                 return; // Normal exit — window ran and closed cleanly.
             }
             catch (Exception ex)
             {
-                Debug.LogWarning($"[Graphics] Failed to initialize {backend} backend: {ex.Message}");
-                Debug.LogException(ex);
+                // Log FULL exception details — ToString() includes FileName for
+                // FileNotFoundException, all inner exceptions, and full stack traces.
+                Debug.LogWarning($"[Graphics] Failed to initialize {backend} backend:");
+                Debug.LogWarning($"[Graphics]   Exception: {ex}");
+                if (ex is System.IO.FileNotFoundException fnf)
+                {
+                    Debug.LogWarning($"[Graphics]   FileName: {fnf.FileName}");
+                    Debug.LogWarning($"[Graphics]   FusionLog: {fnf.FusionLog}");
+                }
                 Debug.LogWarning("[Graphics] Falling back to OpenGL...");
-                Window.Cleanup();
+                try { Window.Cleanup(); } catch (Exception cleanupEx) { Debug.LogWarning($"[Graphics] Cleanup error: {cleanupEx.Message}"); }
                 // Reset engine context for a clean retry.
                 EngineContext.Current = new EngineContext();
             }
@@ -221,9 +238,13 @@ public abstract class Game
 
     private void SetupWindowAndStart(string title, int width, int height, GraphicsBackendType backend)
     {
-        // Create the DPI-aware window.
-        float systemScale = _windowManager.CreateWindow(title, width, height, backend);
+        Debug.Log($"[SetupWindowAndStart] Entering method with backend={backend}");
 
+        Debug.Log("[SetupWindowAndStart] Creating window...");
+        float systemScale = _windowManager.CreateWindow(title, width, height, backend);
+        Debug.Log($"[SetupWindowAndStart] Window created, systemScale={systemScale}");
+
+        Debug.Log("[SetupWindowAndStart] Registering event handlers...");
         Window.Load += () =>
         {
             try
@@ -258,8 +279,10 @@ public abstract class Game
             Initialize();
         };
 
+        Debug.Log("[SetupWindowAndStart] Registering Update handler...");
         Window.Update += WindowUpdate;
 
+        Debug.Log("[SetupWindowAndStart] Registering Render handler...");
         Window.Render += (delta) =>
         {
             if (!Window.IsVisible)
@@ -384,6 +407,7 @@ public abstract class Game
             }
         };
 
+        Debug.Log("[SetupWindowAndStart] Registering Resize handler...");
         Window.Resize += (size) =>
         {
             _paper.SetResolution(size.X, size.Y);
@@ -391,10 +415,14 @@ public abstract class Game
             Resize(size.X, size.Y);
         };
 
+        Debug.Log("[SetupWindowAndStart] Registering Move handler...");
         // Monitor DPI changes when the window moves between monitors or framebuffer resizes.
         Window.Move += (_) => { if (_overlayManager is { IsReady: true }) DpiManager.CheckForChange(); };
+
+        Debug.Log("[SetupWindowAndStart] Registering FramebufferResize handler...");
         Window.FramebufferResize += (_) => { if (_overlayManager is { IsReady: true }) DpiManager.CheckForChange(); };
 
+        Debug.Log("[SetupWindowAndStart] Registering Closing handler...");
         Window.Closing += () =>
         {
             DpiManager.DpiChanged -= OnDpiChangedInternal;
@@ -412,8 +440,9 @@ public abstract class Game
             Debug.Log("Is terminating...");
         };
 
-        Debug.LogSuccess("Initialization complete");
+        Debug.Log("[SetupWindowAndStart] All handlers registered. Starting window...");
         Window.Start();
+        Debug.Log("[SetupWindowAndStart] Window.Start() returned.");
     }
 
     public virtual void Initialize() { }
@@ -435,7 +464,7 @@ public abstract class Game
         }
         else
         {
-            Debug.LogWarning("[Game.RenderScenes] No scenes to render! SceneManager empty and Scene.Current is null.");
+            //Debug.LogWarning("[Game.RenderScenes] No scenes to render! SceneManager empty and Scene.Current is null.");
         }
     }
     public virtual void EndRender() { }

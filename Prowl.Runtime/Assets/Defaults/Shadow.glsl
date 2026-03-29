@@ -21,7 +21,11 @@ float InterleavedGradientNoise(vec2 position) {
 
 // Reconstruct world position from depth buffer
 vec3 WorldPosFromDepth(float depth, vec2 texCoord) {
-    float z = depth * 2.0 - 1.0;
+#ifdef PROWL_VULKAN
+    float z = depth;  // Vulkan: gl_FragCoord.z is NDC Z directly [0,1]
+#else
+    float z = depth * 2.0 - 1.0;  // OpenGL: map depth [0,1] to NDC Z [-1,1]
+#endif
     // Fullscreen passes use non-flipped viewport but the GBuffer was rendered with Y-flip.
     // We need to flip UV Y for correct NDC reconstruction.
     // UV Y=0 at screen top needs to map to NDC Y=+1 (not -1).

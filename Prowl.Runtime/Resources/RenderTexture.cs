@@ -207,9 +207,29 @@ public sealed class RenderTexture : EngineObject, ISerializable
         RenderTexture renderTexture;
         if (pool.TryGetValue(key, out List<(RenderTexture, long frameCreated)>? list) && list.Count > 0)
         {
-            int i = list.Count - 1;
-            renderTexture = list[i].Item1;
-            list.RemoveAt(i);
+            // Only reuse render textures released in a previous frame.
+            // Textures released in the current frame may still be in-flight
+            // on the GPU (e.g. a blit command reading from them), so handing
+            // them to a different render pass would cause a data race.
+            int foundIdx = -1;
+            for (int i = list.Count - 1; i >= 0; i--)
+            {
+                if (list[i].frameCreated != Time.FrameCount)
+                {
+                    foundIdx = i;
+                    break;
+                }
+            }
+
+            if (foundIdx >= 0)
+            {
+                renderTexture = list[foundIdx].Item1;
+                list.RemoveAt(foundIdx);
+            }
+            else
+            {
+                renderTexture = new RenderTexture(width, height, hasDepth, format);
+            }
         }
         else
         {

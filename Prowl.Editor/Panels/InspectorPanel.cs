@@ -384,7 +384,47 @@ public sealed class InspectorPanel : EditorPanel
 
 
     /// <summary>
-    /// Draws a Vector3 field with colored X/Y/Z labels in a two-column layout.
+    /// Draws a single vector component in the Stride engine style: a small colored
+    /// indicator button (click to reset to 0) flush with a DragFloat input.
+    /// </summary>
+    private static bool DrawVectorComponent(string letter, ref float value, float speed,
+        float fieldWidth, float buttonW,
+        Vector4 btnColor, Vector4 btnHover, Vector4 btnActive)
+    {
+        bool changed = false;
+        var style = ImGui.GetStyle();
+
+        // Colored indicator button — click resets to zero
+        ImGui.PushStyleColor(ImGuiCol.Button, btnColor);
+        ImGui.PushStyleColor(ImGuiCol.ButtonHovered, btnHover);
+        ImGui.PushStyleColor(ImGuiCol.ButtonActive, btnActive);
+        ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(1f, 1f, 1f, 1f));
+        ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 2f);
+        ImGui.PushStyleVar(ImGuiStyleVar.ItemSpacing, new Vector2(0, style.ItemSpacing.Y));
+
+        if (ImGui.Button(letter, new Vector2(buttonW, ImGui.GetFrameHeight())))
+        {
+            value = 0;
+            changed = true;
+        }
+
+        ImGui.PopStyleVar(2);
+        ImGui.PopStyleColor(4);
+
+        // DragFloat flush against the button
+        ImGui.PushStyleVar(ImGuiStyleVar.ItemSpacing, new Vector2(0, style.ItemSpacing.Y));
+        ImGui.SameLine();
+        ImGui.SetNextItemWidth(fieldWidth);
+        if (ImGui.DragFloat("##" + letter, ref value, speed))
+            changed = true;
+        ImGui.PopStyleVar();
+
+        return changed;
+    }
+
+    /// <summary>
+    /// Draws a Vector3 field with Stride-style colored indicator buttons
+    /// flush against DragFloat inputs in a two-column layout.
     /// </summary>
     private static bool DrawLabeledFloat3(string label, ref Vector3 value, float speed)
     {
@@ -404,45 +444,38 @@ public sealed class InspectorPanel : EditorPanel
             ImGui.TableSetColumnIndex(1);
             ImGui.PushID(label);
 
-            float fieldWidth = (ImGui.GetContentRegionAvail().X - 60 * Game.DpiScale) / 3f;
-            if (fieldWidth < 30 * Game.DpiScale) fieldWidth = 30 * Game.DpiScale;
+            float spacing = ImGui.GetStyle().ItemSpacing.X;
+            float buttonW = ImGui.GetFrameHeight();
+            float avail = ImGui.GetContentRegionAvail().X;
+            float fieldWidth = (avail - buttonW * 3 - spacing * 2) / 3f;
+            if (fieldWidth < 20 * Game.DpiScale) fieldWidth = 20 * Game.DpiScale;
 
-            
+            float x = value.X, y = value.Y, z = value.Z;
 
-            // X
-            ImGui.PushStyleColor(ImGuiCol.FrameBg, new Vector4(0.50f, 0.12f, 0.12f, 0.60f));
-            ImGui.PushStyleColor(ImGuiCol.FrameBgHovered, new Vector4(0.60f, 0.18f, 0.18f, 0.70f));
-            ImGui.PushStyleColor(ImGuiCol.FrameBgActive, new Vector4(0.70f, 0.22f, 0.22f, 0.80f));
-            ImGui.TextColored(new Vector4(0.95f, 0.30f, 0.30f, 1f), "X");
-            float x = value.X;
-            ImGui.SameLine();
-            ImGui.SetNextItemWidth(fieldWidth);
-            if (ImGui.DragFloat("##X", ref x, speed)) { value.X = x; changed = true; }
-            ImGui.PopStyleColor(3);
+            // X — Red
+            if (DrawVectorComponent("X", ref x, speed, fieldWidth, buttonW,
+                new Vector4(0.80f, 0.15f, 0.15f, 1f),
+                new Vector4(0.90f, 0.20f, 0.20f, 1f),
+                new Vector4(1.00f, 0.25f, 0.25f, 1f)))
+            { value.X = x; changed = true; }
 
-            // Y
-            ImGui.PushStyleColor(ImGuiCol.FrameBg, new Vector4(0.12f, 0.40f, 0.12f, 0.60f));
-            ImGui.PushStyleColor(ImGuiCol.FrameBgHovered, new Vector4(0.18f, 0.50f, 0.18f, 0.70f));
-            ImGui.PushStyleColor(ImGuiCol.FrameBgActive, new Vector4(0.22f, 0.60f, 0.22f, 0.80f));
-            ImGui.SameLine();
-            ImGui.TextColored(new Vector4(0.30f, 0.90f, 0.30f, 1f), "Y");
-            ImGui.SameLine();
-            ImGui.SetNextItemWidth(fieldWidth);
-            float y = value.Y;
-            if (ImGui.DragFloat("##Y", ref y, speed)) { value.Y = y; changed = true; }
-            ImGui.PopStyleColor(3);
+            ImGui.SameLine(0, spacing);
 
-            // Z
-            ImGui.PushStyleColor(ImGuiCol.FrameBg, new Vector4(0.12f, 0.18f, 0.50f, 0.60f));
-            ImGui.PushStyleColor(ImGuiCol.FrameBgHovered, new Vector4(0.18f, 0.24f, 0.60f, 0.70f));
-            ImGui.PushStyleColor(ImGuiCol.FrameBgActive, new Vector4(0.22f, 0.30f, 0.70f, 0.80f));
-            ImGui.SameLine();
-            ImGui.TextColored(new Vector4(0.30f, 0.50f, 0.95f, 1f), "Z");
-            ImGui.SameLine();
-            ImGui.SetNextItemWidth(fieldWidth);
-            float z = value.Z;
-            if (ImGui.DragFloat("##Z", ref z, speed)) { value.Z = z; changed = true; }
-            ImGui.PopStyleColor(3);
+            // Y — Green
+            if (DrawVectorComponent("Y", ref y, speed, fieldWidth, buttonW,
+                new Vector4(0.20f, 0.60f, 0.20f, 1f),
+                new Vector4(0.25f, 0.70f, 0.25f, 1f),
+                new Vector4(0.30f, 0.80f, 0.30f, 1f)))
+            { value.Y = y; changed = true; }
+
+            ImGui.SameLine(0, spacing);
+
+            // Z — Blue
+            if (DrawVectorComponent("Z", ref z, speed, fieldWidth, buttonW,
+                new Vector4(0.15f, 0.25f, 0.80f, 1f),
+                new Vector4(0.20f, 0.30f, 0.90f, 1f),
+                new Vector4(0.25f, 0.35f, 1.00f, 1f)))
+            { value.Z = z; changed = true; }
 
             ImGui.PopID();
             ImGui.EndTable();
@@ -452,7 +485,8 @@ public sealed class InspectorPanel : EditorPanel
     }
 
     /// <summary>
-    /// Draws a Vector2 field with colored X/Y labels in a two-column layout.
+    /// Draws a Vector2 field with Stride-style colored indicator buttons
+    /// flush against DragFloat inputs in a two-column layout.
     /// </summary>
     private static bool DrawLabeledFloat2(string label, ref Vector2 value, float speed)
     {
@@ -472,31 +506,29 @@ public sealed class InspectorPanel : EditorPanel
             ImGui.TableSetColumnIndex(1);
             ImGui.PushID(label);
 
-            float fieldWidth = (ImGui.GetContentRegionAvail().X - 40 * Game.DpiScale) / 2f;
-            if (fieldWidth < 40 * Game.DpiScale) fieldWidth = 40 * Game.DpiScale;
+            float spacing = ImGui.GetStyle().ItemSpacing.X;
+            float buttonW = ImGui.GetFrameHeight();
+            float avail = ImGui.GetContentRegionAvail().X;
+            float fieldWidth = (avail - buttonW * 2 - spacing) / 2f;
+            if (fieldWidth < 30 * Game.DpiScale) fieldWidth = 30 * Game.DpiScale;
 
-            // X
-            ImGui.PushStyleColor(ImGuiCol.FrameBg, new Vector4(0.50f, 0.12f, 0.12f, 0.60f));
-            ImGui.PushStyleColor(ImGuiCol.FrameBgHovered, new Vector4(0.60f, 0.18f, 0.18f, 0.70f));
-            ImGui.PushStyleColor(ImGuiCol.FrameBgActive, new Vector4(0.70f, 0.22f, 0.22f, 0.80f));
-            ImGui.TextColored(new Vector4(0.95f, 0.30f, 0.30f, 1f), "X");
-            ImGui.SameLine();
-            ImGui.SetNextItemWidth(fieldWidth);
-            float x = value.X;
-            if (ImGui.DragFloat("##X", ref x, speed)) { value.X = x; changed = true; }
-            ImGui.PopStyleColor(3);
+            float x = value.X, y = value.Y;
 
-            // Y
-            ImGui.PushStyleColor(ImGuiCol.FrameBg, new Vector4(0.12f, 0.40f, 0.12f, 0.60f));
-            ImGui.PushStyleColor(ImGuiCol.FrameBgHovered, new Vector4(0.18f, 0.50f, 0.18f, 0.70f));
-            ImGui.PushStyleColor(ImGuiCol.FrameBgActive, new Vector4(0.22f, 0.60f, 0.22f, 0.80f));
-            ImGui.SameLine();
-            ImGui.TextColored(new Vector4(0.30f, 0.90f, 0.30f, 1f), "Y");
-            ImGui.SameLine();
-            ImGui.SetNextItemWidth(fieldWidth);
-            float y = value.Y;
-            if (ImGui.DragFloat("##Y", ref y, speed)) { value.Y = y; changed = true; }
-            ImGui.PopStyleColor(3);
+            // X — Red
+            if (DrawVectorComponent("X", ref x, speed, fieldWidth, buttonW,
+                new Vector4(0.80f, 0.15f, 0.15f, 1f),
+                new Vector4(0.90f, 0.20f, 0.20f, 1f),
+                new Vector4(1.00f, 0.25f, 0.25f, 1f)))
+            { value.X = x; changed = true; }
+
+            ImGui.SameLine(0, spacing);
+
+            // Y — Green
+            if (DrawVectorComponent("Y", ref y, speed, fieldWidth, buttonW,
+                new Vector4(0.20f, 0.60f, 0.20f, 1f),
+                new Vector4(0.25f, 0.70f, 0.25f, 1f),
+                new Vector4(0.30f, 0.80f, 0.30f, 1f)))
+            { value.Y = y; changed = true; }
 
             ImGui.PopID();
             ImGui.EndTable();
@@ -506,7 +538,8 @@ public sealed class InspectorPanel : EditorPanel
     }
 
     /// <summary>
-    /// Draws a Vector4 field with colored X/Y/Z/W labels in a two-column layout.
+    /// Draws a Vector4 field with Stride-style colored indicator buttons
+    /// flush against DragFloat inputs in a two-column layout.
     /// </summary>
     private static bool DrawLabeledFloat4(string label, ref Vector4 value, float speed)
     {
@@ -526,55 +559,47 @@ public sealed class InspectorPanel : EditorPanel
             ImGui.TableSetColumnIndex(1);
             ImGui.PushID(label);
 
-            float fieldWidth = (ImGui.GetContentRegionAvail().X - 80 * Game.DpiScale) / 4f;
-            if (fieldWidth < 25 * Game.DpiScale) fieldWidth = 25 * Game.DpiScale;
+            float spacing = ImGui.GetStyle().ItemSpacing.X;
+            float buttonW = ImGui.GetFrameHeight();
+            float avail = ImGui.GetContentRegionAvail().X;
+            float fieldWidth = (avail - buttonW * 4 - spacing * 3) / 4f;
+            if (fieldWidth < 16 * Game.DpiScale) fieldWidth = 16 * Game.DpiScale;
 
-            // X
-            ImGui.PushStyleColor(ImGuiCol.FrameBg, new Vector4(0.50f, 0.12f, 0.12f, 0.60f));
-            ImGui.PushStyleColor(ImGuiCol.FrameBgHovered, new Vector4(0.60f, 0.18f, 0.18f, 0.70f));
-            ImGui.PushStyleColor(ImGuiCol.FrameBgActive, new Vector4(0.70f, 0.22f, 0.22f, 0.80f));
-            ImGui.TextColored(new Vector4(0.95f, 0.30f, 0.30f, 1f), "X");
-            ImGui.SameLine();
-            ImGui.SetNextItemWidth(fieldWidth);
-            float x = value.X;
-            if (ImGui.DragFloat("##X", ref x, speed)) { value.X = x; changed = true; }
-            ImGui.PopStyleColor(3);
+            float x = value.X, y = value.Y, z = value.Z, w = value.W;
 
-            // Y
-            ImGui.PushStyleColor(ImGuiCol.FrameBg, new Vector4(0.12f, 0.40f, 0.12f, 0.60f));
-            ImGui.PushStyleColor(ImGuiCol.FrameBgHovered, new Vector4(0.18f, 0.50f, 0.18f, 0.70f));
-            ImGui.PushStyleColor(ImGuiCol.FrameBgActive, new Vector4(0.22f, 0.60f, 0.22f, 0.80f));
-            ImGui.SameLine();
-            ImGui.TextColored(new Vector4(0.30f, 0.90f, 0.30f, 1f), "Y");
-            ImGui.SameLine();
-            ImGui.SetNextItemWidth(fieldWidth);
-            float y = value.Y;
-            if (ImGui.DragFloat("##Y", ref y, speed)) { value.Y = y; changed = true; }
-            ImGui.PopStyleColor(3);
+            // X — Red
+            if (DrawVectorComponent("X", ref x, speed, fieldWidth, buttonW,
+                new Vector4(0.80f, 0.15f, 0.15f, 1f),
+                new Vector4(0.90f, 0.20f, 0.20f, 1f),
+                new Vector4(1.00f, 0.25f, 0.25f, 1f)))
+            { value.X = x; changed = true; }
 
-            // Z
-            ImGui.PushStyleColor(ImGuiCol.FrameBg, new Vector4(0.12f, 0.18f, 0.50f, 0.60f));
-            ImGui.PushStyleColor(ImGuiCol.FrameBgHovered, new Vector4(0.18f, 0.24f, 0.60f, 0.70f));
-            ImGui.PushStyleColor(ImGuiCol.FrameBgActive, new Vector4(0.22f, 0.30f, 0.70f, 0.80f));
-            ImGui.SameLine();
-            ImGui.TextColored(new Vector4(0.30f, 0.50f, 0.95f, 1f), "Z");
-            ImGui.SameLine();
-            ImGui.SetNextItemWidth(fieldWidth);
-            float z = value.Z;
-            if (ImGui.DragFloat("##Z", ref z, speed)) { value.Z = z; changed = true; }
-            ImGui.PopStyleColor(3);
+            ImGui.SameLine(0, spacing);
 
-            // W
-            ImGui.PushStyleColor(ImGuiCol.FrameBg, new Vector4(0.40f, 0.30f, 0.12f, 0.60f));
-            ImGui.PushStyleColor(ImGuiCol.FrameBgHovered, new Vector4(0.50f, 0.38f, 0.18f, 0.70f));
-            ImGui.PushStyleColor(ImGuiCol.FrameBgActive, new Vector4(0.60f, 0.45f, 0.22f, 0.80f));
-            ImGui.SameLine();
-            ImGui.TextColored(new Vector4(0.90f, 0.75f, 0.30f, 1f), "W");
-            ImGui.SameLine();
-            ImGui.SetNextItemWidth(fieldWidth);
-            float w = value.W;
-            if (ImGui.DragFloat("##W", ref w, speed)) { value.W = w; changed = true; }
-            ImGui.PopStyleColor(3);
+            // Y — Green
+            if (DrawVectorComponent("Y", ref y, speed, fieldWidth, buttonW,
+                new Vector4(0.20f, 0.60f, 0.20f, 1f),
+                new Vector4(0.25f, 0.70f, 0.25f, 1f),
+                new Vector4(0.30f, 0.80f, 0.30f, 1f)))
+            { value.Y = y; changed = true; }
+
+            ImGui.SameLine(0, spacing);
+
+            // Z — Blue
+            if (DrawVectorComponent("Z", ref z, speed, fieldWidth, buttonW,
+                new Vector4(0.15f, 0.25f, 0.80f, 1f),
+                new Vector4(0.20f, 0.30f, 0.90f, 1f),
+                new Vector4(0.25f, 0.35f, 1.00f, 1f)))
+            { value.Z = z; changed = true; }
+
+            ImGui.SameLine(0, spacing);
+
+            // W — Purple
+            if (DrawVectorComponent("W", ref w, speed, fieldWidth, buttonW,
+                new Vector4(0.55f, 0.25f, 0.70f, 1f),
+                new Vector4(0.65f, 0.30f, 0.80f, 1f),
+                new Vector4(0.75f, 0.35f, 0.90f, 1f)))
+            { value.W = w; changed = true; }
 
             ImGui.PopID();
             ImGui.EndTable();

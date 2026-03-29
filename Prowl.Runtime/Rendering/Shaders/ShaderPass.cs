@@ -125,6 +125,12 @@ public sealed class ShaderPass
         frag = frag.Insert(0, versionDirective);
         vert = vert.Insert(0, versionDirective);
 
+        if (isVulkan)
+        {
+            const string vulkanDefine = "#define PROWL_VULKAN 1\n";
+            frag = frag.Insert(versionDirective.Length, vulkanDefine);
+            vert = vert.Insert(versionDirective.Length, vulkanDefine);
+        }
 
         Debug.Log("Compiling shader pass " + Name + " with keywords: " + keywords);
 

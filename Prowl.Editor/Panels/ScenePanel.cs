@@ -82,8 +82,10 @@ public sealed class ScenePanel : EditorPanel
                 if (texId != 0)
                 {
                     Vector2 imgMax = new(contentScreenPos.X + regionAvail.X, contentScreenPos.Y + regionAvail.Y);
-                    // UV flipped vertically because framebuffer is bottom-up
-                    windowDrawList.AddImage(texId, contentScreenPos, imgMax, new Vector2(0, 1), new Vector2(1, 0));
+                    // OpenGL framebuffers are bottom-up and need a V-flip; Vulkan framebuffers are top-down.
+                    Vector2 uv0 = Graphics.IsOpenGL ? new Vector2(0, 1) : new Vector2(0, 0);
+                    Vector2 uv1 = Graphics.IsOpenGL ? new Vector2(1, 0) : new Vector2(1, 1);
+                    windowDrawList.AddImage(texId, contentScreenPos, imgMax, uv0, uv1);
                 }
             }
         }

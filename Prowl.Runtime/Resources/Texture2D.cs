@@ -16,13 +16,21 @@ namespace Prowl.Runtime.Resources;
 /// </summary>
 public sealed class Texture2D : Texture, ISerializable
 {
-    public static Texture2D White => Texture2D.LoadDefault(DefaultTexture.White);
-    public static Texture2D Gray => Texture2D.LoadDefault(DefaultTexture.Gray18);
-    public static Texture2D Normal => Texture2D.LoadDefault(DefaultTexture.Normal);
-    public static Texture2D Emission => Texture2D.LoadDefault(DefaultTexture.Emission);
-    public static Texture2D Surface => Texture2D.LoadDefault(DefaultTexture.Surface);
-    public static Texture2D Grid => Texture2D.LoadDefault(DefaultTexture.Grid);
-    public static Texture2D Noise => Texture2D.LoadDefault(DefaultTexture.Noise);
+    private static Texture2D? _white;
+    private static Texture2D? _gray;
+    private static Texture2D? _normal;
+    private static Texture2D? _emission;
+    private static Texture2D? _surface;
+    private static Texture2D? _grid;
+    private static Texture2D? _noise;
+
+    public static Texture2D White => _white.IsValid() ? _white! : (_white = LoadDefault(DefaultTexture.White));
+    public static Texture2D Gray => _gray.IsValid() ? _gray! : (_gray = LoadDefault(DefaultTexture.Gray18));
+    public static Texture2D Normal => _normal.IsValid() ? _normal! : (_normal = LoadDefault(DefaultTexture.Normal));
+    public static Texture2D Emission => _emission.IsValid() ? _emission! : (_emission = LoadDefault(DefaultTexture.Emission));
+    public static Texture2D Surface => _surface.IsValid() ? _surface! : (_surface = LoadDefault(DefaultTexture.Surface));
+    public static Texture2D Grid => _grid.IsValid() ? _grid! : (_grid = LoadDefault(DefaultTexture.Grid));
+    public static Texture2D Noise => _noise.IsValid() ? _noise! : (_noise = LoadDefault(DefaultTexture.Noise));
 
     /// <summary>The width of this <see cref="Texture2D"/>.</summary>
     public uint Width { get; private set; }

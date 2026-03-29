@@ -29,13 +29,9 @@ public static class PlayerFileLogger
 
         logPath ??= Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Player.log");
 
-        if (!File.Exists(logPath))
-        {
-            File.Create(logPath);
-        }
-
         try
         {
+            // StreamWriter creates the file if it doesn't exist — no need for File.Create.
             _writer = new StreamWriter(logPath, append: false)
             {
                 AutoFlush = true,

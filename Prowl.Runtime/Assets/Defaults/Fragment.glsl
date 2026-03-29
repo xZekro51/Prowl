@@ -28,8 +28,13 @@ vec3 gammaToLinearSpace(vec3 gamma)
 
 float linearizeDepth(float depth, float near, float far) 
 {
-    float z = depth * 2.0 - 1.0; // Back to NDC [-1,1] range
-    return (2.0 * near * far) / (far + near - z * (far - near));
+#ifdef PROWL_VULKAN
+	float z = depth; // Vulkan: depth is NDC Z directly [0,1]
+	return near * far / (far - z * (far - near));
+#else
+	float z = depth * 2.0 - 1.0; // Back to NDC [-1,1] range
+	return (2.0 * near * far) / (far + near - z * (far - near));
+#endif
 }
 
 float linearizeDepthFromProjection(float depth) {
@@ -59,11 +64,19 @@ vec3 getScreenPos(vec2 tc, float depth) {
 
 vec3 getScreenFromViewPos(vec3 viewPos) {
 	vec3 p = projectAndDivide(PROWL_MATRIX_P, viewPos);
+#ifdef PROWL_VULKAN
+	return vec3(p.xy * 0.5 + 0.5, p.z);  // Vulkan: Z already [0,1]
+#else
 	return p * 0.5 + 0.5;
+#endif
 }
 
 vec3 getNDCFromScreenPos(vec3 screenPos) {
+#ifdef PROWL_VULKAN
+	return vec3(screenPos.xy * 2.0 - 1.0, screenPos.z);  // Vulkan: Z already [0,1]
+#else
 	return screenPos * 2.0 - 1.0;
+#endif
 }
 
 vec3 getViewFromScreenPos(vec3 screenPos) {
@@ -220,8 +233,12 @@ vec3 SampleCosineHemisphere(vec3 normal, vec2 xy) {
 
 // Convert screen-space depth to view-space depth
 float ScreenToViewDepth(float depth) {
+#ifdef PROWL_VULKAN
+	return -PROWL_MATRIX_P[3].z / (PROWL_MATRIX_P[2].z - depth);
+#else
 	float z = depth * 2.0 - 1.0; // Back to NDC
 	return -PROWL_MATRIX_P[3].z / (PROWL_MATRIX_P[2].z + z);
+#endif
 }
 
 // ----------------------------------------------------------------------------
@@ -242,7 +259,11 @@ vec3 Reproject(vec2 screenUV, float depth, mat4 prevViewProj) {
 	vec3 prevNDC = prevClip.xyz / prevClip.w;
 
 	// Convert to screen space [0,1]
+#ifdef PROWL_VULKAN
+	vec3 prevScreen = vec3(prevNDC.xy * 0.5 + 0.5, prevNDC.z);  // Vulkan: Z already [0,1]
+#else
 	vec3 prevScreen = prevNDC * 0.5 + 0.5;
+#endif
 
 	return prevScreen;
 }

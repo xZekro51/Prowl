@@ -582,36 +582,61 @@ public class DefaultRenderPipeline : RenderPipeline
         if (graphiteCmd?.InRenderPass == true)
             graphiteCmd.EndRenderPass();
 
-        // Submit the main Graphite command buffer BEFORE the final blit so that
-        // all scene rendering (GBuffer, lighting, composition, etc.) is submitted
-        // to the GPU before the swapchain/target blit reads composedOutput.
-        // On Vulkan, command buffers execute in submission order within the same
-        // queue, so the blit must be submitted after the main pipeline.
-        Graphics.ActiveGraphiteCmdBuffer = null;
-        if (graphiteCmd != null)
-        {
-            graphiteCmd.Submit();
-            graphiteCmd.Dispose();
-            graphiteCmd = null;
-        }
-
         // =======================================================
         // 13. Blit Result to target, If target is null Blit will go to the Screen/Window
         if (isVulkan)
         {
             if (target == null)
             {
-                // Vulkan swapchain blit via dedicated Graphite command buffer
+                // Swapchain blit needs a dedicated command buffer because the
+                // swapchain texture is acquired separately. Submit the main
+                // pipeline first so composedOutput is ready.
+                Graphics.ActiveGraphiteCmdBuffer = null;
+                if (graphiteCmd != null)
+                {
+                    graphiteCmd.Submit();
+                    graphiteCmd.Dispose();
+                    graphiteCmd = null;
+                }
                 BlitToSwapchainGraphite(composedOutput);
             }
             else if (target.IsValid())
             {
-                // Vulkan: blit composedOutput into camera render target via Graphite
-                BlitToRenderTargetGraphite(composedOutput, target, null);
+                // Append the blit to the main command buffer so all GPU work
+                // for this camera is in a single submission. This avoids a
+                // data race where a later camera's command buffer overwrites
+                // the temporary composedOutput texture before an earlier,
+                // separate blit submission finishes reading it.
+                BlitToRenderTargetGraphite(composedOutput, target, graphiteCmd);
+                Graphics.ActiveGraphiteCmdBuffer = null;
+                if (graphiteCmd != null)
+                {
+                    graphiteCmd.Submit();
+                    graphiteCmd.Dispose();
+                    graphiteCmd = null;
+                }
+            }
+            else
+            {
+                // No target and no swapchain blit — just submit the main cmd
+                Graphics.ActiveGraphiteCmdBuffer = null;
+                if (graphiteCmd != null)
+                {
+                    graphiteCmd.Submit();
+                    graphiteCmd.Dispose();
+                    graphiteCmd = null;
+                }
             }
         }
         else
         {
+            Graphics.ActiveGraphiteCmdBuffer = null;
+            if (graphiteCmd != null)
+            {
+                graphiteCmd.Submit();
+                graphiteCmd.Dispose();
+                graphiteCmd = null;
+            }
             Blit(composedOutput, target, null, 0, false, false);
         }
 
@@ -741,6 +766,7 @@ public class DefaultRenderPipeline : RenderPipeline
         var texBindGroup = device.CreateBindGroup(new Graphite.BindGroupDescriptor(
             _graphiteBlitTexBGL,
             Graphite.BindGroupEntry.ForTextureSampler(0, sourceGraphiteTex, _graphiteBlitSampler)));
+        GraphiteMaterialBinder.Retire(texBindGroup);
 
         // Resolve the blit shader program
         var blitMat = BlitMaterial;
@@ -777,6 +803,17 @@ public class DefaultRenderPipeline : RenderPipeline
         cmd.DrawIndexed((uint)quad.IndexCount);
 
         cmd.EndRenderPass();
+
+        // Transition the target color attachment to ShaderResource so downstream
+        // consumers (e.g. ImGui) can sample it without a layout mismatch.
+        var targetGraphiteTex = target.frameBuffer.GraphiteColorAttachments is { Length: > 0 }
+            ? target.frameBuffer.GraphiteColorAttachments[0]
+            : null;
+        if (targetGraphiteTex != null)
+        {
+            cmd.ResourceBarrier(new Graphite.ResourceBarrier(
+                targetGraphiteTex, Graphite.ResourceState.RenderTarget, Graphite.ResourceState.ShaderResource));
+        }
 
         if (ownCmd)
         {
@@ -861,7 +898,11 @@ public class DefaultRenderPipeline : RenderPipeline
         if (graphiteCmd != null)
         {
             graphiteCmd.BeginDepthOnlyRenderPass(atlas);
-            graphiteCmd.SetViewport(0, 0, atlas.Width, atlas.Height);
+            // Use raw viewport (no Y-flip) for the shadow atlas. The atlas is
+            // self-contained: depth is written using the light's VP matrix and
+            // sampled in the lighting pass with the same matrix. Applying a
+            // Y-flip here would break the UV ↔ depth mapping.
+            graphiteCmd.SetViewportRaw(0, 0, atlas.Width, atlas.Height);
             graphiteCmd.SetScissor(0, 0, (uint)atlas.Width, (uint)atlas.Height);
         }
 

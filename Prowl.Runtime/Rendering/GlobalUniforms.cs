@@ -1,9 +1,13 @@
 // This file is part of the Prowl Game Engine
 // Licensed under the MIT License. See the LICENSE file in the project root for details.
 
+using System;
 using System.Runtime.InteropServices;
 
+using Prowl.Runtime.Graphite;
 using Prowl.Vector;
+
+using GBuffer = Prowl.Runtime.Graphite.Buffer;
 
 namespace Prowl.Runtime.Rendering;
 
@@ -60,6 +64,14 @@ public static class GlobalUniforms
     private static bool s_isDirty = true;
 
     /// <summary>
+    /// Per-upload Graphite buffer snapshot. Each <see cref="Upload"/> call
+    /// creates a new buffer so that bind groups from different camera renders
+    /// reference independent GPU memory, preventing data races when multiple
+    /// command buffers are in flight.
+    /// </summary>
+    private static GBuffer? s_graphiteSnapshot;
+
+    /// <summary>
     /// Initializes the global uniform buffer
     /// </summary>
     public static void Initialize()
@@ -77,7 +89,10 @@ public static class GlobalUniforms
     }
 
     /// <summary>
-    /// Updates the GPU buffer if data has changed
+    /// Updates the GPU buffer if data has changed.
+    /// On Graphite backends a new buffer is created for each upload so that
+    /// bind groups from the previous camera render keep referencing their own
+    /// immutable copy of the data.
     /// </summary>
     public static void Upload()
     {
@@ -86,6 +101,30 @@ public static class GlobalUniforms
         if (s_isDirty && s_uniformBuffer != null)
         {
             Graphics.UpdateBuffer(s_uniformBuffer, 0, [s_data]);
+
+            // Create a per-upload Graphite buffer snapshot so each camera
+            // render gets its own GPU buffer. This prevents data races when
+            // multiple command buffers are in flight on Vulkan.
+            if (Graphics.IsGraphiteReady)
+            {
+                var prev = s_graphiteSnapshot;
+
+                GlobalUniformsData[] arr = [s_data];
+                var bytes = MemoryMarshal.AsBytes(arr.AsSpan()).ToArray();
+
+                var desc = new BufferDescriptor
+                {
+                    SizeInBytes = (uint)GlobalUniformsData.SizeInBytes,
+                    Usage = BufferUsage.Uniform,
+                    MemoryAccess = MemoryAccess.CpuToGpu,
+                    InitialData = bytes,
+                };
+                s_graphiteSnapshot = Graphics.Graphite.CreateBuffer(in desc);
+
+                if (prev != null)
+                    GraphiteMaterialBinder.Retire(prev);
+            }
+
             s_isDirty = false;
         }
     }
@@ -100,10 +139,21 @@ public static class GlobalUniforms
     }
 
     /// <summary>
+    /// Gets the per-upload Graphite buffer snapshot for bind group creation.
+    /// Returns <c>null</c> before the first <see cref="Upload"/> call.
+    /// </summary>
+    public static GBuffer? GetGraphiteBuffer()
+    {
+        return s_graphiteSnapshot;
+    }
+
+    /// <summary>
     /// Cleans up the global uniform buffer resources
     /// </summary>
     public static void Dispose()
     {
+        s_graphiteSnapshot?.Dispose();
+        s_graphiteSnapshot = null;
         s_uniformBuffer?.Dispose();
         s_uniformBuffer = null;
     }
