@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Linq;
 
 namespace Prowl.Runtime.EventSystem;
 
@@ -9,12 +8,25 @@ public class EventManager<T> : IDisposable where T : struct, Enum
     private static readonly List<EventManager<T>> s_instances = new List<EventManager<T>>();
     private static readonly object s_instancesLock = new();
 
+    /// <summary>
+    /// Copy-on-write snapshot of the static instances list, rebuilt only on Add/Remove.
+    /// </summary>
+    private static EventManager<T>[] s_instancesSnapshot = [];
+
     public static EventManager<T> LastGlobalInstance
     {
         get
         {
             lock (s_instancesLock)
-                return s_instances.LastOrDefault(x => x.Enabled && x.Global);
+            {
+                for (int i = s_instances.Count - 1; i >= 0; i--)
+                {
+                    var instance = s_instances[i];
+                    if (instance.Enabled && instance.Global)
+                        return instance;
+                }
+                return null;
+            }
         }
     }
 
@@ -49,7 +61,10 @@ public class EventManager<T> : IDisposable where T : struct, Enum
         Global = global;
         Initialize();
         lock (s_instancesLock)
+        {
             s_instances.Add(this);
+            s_instancesSnapshot = [.. s_instances];
+        }
     }
 
     private void AddEvent(Event<T> xEvent)
@@ -101,43 +116,62 @@ public class EventManager<T> : IDisposable where T : struct, Enum
 
     private void Initialize()
     {
-        int valuesLength = System.Enum.GetValues(typeof(T)).Length;
-        for (int i = 0; i < valuesLength; i++)
+        T[] values = Enum.GetValues<T>();
+        for (int i = 0; i < values.Length; i++)
         {
-            AddEvent(new Event<T>(this, i.ToEnum<T>()));
+            AddEvent(new Event<T>(this, values[i]));
         }
     }
 
 
-    public void InvokeEvent(T eventType, params EventParam[] args)
+    /// <summary>
+    /// Invoke an event with typed arguments. Only delegates registered
+    /// with a matching <typeparamref name="TArgs"/> will be called.
+    /// </summary>
+    public void InvokeEvent<TArgs>(T eventType, TArgs args)
     {
         if (!Enabled) return;
         if (_events.TryGetValue(eventType, out var evt))
             evt.Invoke(args);
     }
 
+    /// <summary>
+    /// Invoke a parameterless event.
+    /// </summary>
     public void InvokeEvent(T eventType)
     {
-        if (!Enabled) return;
-        if (_events.TryGetValue(eventType, out var evt))
-            evt.Invoke([]);
+        InvokeEvent(eventType, default(Unit));
     }
 
-    public EventDelegateContainer<T> AddNewDelegate(T eventType, System.Action<EventParam[]> eventDelegate, int priority = 0)
+    /// <summary>
+    /// Register a typed delegate for an event.
+    /// </summary>
+    public EventDelegateContainer<T, TArgs> AddNewDelegate<TArgs>(T eventType, Action<TArgs> eventDelegate, int priority = 0)
     {
-        EventDelegateContainer<T> container = new EventDelegateContainer<T>(eventType, eventDelegate, priority);
+        EventDelegateContainer<T, TArgs> container = new EventDelegateContainer<T, TArgs>(eventType, eventDelegate, priority);
         _events[eventType].Add(container);
         return container;
     }
 
-
-    public static void GlobalInvokeEvent(T eventType, params EventParam[] args)
+    /// <summary>
+    /// Register a parameterless delegate for an event.
+    /// </summary>
+    public EventDelegateContainer<T, Unit> AddNewDelegate(T eventType, Action eventDelegate, int priority = 0)
     {
-        List<EventManager<T>> snapshot;
-        lock (s_instancesLock)
-            snapshot = [.. s_instances];
+        return AddNewDelegate<Unit>(eventType, _ => eventDelegate(), priority);
+    }
 
-        for (int i = 0; i < snapshot.Count; i++)
+
+    /// <summary>
+    /// Invoke an event with typed arguments across all global managers.
+    /// </summary>
+    public static void GlobalInvokeEvent<TArgs>(T eventType, TArgs args)
+    {
+        EventManager<T>[] snapshot;
+        lock (s_instancesLock)
+            snapshot = s_instancesSnapshot;
+
+        for (int i = 0; i < snapshot.Length; i++)
         {
             var instance = snapshot[i];
             if (instance.Enabled && instance.Global)
@@ -147,10 +181,21 @@ public class EventManager<T> : IDisposable where T : struct, Enum
         }
     }
 
+    /// <summary>
+    /// Invoke a parameterless event across all global managers.
+    /// </summary>
+    public static void GlobalInvokeEvent(T eventType)
+    {
+        GlobalInvokeEvent(eventType, default(Unit));
+    }
+
     public void Dispose()
     {
         lock (s_instancesLock)
+        {
             s_instances.Remove(this);
+            s_instancesSnapshot = [.. s_instances];
+        }
     }
 
 }

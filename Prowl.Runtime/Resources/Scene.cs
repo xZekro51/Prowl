@@ -9,6 +9,7 @@ using System.Reflection;
 
 using Prowl.Echo;
 using Prowl.PaperUI;
+using Prowl.Runtime.EventSystem;
 using Prowl.Runtime.Rendering;
 using Prowl.Vector;
 

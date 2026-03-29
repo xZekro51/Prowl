@@ -20,19 +20,19 @@ public class EventSystemTests : IDisposable
         EventC,
     }
 
-    private readonly List<EventManager<TestEvents>> _managers = [];
+    private readonly List<IDisposable> _disposables = [];
 
     public void Dispose()
     {
-        foreach (var mgr in _managers)
-            mgr.Dispose();
-        _managers.Clear();
+        foreach (var d in _disposables)
+            d.Dispose();
+        _disposables.Clear();
     }
 
     private EventManager<TestEvents> CreateManager(bool global = false)
     {
         var mgr = new EventManager<TestEvents>(global);
-        _managers.Add(mgr);
+        _disposables.Add(mgr);
         return mgr;
     }
 
@@ -43,7 +43,7 @@ public class EventSystemTests : IDisposable
     {
         var manager = CreateManager();
         bool called = false;
-        manager.AddNewDelegate(TestEvents.EventA, args => called = true);
+        manager.AddNewDelegate(TestEvents.EventA, () => called = true);
 
         manager.InvokeEvent(TestEvents.EventA);
 
@@ -56,8 +56,8 @@ public class EventSystemTests : IDisposable
         var manager = CreateManager();
         bool calledA = false;
         bool calledB = false;
-        manager.AddNewDelegate(TestEvents.EventA, args => calledA = true);
-        manager.AddNewDelegate(TestEvents.EventB, args => calledB = true);
+        manager.AddNewDelegate(TestEvents.EventA, () => calledA = true);
+        manager.AddNewDelegate(TestEvents.EventB, () => calledB = true);
 
         manager.InvokeEvent(TestEvents.EventA);
 
@@ -70,9 +70,9 @@ public class EventSystemTests : IDisposable
     {
         var manager = CreateManager();
         int callCount = 0;
-        manager.AddNewDelegate(TestEvents.EventA, args => callCount++);
-        manager.AddNewDelegate(TestEvents.EventA, args => callCount++);
-        manager.AddNewDelegate(TestEvents.EventA, args => callCount++);
+        manager.AddNewDelegate(TestEvents.EventA, () => callCount++);
+        manager.AddNewDelegate(TestEvents.EventA, () => callCount++);
+        manager.AddNewDelegate(TestEvents.EventA, () => callCount++);
 
         manager.InvokeEvent(TestEvents.EventA);
 
@@ -83,16 +83,14 @@ public class EventSystemTests : IDisposable
     public void InvokeEvent_PassesArguments()
     {
         var manager = CreateManager();
-        EventParam[]? receivedArgs = null;
-        manager.AddNewDelegate(TestEvents.EventA, args => receivedArgs = args);
+        TestParam? received = null;
+        manager.AddNewDelegate<TestParam>(TestEvents.EventA, args => received = args);
 
         var param = new TestParam { Data = 42 };
         manager.InvokeEvent(TestEvents.EventA, param);
 
-        Assert.NotNull(receivedArgs);
-        Assert.Single(receivedArgs!);
-        Assert.IsType<TestParam>(receivedArgs[0]);
-        Assert.Equal(42, ((TestParam)receivedArgs[0]).Data);
+        Assert.NotNull(received);
+        Assert.Equal(42, received!.Data);
     }
 
     #endregion
@@ -105,9 +103,9 @@ public class EventSystemTests : IDisposable
         var manager = CreateManager();
         var order = new List<int>();
 
-        manager.AddNewDelegate(TestEvents.EventA, _ => order.Add(2), priority: 2);
-        manager.AddNewDelegate(TestEvents.EventA, _ => order.Add(0), priority: 0);
-        manager.AddNewDelegate(TestEvents.EventA, _ => order.Add(1), priority: 1);
+        manager.AddNewDelegate(TestEvents.EventA, () => order.Add(2), priority: 2);
+        manager.AddNewDelegate(TestEvents.EventA, () => order.Add(0), priority: 0);
+        manager.AddNewDelegate(TestEvents.EventA, () => order.Add(1), priority: 1);
 
         manager.InvokeEvent(TestEvents.EventA);
 
@@ -120,8 +118,8 @@ public class EventSystemTests : IDisposable
         var manager = CreateManager();
         var order = new List<string>();
 
-        manager.AddNewDelegate(TestEvents.EventA, _ => order.Add("first"), priority: 0);
-        manager.AddNewDelegate(TestEvents.EventA, _ => order.Add("second"), priority: 0);
+        manager.AddNewDelegate(TestEvents.EventA, () => order.Add("first"), priority: 0);
+        manager.AddNewDelegate(TestEvents.EventA, () => order.Add("second"), priority: 0);
 
         manager.InvokeEvent(TestEvents.EventA);
 
@@ -136,8 +134,8 @@ public class EventSystemTests : IDisposable
         var manager = CreateManager();
         var order = new List<int>();
 
-        manager.AddNewDelegate(TestEvents.EventA, _ => order.Add(0), priority: 0);
-        manager.AddNewDelegate(TestEvents.EventA, _ => order.Add(-1), priority: -1);
+        manager.AddNewDelegate(TestEvents.EventA, () => order.Add(0), priority: 0);
+        manager.AddNewDelegate(TestEvents.EventA, () => order.Add(-1), priority: -1);
 
         manager.InvokeEvent(TestEvents.EventA);
 
@@ -153,7 +151,7 @@ public class EventSystemTests : IDisposable
     {
         var manager = CreateManager();
         bool called = false;
-        manager.AddNewDelegate(TestEvents.EventA, _ => called = true);
+        manager.AddNewDelegate(TestEvents.EventA, () => called = true);
 
         manager.Enabled = false;
         manager.InvokeEvent(TestEvents.EventA);
@@ -166,7 +164,7 @@ public class EventSystemTests : IDisposable
     {
         var manager = CreateManager();
         bool called = false;
-        manager.AddNewDelegate(TestEvents.EventA, _ => called = true);
+        manager.AddNewDelegate(TestEvents.EventA, () => called = true);
 
         manager.Enabled = false;
         manager.Enabled = true;
@@ -180,7 +178,7 @@ public class EventSystemTests : IDisposable
     {
         var manager = CreateManager();
         bool called = false;
-        manager.AddNewDelegate(TestEvents.EventA, _ => called = true);
+        manager.AddNewDelegate(TestEvents.EventA, () => called = true);
 
         manager.DisableEvent(TestEvents.EventA);
         manager.InvokeEvent(TestEvents.EventA);
@@ -193,7 +191,7 @@ public class EventSystemTests : IDisposable
     {
         var manager = CreateManager();
         bool called = false;
-        manager.AddNewDelegate(TestEvents.EventA, _ => called = true);
+        manager.AddNewDelegate(TestEvents.EventA, () => called = true);
 
         manager.DisableEvent(TestEvents.EventA);
         manager.EnableEvent(TestEvents.EventA);
@@ -207,7 +205,7 @@ public class EventSystemTests : IDisposable
     {
         var manager = CreateManager();
         bool called = false;
-        var container = manager.AddNewDelegate(TestEvents.EventA, _ => called = true);
+        var container = manager.AddNewDelegate(TestEvents.EventA, () => called = true);
 
         container.Disable();
         manager.InvokeEvent(TestEvents.EventA);
@@ -220,7 +218,7 @@ public class EventSystemTests : IDisposable
     {
         var manager = CreateManager();
         bool called = false;
-        var container = manager.AddNewDelegate(TestEvents.EventA, _ => called = true);
+        var container = manager.AddNewDelegate(TestEvents.EventA, () => called = true);
 
         container.Disable();
         container.Enable();
@@ -238,7 +236,7 @@ public class EventSystemTests : IDisposable
     {
         var manager = CreateManager();
         bool called = false;
-        var container = manager.AddNewDelegate(TestEvents.EventA, _ => called = true);
+        var container = manager.AddNewDelegate(TestEvents.EventA, () => called = true);
 
         manager.RemoveDelegate(container);
         manager.InvokeEvent(TestEvents.EventA);
@@ -252,8 +250,8 @@ public class EventSystemTests : IDisposable
         var manager = CreateManager();
         bool calledFirst = false;
         bool calledSecond = false;
-        var first = manager.AddNewDelegate(TestEvents.EventA, _ => calledFirst = true);
-        manager.AddNewDelegate(TestEvents.EventA, _ => calledSecond = true);
+        var first = manager.AddNewDelegate(TestEvents.EventA, () => calledFirst = true);
+        manager.AddNewDelegate(TestEvents.EventA, () => calledSecond = true);
 
         manager.RemoveDelegate(first);
         manager.InvokeEvent(TestEvents.EventA);
@@ -267,7 +265,7 @@ public class EventSystemTests : IDisposable
     {
         var manager = CreateManager();
         bool called = false;
-        var container = manager.AddNewDelegate(TestEvents.EventA, _ => called = true);
+        var container = manager.AddNewDelegate(TestEvents.EventA, () => called = true);
 
         manager.RemoveDelegate(container);
         manager.AddDelegate(container);
@@ -285,7 +283,7 @@ public class EventSystemTests : IDisposable
     {
         var manager = CreateManager(global: true);
         bool called = false;
-        manager.AddNewDelegate(TestEvents.EventA, _ => called = true);
+        manager.AddNewDelegate(TestEvents.EventA, () => called = true);
 
         EventManager<TestEvents>.GlobalInvokeEvent(TestEvents.EventA);
 
@@ -297,7 +295,7 @@ public class EventSystemTests : IDisposable
     {
         var manager = CreateManager(global: false);
         bool called = false;
-        manager.AddNewDelegate(TestEvents.EventA, _ => called = true);
+        manager.AddNewDelegate(TestEvents.EventA, () => called = true);
 
         EventManager<TestEvents>.GlobalInvokeEvent(TestEvents.EventA);
 
@@ -309,7 +307,7 @@ public class EventSystemTests : IDisposable
     {
         var manager = CreateManager(global: true);
         bool called = false;
-        manager.AddNewDelegate(TestEvents.EventA, _ => called = true);
+        manager.AddNewDelegate(TestEvents.EventA, () => called = true);
 
         manager.Enabled = false;
         EventManager<TestEvents>.GlobalInvokeEvent(TestEvents.EventA);
@@ -348,16 +346,16 @@ public class EventSystemTests : IDisposable
     public void Dispose_RemovesFromGlobalInstances()
     {
         var manager = CreateManager(global: true);
-        manager.AddNewDelegate(TestEvents.EventA, _ => { });
+        manager.AddNewDelegate(TestEvents.EventA, () => { });
 
         manager.Dispose();
-        _managers.Remove(manager);
+        _disposables.Remove(manager);
 
         // After disposal, the manager should no longer be reachable globally
         bool found = false;
         var check = CreateManager(global: true);
         bool checkCalled = false;
-        check.AddNewDelegate(TestEvents.EventA, _ => checkCalled = true);
+        check.AddNewDelegate(TestEvents.EventA, () => checkCalled = true);
 
         // Invoke globally — only 'check' should fire
         EventManager<TestEvents>.GlobalInvokeEvent(TestEvents.EventA);
@@ -376,7 +374,7 @@ public class EventSystemTests : IDisposable
 
         // Pre-populate some delegates
         for (int i = 0; i < 10; i++)
-            manager.AddNewDelegate(TestEvents.EventA, _ => Interlocked.Increment(ref invokeCount));
+            manager.AddNewDelegate(TestEvents.EventA, () => Interlocked.Increment(ref invokeCount));
 
         var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
 
@@ -394,7 +392,7 @@ public class EventSystemTests : IDisposable
         tasks.Add(Task.Run(() =>
         {
             for (int i = 0; i < 50; i++)
-                manager.AddNewDelegate(TestEvents.EventA, _ => Interlocked.Increment(ref invokeCount));
+                manager.AddNewDelegate(TestEvents.EventA, () => Interlocked.Increment(ref invokeCount));
         }));
 
         // Should not throw any exceptions
@@ -406,45 +404,10 @@ public class EventSystemTests : IDisposable
 
     #endregion
 
-    #region EventParam helpers
-
-    [Fact]
-    public void TryGetParam_FindsMatchingType()
-    {
-        EventParam[] args = [new TestParam { Data = 99 }];
-
-        bool found = args.TryGetParam<TestParam>(out var param);
-
-        Assert.True(found);
-        Assert.Equal(99, param.Data);
-    }
-
-    [Fact]
-    public void TryGetParam_ReturnsFalse_WhenNotFound()
-    {
-        EventParam[] args = [];
-
-        bool found = args.TryGetParam<TestParam>(out _);
-
-        Assert.False(found);
-    }
-
-    [Fact]
-    public void GetParams_ReturnsAllMatching()
-    {
-        EventParam[] args = [new TestParam { Data = 1 }, new TestParam { Data = 2 }];
-
-        var results = args.GetParams<TestParam>();
-
-        Assert.Equal(2, results.Length);
-    }
-
-    #endregion
-
     /// <summary>
-    /// Test EventParam subclass.
+    /// Test event argument class used by typed-args tests.
     /// </summary>
-    private class TestParam : EventParam
+    private class TestParam
     {
         public int Data { get; set; }
     }

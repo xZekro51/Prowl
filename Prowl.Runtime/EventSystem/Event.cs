@@ -17,6 +17,12 @@ public class Event<T> where T : struct, Enum
 
     private readonly object _lock = new();
 
+    /// <summary>
+    /// Copy-on-write snapshot: a flat, priority-sorted array of all delegates.
+    /// Rebuilt only when the subscriber list changes (Add/Remove), never on Invoke.
+    /// </summary>
+    private EventDelegateContainer<T>[] _cachedSnapshot = [];
+
     private bool _enabled = true;
     public bool Enabled
     {
@@ -31,28 +37,20 @@ public class Event<T> where T : struct, Enum
     }
 
 
-    public void Invoke(EventParam[] args)
+    public void Invoke<TArgs>(TArgs args)
     {
         if (!Enabled) return;
 
-        List<(int key, EventDelegateContainer<T>[] delegates)> snapshot;
+        EventDelegateContainer<T>[] snapshot;
         lock (_lock)
         {
-            snapshot = new List<(int, EventDelegateContainer<T>[])>(_sortedKeys.Count);
-            for (int i = 0; i < _sortedKeys.Count; i++)
-            {
-                int key = _sortedKeys[i];
-                snapshot.Add((key, [.. _eventDelegates[key]]));
-            }
+            snapshot = _cachedSnapshot;
         }
 
-        for (int i = 0; i < snapshot.Count; i++)
+        for (int j = 0; j < snapshot.Length; j++)
         {
-            var delegates = snapshot[i].delegates;
-            for (int j = 0; j < delegates.Length; j++)
-            {
-                delegates[j].Invoke(args);
-            }
+            if (snapshot[j] is EventDelegateContainer<T, TArgs> typed)
+                typed.Invoke(args);
         }
     }
 
@@ -70,6 +68,7 @@ public class Event<T> where T : struct, Enum
                 eventDelegate.Link(this);
             }
             SortKeys();
+            RebuildSnapshot();
         }
     }
 
@@ -83,6 +82,7 @@ public class Event<T> where T : struct, Enum
                 result = _eventDelegates[eventDelegate.Priority].Remove(eventDelegate);
             }
             eventDelegate.Unlink();
+            RebuildSnapshot();
             return result;
         }
     }
@@ -93,5 +93,32 @@ public class Event<T> where T : struct, Enum
         _sortedKeys.Clear();
         _sortedKeys.AddRange(_eventDelegates.Keys);
         _sortedKeys.Sort();
+    }
+
+    /// <summary>
+    /// Rebuilds the flat, priority-sorted snapshot array from the current delegate buckets.
+    /// Must be called under <see cref="_lock"/>.
+    /// </summary>
+    private void RebuildSnapshot()
+    {
+        int totalCount = 0;
+        for (int i = 0; i < _sortedKeys.Count; i++)
+            totalCount += _eventDelegates[_sortedKeys[i]].Count;
+
+        if (totalCount == 0)
+        {
+            _cachedSnapshot = [];
+            return;
+        }
+
+        var snapshot = new EventDelegateContainer<T>[totalCount];
+        int index = 0;
+        for (int i = 0; i < _sortedKeys.Count; i++)
+        {
+            var bucket = _eventDelegates[_sortedKeys[i]];
+            for (int j = 0; j < bucket.Count; j++)
+                snapshot[index++] = bucket[j];
+        }
+        _cachedSnapshot = snapshot;
     }
 }

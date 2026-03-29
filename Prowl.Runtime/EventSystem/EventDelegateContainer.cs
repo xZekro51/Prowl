@@ -2,7 +2,12 @@ using System;
 
 namespace Prowl.Runtime.EventSystem;
 
-public class EventDelegateContainer<T> where T : struct, Enum
+/// <summary>
+/// Non-generic base class for delegate containers, enabling heterogeneous storage
+/// within a single <see cref="Event{T}"/>. Subscribe via the typed
+/// <see cref="EventDelegateContainer{T, TArgs}"/> derived class.
+/// </summary>
+public abstract class EventDelegateContainer<T> where T : struct, Enum
 {
     public EventManager<T>? EventManager => Event?.EventManager;
 
@@ -17,8 +22,6 @@ public class EventDelegateContainer<T> where T : struct, Enum
     }
 
     private int priority;
-
-    private readonly System.Action<EventParam[]> eventDelegate;
 
     private T eventType;
     public T EventType
@@ -43,7 +46,6 @@ public class EventDelegateContainer<T> where T : struct, Enum
     public void Link(Event<T> @event)
     {
         Event = @event;
-
     }
 
     public void Unlink()
@@ -51,9 +53,8 @@ public class EventDelegateContainer<T> where T : struct, Enum
         Event = null;
     }
 
-    public EventDelegateContainer(T eventType, System.Action<EventParam[]> eventDelegate, int priority = 0)
+    protected EventDelegateContainer(T eventType, int priority)
     {
-        this.eventDelegate = eventDelegate;
         this.priority = priority;
         this.EventType = eventType;
     }
@@ -66,8 +67,22 @@ public class EventDelegateContainer<T> where T : struct, Enum
     {
         Enabled = false;
     }
+}
 
-    public void Invoke(EventParam[] args)
+/// <summary>
+/// Typed delegate container wrapping an <see cref="Action{TArgs}"/>.
+/// </summary>
+public class EventDelegateContainer<T, TArgs> : EventDelegateContainer<T> where T : struct, Enum
+{
+    private readonly Action<TArgs> eventDelegate;
+
+    public EventDelegateContainer(T eventType, Action<TArgs> eventDelegate, int priority = 0)
+        : base(eventType, priority)
+    {
+        this.eventDelegate = eventDelegate;
+    }
+
+    public void Invoke(TArgs args)
     {
         if (!Enabled) return;
         eventDelegate?.Invoke(args);

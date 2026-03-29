@@ -9,64 +9,39 @@ public interface IEventManagerHolder<T> where T : struct, Enum
     EventManager<T> EventManager { get; }
 }
 
-public static class IEventManagerHolderExtensions
+public static class EventManagerExtensions
 {
-    public static void InvokeEvents<T>(this IEventManagerHolder<T>[] holders, T eventType, params EventParam[] parameters) where T : struct, Enum
+    public static void InvokeEvents<T, TArgs>(this IEventManagerHolder<T>[] holders, T eventType, TArgs args) where T : struct, Enum
     {
         for (int i = 0; i < holders.Length; i++)
         {
             var holder = holders[i];
-            holder?.EventManager.InvokeEvent(eventType, parameters);
+            holder?.EventManager.InvokeEvent(eventType, args);
         }
     }
-    public static void InvokeEvents<T>(this List<IEventManagerHolder<T>> holders, T eventType, params EventParam[] parameters) where T : struct, Enum
+    public static void InvokeEvents<T, TArgs>(this List<IEventManagerHolder<T>> holders, T eventType, TArgs args) where T : struct, Enum
     {
         for (int i = 0; i < holders.Count; i++)
         {
             IEventManagerHolder<T> holder = holders[i];
-            holder?.EventManager.InvokeEvent(eventType, parameters);
+            holder?.EventManager.InvokeEvent(eventType, args);
         }
     }
 
-    public static bool TryGetParam<T>(this EventParam[] parameters, out T param)
+    public static void InvokeEvents<T>(this IEventManagerHolder<T>[] holders, T eventType) where T : struct, Enum
     {
-        param = default;
-
-        for (int i = 0; i < parameters.Length; i++)
+        for (int i = 0; i < holders.Length; i++)
         {
-            if (parameters[i] is T t)
-            {
-                param = t;
-                return true;
-            }
+            var holder = holders[i];
+            holder?.EventManager.InvokeEvent(eventType);
         }
-
-        return false;
     }
-
-    public static T[] GetParams<T>(this EventParam[] parameters)
+    public static void InvokeEvents<T>(this List<IEventManagerHolder<T>> holders, T eventType) where T : struct, Enum
     {
-        int count = 0;
-        for (int i = 0; i < parameters.Length; i++)
+        for (int i = 0; i < holders.Count; i++)
         {
-            if (parameters[i] is T)
-                count++;
+            IEventManagerHolder<T> holder = holders[i];
+            holder?.EventManager.InvokeEvent(eventType);
         }
-
-        if (count == 0)
-            return System.Array.Empty<T>();
-
-        T[] result = new T[count];
-        int index = 0;
-        for (int i = 0; i < parameters.Length; i++)
-        {
-            if (parameters[i] is T t)
-                result[index++] = t;
-        }
-
-        return result;
     }
-
-    public static T ToEnum<T>(this int value) where T : struct, Enum
-        => (T)Enum.ToObject(typeof(T), value);
 }
