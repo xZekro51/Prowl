@@ -4,6 +4,7 @@
 using System;
 using System.IO;
 using System.Linq;
+using System.Numerics;
 
 using ImGuiNET;
 
@@ -164,6 +165,7 @@ public sealed class ImGuiManager : IOverlayManager
         config.MergeMode = true;
         config.PixelSnapH = true;
         config.GlyphMinAdvanceX = pixelSize;
+        config.GlyphOffset = new Vector2(0, MathF.Round(pixelSize * 0.15f));
         ushort[] ranges = [(ushort)IconGlyphRangeMin, (ushort)IconGlyphRangeMax, 0];
         fixed (ushort* pRanges = ranges)
         {

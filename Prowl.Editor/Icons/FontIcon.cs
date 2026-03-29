@@ -43,10 +43,10 @@ public sealed class FontIcon : IIcon
         var font = ImGui.GetFont();
 
         // Offset Y so the glyph is vertically centred within the requested
-        // line height, plus a small downward nudge (~3px at base size) because
-        // Phosphor glyph metrics sit higher than regular text baselines.
+        // line height. The additional downward nudge for Phosphor glyph metrics
+        // is handled globally via GlyphOffset in the font config at load time.
         float glyphHeight = font.FontSize;
-        float yOffset = (size - glyphHeight) * 0.5f + MathF.Round(size * 0.2f);
+        float yOffset = (size - glyphHeight) * 0.5f;
         var pos = new Vector2(position.X, position.Y + yOffset);
 
         drawList.AddText(font, size, pos, ImGui.GetColorU32(color), Character);

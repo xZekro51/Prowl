@@ -47,6 +47,7 @@ public sealed class ImGuiUIRenderer : Prowl.UI.IUIRenderer
                 config.MergeMode = true;
                 config.PixelSnapH = true;
                 config.GlyphMinAdvanceX = scaledSize;
+                config.GlyphOffset = new Vector2(0, MathF.Round(scaledSize * 0.15f));
                 ushort[] ranges = [(ushort)iconGlyphMin, (ushort)iconGlyphMax, 0];
                 fixed (ushort* pRanges = ranges)
                 {
