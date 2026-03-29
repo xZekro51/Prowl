@@ -67,6 +67,10 @@ public enum EditorIconType
     Translate,
     Rotate,
     Scale,
+    Gizmos,
+    Compile,
+    Maximize,
+    Restore,
 
     // ── Playback ──
     Play,
@@ -199,32 +203,61 @@ public static class EditorIcons
     /// </summary>
     public static bool ImageButtonWithLabel(string id, EditorIconType type, string label, Vector2 size = default)
     {
+        // Prefer font icon from IconManager (vector-based, crisp at any size)
+        var fontIcon = Icons.IconManager.GetIcon(type.ToString()) as Icons.FontIcon;
+        if (fontIcon != null)
+        {
+            float iconSz = ImGui.GetTextLineHeight();
+            float spacing = ImGui.GetStyle().ItemInnerSpacing.X;
+            Vector2 textSize = ImGui.CalcTextSize(label);
+            if (size == default)
+                size = new Vector2(iconSz + spacing + textSize.X + ImGui.GetStyle().FramePadding.X * 2,
+                                   iconSz + ImGui.GetStyle().FramePadding.Y * 2);
+
+            Vector2 cursorPos = ImGui.GetCursorScreenPos();
+            bool clicked = ImGui.Button($"##{id}", size);
+
+            var drawList = ImGui.GetWindowDrawList();
+            var framePad = ImGui.GetStyle().FramePadding;
+            float yOff = (size.Y - iconSz) * 0.5f;
+            fontIcon.Draw(new Vector2(cursorPos.X + framePad.X, cursorPos.Y + yOff), iconSz);
+
+            float textY = cursorPos.Y + (size.Y - textSize.Y) * 0.5f;
+            drawList.AddText(new Vector2(cursorPos.X + framePad.X + iconSz + spacing, textY),
+                ImGui.GetColorU32(ImGuiCol.Text), label);
+
+            return clicked;
+        }
+
+        // Fallback to texture icon
         nint texId = Get(type);
         if (texId == 0) return ImGui.Button($"{label}##{id}", size);
 
-        float iconSz = ImGui.GetTextLineHeight();
-        float spacing = ImGui.GetStyle().ItemInnerSpacing.X;
-        Vector2 textSize = ImGui.CalcTextSize(label);
-        if (size == default)
-            size = new Vector2(iconSz + spacing + textSize.X + ImGui.GetStyle().FramePadding.X * 2,
-                               iconSz + ImGui.GetStyle().FramePadding.Y * 2);
+        {
+            float iconSz = ImGui.GetTextLineHeight();
+            float spacing = ImGui.GetStyle().ItemInnerSpacing.X;
+            Vector2 textSize = ImGui.CalcTextSize(label);
+            if (size == default)
+                size = new Vector2(iconSz + spacing + textSize.X + ImGui.GetStyle().FramePadding.X * 2,
+                                   iconSz + ImGui.GetStyle().FramePadding.Y * 2);
 
-        Vector2 cursorPos = ImGui.GetCursorScreenPos();
-        bool clicked = ImGui.Button($"##{id}", size);
+            Vector2 cursorPos = ImGui.GetCursorScreenPos();
+            bool clicked = ImGui.Button($"##{id}", size);
 
-        var drawList = ImGui.GetWindowDrawList();
-        var framePad = ImGui.GetStyle().FramePadding;
-        float yOff = (size.Y - iconSz) * 0.5f;
-        drawList.AddImage(texId,
-            new Vector2(cursorPos.X + framePad.X, cursorPos.Y + yOff),
-            new Vector2(cursorPos.X + framePad.X + iconSz, cursorPos.Y + yOff + iconSz),
-            new Vector2(0, 1), new Vector2(1, 0));
+            var drawList = ImGui.GetWindowDrawList();
+            var framePad = ImGui.GetStyle().FramePadding;
+            float yOff = (size.Y - iconSz) * 0.5f;
+            drawList.AddImage(texId,
+                new Vector2(cursorPos.X + framePad.X, cursorPos.Y + yOff),
+                new Vector2(cursorPos.X + framePad.X + iconSz, cursorPos.Y + yOff + iconSz),
+                new Vector2(0, 1), new Vector2(1, 0));
 
-        float textY = cursorPos.Y + (size.Y - textSize.Y) * 0.5f;
-        drawList.AddText(new Vector2(cursorPos.X + framePad.X + iconSz + spacing, textY),
-            ImGui.GetColorU32(ImGuiCol.Text), label);
+            float textY = cursorPos.Y + (size.Y - textSize.Y) * 0.5f;
+            drawList.AddText(new Vector2(cursorPos.X + framePad.X + iconSz + spacing, textY),
+                ImGui.GetColorU32(ImGuiCol.Text), label);
 
-        return clicked;
+            return clicked;
+        }
     }
 
     /// <summary>
@@ -232,12 +265,25 @@ public static class EditorIcons
     /// </summary>
     public static bool IconMenuItem(EditorIconType type, string label)
     {
-        nint texId = Get(type);
         float iconSz = ImGui.GetTextLineHeight();
-        if (texId != 0)
+
+        // Prefer font icon (vector-based)
+        var fontIcon = Icons.IconManager.GetIcon(type.ToString()) as Icons.FontIcon;
+        if (fontIcon != null)
         {
-            ImGui.Image(texId, new Vector2(iconSz, iconSz), new Vector2(0, 1), new Vector2(1, 0));
+            Vector2 pos = ImGui.GetCursorScreenPos();
+            ImGui.Dummy(new Vector2(iconSz, iconSz));
+            fontIcon.Draw(pos, iconSz);
             ImGui.SameLine();
+        }
+        else
+        {
+            nint texId = Get(type);
+            if (texId != 0)
+            {
+                ImGui.Image(texId, new Vector2(iconSz, iconSz), new Vector2(0, 1), new Vector2(1, 0));
+                ImGui.SameLine();
+            }
         }
         return ImGui.Selectable(label);
     }
@@ -247,9 +293,20 @@ public static class EditorIcons
     /// </summary>
     public static void InlineIcon(EditorIconType type, Vector4? tint = null)
     {
+        float sz = ImGui.GetTextLineHeight();
+
+        // Prefer font icon (vector-based, crisp at any size)
+        var fontIcon = Icons.IconManager.GetIcon(type.ToString()) as Icons.FontIcon;
+        if (fontIcon != null)
+        {
+            Vector2 pos = ImGui.GetCursorScreenPos();
+            ImGui.Dummy(new Vector2(sz, sz));
+            fontIcon.Draw(pos, sz, tint);
+            return;
+        }
+
         nint texId = Get(type);
         if (texId == 0) return;
-        float sz = ImGui.GetTextLineHeight();
         ImGui.Image(texId, new Vector2(sz, sz), new Vector2(0, 1), new Vector2(1, 0),
             tint ?? new Vector4(1, 1, 1, 1));
     }

@@ -34,6 +34,18 @@ public sealed class ImGuiManager : IOverlayManager
     public IUIRenderer? Renderer => _renderer;
 
     /// <summary>
+    /// Optional path to an icon font (e.g. Phosphor Icons) that will be merged into
+    /// every font size during atlas construction. Set before <see cref="Initialize"/> is called.
+    /// </summary>
+    public string? IconFontPath { get; set; }
+
+    /// <summary>First Unicode codepoint in the icon font glyph range.</summary>
+    public int IconGlyphRangeMin { get; set; }
+
+    /// <summary>Last Unicode codepoint in the icon font glyph range.</summary>
+    public int IconGlyphRangeMax { get; set; }
+
+    /// <summary>
     /// Initialises the Dear ImGui context, Graphite-based renderer, and input handler.
     /// Should be called during the window Load event, after <see cref="Graphics"/>
     /// and the Silk.NET window/input are available.
@@ -55,9 +67,15 @@ public sealed class ImGuiManager : IOverlayManager
         string? systemFont = FindSystemFont();
         if (systemFont != null)
         {
-            int baseFontSize = (int)MathF.Round(14 * DpiManager.Scale);
+            int baseFontSize = (int)MathF.Round(15 * DpiManager.Scale);
             io.Fonts.AddFontFromFileTTF(systemFont, baseFontSize);
-            ImGuiUIRenderer.LoadFonts(systemFont, DpiManager.Scale);
+
+            // Merge icon font into the base/default font if configured
+            if (!string.IsNullOrEmpty(IconFontPath) && IconGlyphRangeMin > 0 && IconGlyphRangeMax > 0)
+                MergeIconFontUnsafe(io, baseFontSize);
+
+            ImGuiUIRenderer.LoadFonts(systemFont, DpiManager.Scale,
+                IconFontPath, IconGlyphRangeMin, IconGlyphRangeMax);
         }
 
         // Initialise the Graphite-based renderer (uploads font atlas, creates pipeline)
@@ -135,5 +153,22 @@ public sealed class ImGuiManager : IOverlayManager
             "/System/Library/Fonts/Helvetica.ttc",
         ];
         return candidates.FirstOrDefault(File.Exists);
+    }
+
+    /// <summary>
+    /// Merges icon font glyphs into the most recently added font (the base/default font).
+    /// </summary>
+    private unsafe void MergeIconFontUnsafe(ImGuiIOPtr io, int pixelSize)
+    {
+        ImFontConfigPtr config = ImGuiNative.ImFontConfig_ImFontConfig();
+        config.MergeMode = true;
+        config.PixelSnapH = true;
+        config.GlyphMinAdvanceX = pixelSize;
+        ushort[] ranges = [(ushort)IconGlyphRangeMin, (ushort)IconGlyphRangeMax, 0];
+        fixed (ushort* pRanges = ranges)
+        {
+            io.Fonts.AddFontFromFileTTF(IconFontPath!, pixelSize, config, (nint)pRanges);
+        }
+        config.Destroy();
     }
 }

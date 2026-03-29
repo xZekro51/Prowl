@@ -120,6 +120,75 @@ public static class IconManager
 
     private static bool _loaded;
 
+    /// <summary>
+    /// Maps <see cref="EditorIconType"/> values to Phosphor Icons Unicode characters.
+    /// </summary>
+    private static readonly Dictionary<EditorIconType, string> _phosphorMap = new()
+    {
+        // Core objects
+        [EditorIconType.GameObject]          = PhosphorIcons.Cube,
+        [EditorIconType.Camera]              = PhosphorIcons.Camera,
+        [EditorIconType.Light]               = PhosphorIcons.Sun,
+        [EditorIconType.PointLight]          = PhosphorIcons.Lightbulb,
+        [EditorIconType.SpotLight]           = PhosphorIcons.Flashlight,
+        [EditorIconType.Folder]              = PhosphorIcons.Folder,
+        [EditorIconType.FolderOpen]          = PhosphorIcons.FolderOpen,
+        // Asset types
+        [EditorIconType.Script]              = PhosphorIcons.FileCode,
+        [EditorIconType.Material]            = PhosphorIcons.Palette,
+        [EditorIconType.Texture]             = PhosphorIcons.Image,
+        [EditorIconType.Scene]               = PhosphorIcons.GlobeHemisphereWest,
+        [EditorIconType.Mesh]                = PhosphorIcons.Package,
+        [EditorIconType.Prefab]              = PhosphorIcons.Package,
+        [EditorIconType.Audio]               = PhosphorIcons.SpeakerHigh,
+        [EditorIconType.File]                = PhosphorIcons.File,
+        [EditorIconType.Shader]              = PhosphorIcons.Code,
+        [EditorIconType.Animation]           = PhosphorIcons.FilmStrip,
+        [EditorIconType.Font]                = PhosphorIcons.TextAa,
+        // Components
+        [EditorIconType.Component]           = PhosphorIcons.PuzzlePiece,
+        [EditorIconType.Transform]           = PhosphorIcons.ArrowsOutCardinal,
+        [EditorIconType.Rigidbody]           = PhosphorIcons.Atom,
+        [EditorIconType.Collider]            = PhosphorIcons.BoundingBox,
+        [EditorIconType.AudioSource]         = PhosphorIcons.SpeakerHigh,
+        [EditorIconType.AudioListener]       = PhosphorIcons.Ear,
+        [EditorIconType.ParticleSystem]      = PhosphorIcons.Sparkle,
+        [EditorIconType.Terrain]             = PhosphorIcons.Mountains,
+        [EditorIconType.LineRenderer]        = PhosphorIcons.LineSegments,
+        [EditorIconType.CharacterController] = PhosphorIcons.Person,
+        // UI actions
+        [EditorIconType.Settings]            = PhosphorIcons.GearSix,
+        [EditorIconType.Search]              = PhosphorIcons.MagnifyingGlass,
+        [EditorIconType.Save]                = PhosphorIcons.FloppyDisk,
+        [EditorIconType.Plus]                = PhosphorIcons.Plus,
+        [EditorIconType.Delete]              = PhosphorIcons.Trash,
+        [EditorIconType.Refresh]             = PhosphorIcons.ArrowClockwise,
+        [EditorIconType.Eye]                 = PhosphorIcons.Eye,
+        [EditorIconType.EyeOff]              = PhosphorIcons.EyeSlash,
+        [EditorIconType.Link]                = PhosphorIcons.Link,
+        [EditorIconType.Star]                = PhosphorIcons.Star,
+        [EditorIconType.Duplicate]           = PhosphorIcons.Copy,
+        [EditorIconType.Close]               = PhosphorIcons.X,
+        [EditorIconType.Dropdown]            = PhosphorIcons.CaretDown,
+        [EditorIconType.Translate]           = PhosphorIcons.ArrowsOutCardinal,
+        [EditorIconType.Rotate]              = PhosphorIcons.ArrowCounterClockwise,
+        [EditorIconType.Scale]               = PhosphorIcons.ArrowsOut,
+        [EditorIconType.Gizmos]              = PhosphorIcons.CubeTransparent,
+        [EditorIconType.Compile]             = PhosphorIcons.Lightning,
+        [EditorIconType.Maximize]            = PhosphorIcons.CornersOut,
+        [EditorIconType.Restore]             = PhosphorIcons.CornersIn,
+        // Playback
+        [EditorIconType.Play]                = PhosphorIcons.Play,
+        [EditorIconType.Stop]                = PhosphorIcons.Stop,
+        [EditorIconType.Pause]               = PhosphorIcons.Pause,
+        [EditorIconType.StepForward]         = PhosphorIcons.SkipForward,
+        // Status
+        [EditorIconType.Info]                = PhosphorIcons.Info,
+        [EditorIconType.Warning]             = PhosphorIcons.Warning,
+        [EditorIconType.Error]               = PhosphorIcons.XCircle,
+        [EditorIconType.Success]             = PhosphorIcons.CheckCircle,
+    };
+
     // ── Initialisation ───────────────────────────────────────────
 
     /// <summary>
@@ -131,16 +200,21 @@ public static class IconManager
         if (_loaded) return;
         _loaded = true;
 
-        // Register every EditorIconType as a texture icon (backed by embedded PNGs).
+        // Register Phosphor font icons for every EditorIconType that has a mapping.
+        // Fall back to a lazy texture icon (embedded PNG → coloured rectangle) for any
+        // type that is not in the Phosphor map.
         foreach (EditorIconType type in Enum.GetValues<EditorIconType>())
         {
             string name = type.ToString();
-            // Use a lazy wrapper so the texture is only created when first drawn.
-            _icons[name] = new LazyTextureIcon(type);
+            if (_phosphorMap.TryGetValue(type, out string? glyph))
+            {
+                _icons[name] = new FontIcon(glyph, GetDefaultColor(type));
+            }
+            else
+            {
+                _icons[name] = new LazyTextureIcon(type);
+            }
         }
-
-        // All icons (including Play, Stop, Pause, StepForward, Close, Dropdown)
-        // are now registered as texture icons via the EditorIconType enum above.
     }
 
     // ── Registration ─────────────────────────────────────────────
@@ -268,6 +342,70 @@ public static class IconManager
     }
 
     // ── Cleanup ──────────────────────────────────────────────────
+
+    /// <summary>
+    /// Returns a default tint colour for each icon type, so font-based icons
+    /// appear in a colour that matches their semantic meaning.
+    /// </summary>
+    private static Vector4 GetDefaultColor(EditorIconType type) => type switch
+    {
+        EditorIconType.GameObject         => new(0.56f, 0.73f, 0.92f, 1f),
+        EditorIconType.Camera             => new(0.71f, 0.49f, 0.86f, 1f),
+        EditorIconType.Light              => new(0.95f, 0.80f, 0.20f, 1f),
+        EditorIconType.PointLight         => new(0.95f, 0.65f, 0.15f, 1f),
+        EditorIconType.SpotLight          => new(0.95f, 0.65f, 0.15f, 1f),
+        EditorIconType.Folder             => new(0.91f, 0.72f, 0.34f, 1f),
+        EditorIconType.FolderOpen         => new(0.94f, 0.80f, 0.50f, 1f),
+        EditorIconType.Script             => new(0.30f, 0.80f, 0.55f, 1f),
+        EditorIconType.Material           => new(0.90f, 0.40f, 0.60f, 1f),
+        EditorIconType.Texture            => new(0.32f, 0.58f, 0.80f, 1f),
+        EditorIconType.Scene              => new(0.90f, 0.55f, 0.25f, 1f),
+        EditorIconType.Mesh               => new(0.20f, 0.76f, 0.65f, 1f),
+        EditorIconType.Prefab             => new(0.33f, 0.63f, 0.88f, 1f),
+        EditorIconType.Audio              => new(0.65f, 0.40f, 0.80f, 1f),
+        EditorIconType.Shader             => new(0.65f, 0.40f, 0.80f, 1f),
+        EditorIconType.Animation          => new(0.90f, 0.35f, 0.30f, 1f),
+        EditorIconType.Font               => new(0.50f, 0.55f, 0.60f, 1f),
+        EditorIconType.Component          => new(0.33f, 0.63f, 0.88f, 1f),
+        EditorIconType.Transform          => new(0.90f, 0.35f, 0.30f, 1f),
+        EditorIconType.Rigidbody          => new(0.90f, 0.55f, 0.25f, 1f),
+        EditorIconType.Collider           => new(0.30f, 0.80f, 0.55f, 1f),
+        EditorIconType.AudioSource        => new(0.65f, 0.40f, 0.80f, 1f),
+        EditorIconType.AudioListener      => new(0.65f, 0.40f, 0.80f, 1f),
+        EditorIconType.ParticleSystem     => new(0.95f, 0.65f, 0.15f, 1f),
+        EditorIconType.Terrain            => new(0.25f, 0.72f, 0.45f, 1f),
+        EditorIconType.LineRenderer       => new(0.33f, 0.63f, 0.88f, 1f),
+        EditorIconType.CharacterController => new(0.90f, 0.55f, 0.25f, 1f),
+        EditorIconType.Settings           => new(0.75f, 0.78f, 0.80f, 1f),
+        EditorIconType.Search             => new(0.75f, 0.78f, 0.80f, 1f),
+        EditorIconType.Save               => new(0.33f, 0.63f, 0.88f, 1f),
+        EditorIconType.Plus               => new(0.25f, 0.72f, 0.45f, 1f),
+        EditorIconType.Delete             => new(0.90f, 0.35f, 0.30f, 1f),
+        EditorIconType.Refresh            => new(0.33f, 0.63f, 0.88f, 1f),
+        EditorIconType.Eye                => new(0.33f, 0.63f, 0.88f, 1f),
+        EditorIconType.EyeOff             => new(0.55f, 0.58f, 0.60f, 1f),
+        EditorIconType.Link               => new(0.33f, 0.63f, 0.88f, 1f),
+        EditorIconType.Star               => new(0.95f, 0.80f, 0.20f, 1f),
+        EditorIconType.Duplicate          => new(0.55f, 0.58f, 0.60f, 1f),
+        EditorIconType.Close              => new(0.88f, 0.88f, 0.88f, 1f),
+        EditorIconType.Dropdown           => new(0.75f, 0.75f, 0.75f, 1f),
+        EditorIconType.Translate          => new(0.88f, 0.88f, 0.88f, 1f),
+        EditorIconType.Rotate             => new(0.88f, 0.88f, 0.88f, 1f),
+        EditorIconType.Scale              => new(0.88f, 0.88f, 0.88f, 1f),
+        EditorIconType.Gizmos             => new(0.88f, 0.88f, 0.88f, 1f),
+        EditorIconType.Compile            => new(0.75f, 0.78f, 0.80f, 1f),
+        EditorIconType.Maximize           => new(0.75f, 0.78f, 0.80f, 1f),
+        EditorIconType.Restore            => new(0.75f, 0.78f, 0.80f, 1f),
+        EditorIconType.Play               => new(0.40f, 0.78f, 0.44f, 1f),
+        EditorIconType.Stop               => new(0.90f, 0.30f, 0.26f, 1f),
+        EditorIconType.Pause              => new(1.00f, 0.75f, 0.35f, 1f),
+        EditorIconType.StepForward        => new(0.75f, 0.75f, 0.75f, 1f),
+        EditorIconType.Info               => new(0.33f, 0.63f, 0.88f, 1f),
+        EditorIconType.Warning            => new(0.95f, 0.65f, 0.15f, 1f),
+        EditorIconType.Error              => new(0.90f, 0.35f, 0.30f, 1f),
+        EditorIconType.Success            => new(0.25f, 0.72f, 0.45f, 1f),
+        _                                 => new(0.70f, 0.70f, 0.70f, 1f),
+    };
 
     /// <summary>
     /// Disposes all icon resources. Call once during editor shutdown.

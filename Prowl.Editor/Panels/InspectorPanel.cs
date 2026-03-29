@@ -383,9 +383,17 @@ public sealed class InspectorPanel : EditorPanel
     }
 
 
+    // Per-component drag state for the letter-label drag interaction
+    private static string? _dragLetter;
+    private static float _dragStartValue;
+    private static Vector2 _dragStartPos;
+    private static bool _isDraggingLabel;
+
     /// <summary>
-    /// Draws a single vector component in the Stride engine style: a small colored
-    /// indicator button (click to reset to 0) flush with a DragFloat input.
+    /// Draws a single vector component in the Stride / S&amp;box style: a small colored
+    /// label that can be dragged horizontally to scrub the value, flush with an
+    /// <see cref="ImGui.InputFloat"/> text field that is immediately editable.
+    /// Click the label to reset to zero.
     /// </summary>
     private static bool DrawVectorComponent(string letter, ref float value, float speed,
         float fieldWidth, float buttonW,
@@ -393,8 +401,9 @@ public sealed class InspectorPanel : EditorPanel
     {
         bool changed = false;
         var style = ImGui.GetStyle();
+        string id = "##lbl_" + letter;
 
-        // Colored indicator button — click resets to zero
+        // ── Colored label (draggable, click-to-reset) ──────────
         ImGui.PushStyleColor(ImGuiCol.Button, btnColor);
         ImGui.PushStyleColor(ImGuiCol.ButtonHovered, btnHover);
         ImGui.PushStyleColor(ImGuiCol.ButtonActive, btnActive);
@@ -402,20 +411,58 @@ public sealed class InspectorPanel : EditorPanel
         ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 2f);
         ImGui.PushStyleVar(ImGuiStyleVar.ItemSpacing, new Vector2(0, style.ItemSpacing.Y));
 
-        if (ImGui.Button(letter, new Vector2(buttonW, ImGui.GetFrameHeight())))
+        ImGui.Button(letter, new Vector2(buttonW, ImGui.GetFrameHeight()));
+        bool labelHovered = ImGui.IsItemHovered();
+        bool labelActive = ImGui.IsItemActive();
+
+        // Show a horizontal-resize cursor when hovering the label
+        if (labelHovered || (_isDraggingLabel && _dragLetter == id))
+            ImGui.SetMouseCursor(ImGuiMouseCursor.ResizeEW);
+
+        // Begin drag: record starting value and mouse position
+        if (labelHovered && ImGui.IsMouseClicked(ImGuiMouseButton.Left))
         {
-            value = 0;
-            changed = true;
+            _dragLetter = id;
+            _dragStartValue = value;
+            _dragStartPos = ImGui.GetMousePos();
+            _isDraggingLabel = false; // not dragging yet — could be a click
+        }
+
+        // Continue drag
+        if (_dragLetter == id && ImGui.IsMouseDown(ImGuiMouseButton.Left))
+        {
+            Vector2 delta = ImGui.GetMousePos() - _dragStartPos;
+            if (!_isDraggingLabel && MathF.Abs(delta.X) > 2f)
+                _isDraggingLabel = true; // crossed the dead-zone → real drag
+
+            if (_isDraggingLabel)
+            {
+                value = _dragStartValue + delta.X * speed;
+                changed = true;
+            }
+        }
+
+        // End drag / click
+        if (_dragLetter == id && ImGui.IsMouseReleased(ImGuiMouseButton.Left))
+        {
+            if (!_isDraggingLabel)
+            {
+                // Pure click (no drag) → reset to zero
+                value = 0;
+                changed = true;
+            }
+            _dragLetter = null;
+            _isDraggingLabel = false;
         }
 
         ImGui.PopStyleVar(2);
         ImGui.PopStyleColor(4);
 
-        // DragFloat flush against the button
+        // ── InputFloat flush against the label ─────────────────
         ImGui.PushStyleVar(ImGuiStyleVar.ItemSpacing, new Vector2(0, style.ItemSpacing.Y));
         ImGui.SameLine();
         ImGui.SetNextItemWidth(fieldWidth);
-        if (ImGui.DragFloat("##" + letter, ref value, speed))
+        if (ImGui.InputFloat("##" + letter, ref value, 0f, 0f, "%.3f"))
             changed = true;
         ImGui.PopStyleVar();
 

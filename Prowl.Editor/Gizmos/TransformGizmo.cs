@@ -424,7 +424,7 @@ public sealed class TransformGizmo
             ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.62f, 0.40f, 0.30f, 1f));
         }
 
-        if (ImGui.Button(isWorld ? "World" : "Local", new Vector2(52 * Game.DpiScale, 22 * Game.DpiScale)))
+        if (ImGui.Button(isWorld ? "World" : "Local", new Vector2(52 * Game.DpiScale, 23 * Game.DpiScale)))
             Orientation = isWorld ? GizmoOrientation.Local : GizmoOrientation.World;
 
         ImGui.PopStyleColor(2);

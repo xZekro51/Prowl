@@ -9,6 +9,7 @@ using Echo.Logging;
 
 using Prowl.Runtime.Audio;
 using Prowl.Runtime.Graphite;
+using Prowl.Runtime.Profiling;
 
 using Prowl.PaperUI;
 using Prowl.Runtime.GUI;
@@ -120,51 +121,67 @@ public abstract class Game
     {
         try
         {
-            UpdatePaperInput();
+            Profiler.BeginFrame();
 
-            AudioContext.Update();
+            using (Profiler.Section("Input"))
+            {
+                UpdatePaperInput();
+                Input.UpdateActions(delta);
+            }
+
+            using (Profiler.Section("Audio"))
+                AudioContext.Update();
 
             time.Update();
             Time.TimeStack.Clear();
             Time.TimeStack.Push(time);
 
-            Input.UpdateActions(delta);
-
-            BeginUpdate();
+            using (Profiler.Section("BeginUpdate"))
+                BeginUpdate();
 
             // Cache once — each access takes a lock.
             int loadedScenes = SceneManager.LoadedSceneCount;
 
             // Fixed update loop — update all loaded scenes
-            fixedTimeAccumulator += delta;
-            int count = 0;
-            while (fixedTimeAccumulator >= Time.FixedDeltaTime && count++ < 10)
+            using (Profiler.Section("FixedUpdate"))
+            {
+                fixedTimeAccumulator += delta;
+                int count = 0;
+                while (fixedTimeAccumulator >= Time.FixedDeltaTime && count++ < 10)
+                {
+                    if (loadedScenes > 0)
+                        SceneManager.FixedUpdateAll();
+                    else
+                        Scene.Current?.FixedUpdate();
+                    fixedTimeAccumulator -= Time.FixedDeltaTime;
+                }
+                // Clamp accumulator to prevent spiral-of-death: if physics can't
+                // keep up, drop the excess time instead of queuing more steps.
+                if (fixedTimeAccumulator > Time.FixedDeltaTime)
+                    fixedTimeAccumulator = 0;
+            }
+
+            using (Profiler.Section("Update"))
             {
                 if (loadedScenes > 0)
-                    SceneManager.FixedUpdateAll();
+                    SceneManager.UpdateAll();
                 else
-                    Scene.Current?.FixedUpdate();
-                fixedTimeAccumulator -= Time.FixedDeltaTime;
+                    Scene.Current?.Update();
             }
-            // Clamp accumulator to prevent spiral-of-death: if physics can't
-            // keep up, drop the excess time instead of queuing more steps.
-            if (fixedTimeAccumulator > Time.FixedDeltaTime)
-                fixedTimeAccumulator = 0;
-
-            if (loadedScenes > 0)
-                SceneManager.UpdateAll();
-            else
-                Scene.Current?.Update();
 
             if (DrawGizmos)
             {
-                if (loadedScenes > 0)
-                    SceneManager.DrawGizmosAll();
-                else
-                    Scene.Current?.DrawGizmos();
+                using (Profiler.Section("Gizmos"))
+                {
+                    if (loadedScenes > 0)
+                        SceneManager.DrawGizmosAll();
+                    else
+                        Scene.Current?.DrawGizmos();
+                }
             }
 
-            EndUpdate();
+            using (Profiler.Section("EndUpdate"))
+                EndUpdate();
 
             if (frameCounter++ % 60 == 0)
             {
@@ -276,6 +293,9 @@ public abstract class Game
             // Subscribe to dynamic DPI changes
             DpiManager.DpiChanged += OnDpiChangedInternal;
 
+            // Register built-in profiler section descriptions
+            BuiltInProfilerSections.Register();
+
             Initialize();
         };
 
@@ -315,14 +335,20 @@ public abstract class Game
                 // (e.g. during the Graphite migration) do not prevent UI from rendering.
                 try
                 {
-                    Rendering.ShadowAtlas.TryInitialize();
-                    Rendering.ShadowAtlas.Clear();
+                    using (Profiler.Section("Shadows"))
+                    {
+                        Rendering.ShadowAtlas.TryInitialize();
+                        Rendering.ShadowAtlas.Clear();
+                    }
 
-                    BeginRender();
+                    using (Profiler.Section("BeginRender"))
+                        BeginRender();
 
-                    RenderScenes();
+                    using (Profiler.Section("RenderScenes"))
+                        RenderScenes();
 
-                    EndRender();
+                    using (Profiler.Section("EndRender"))
+                        EndRender();
                 }
                 catch (Exception e)
                 {
@@ -342,19 +368,22 @@ public abstract class Game
                 // Paper UI is also isolated so ImGui always gets a chance to render.
                 try
                 {
-                    _paper.BeginFrame(delta);
+                    using (Profiler.Section("PaperUI"))
+                    {
+                        _paper.BeginFrame(delta);
 
-                    BeginGui(_paper);
+                        BeginGui(_paper);
 
-                    // OnGui runs on all loaded scenes, or just the current scene
-                    RenderScenePaperGui(_paper);
+                        // OnGui runs on all loaded scenes, or just the current scene
+                        RenderScenePaperGui(_paper);
 
-                    EndGui(_paper);
+                        EndGui(_paper);
 
-                    PaperStatsMonitor.Draw(_paper);
+                        PaperStatsMonitor.Draw(_paper);
 
-                    _paperRenderer.RenderTarget = null; // Render to swapchain
-                    _paper.EndFrame();
+                        _paperRenderer.RenderTarget = null; // Render to swapchain
+                        _paper.EndFrame();
+                    }
                 }
                 catch (Exception e)
                 {
@@ -381,13 +410,16 @@ public abstract class Game
                 // Overlay UI frame (editor / launcher UI) — works on all backends via Graphite.
                 if (_overlayManager is { IsReady: true } overlay)
                 {
-                    overlay.Update((float)delta);
-                    overlay.BeginFrame();
+                    using (Profiler.Section("ImGui"))
+                    {
+                        overlay.Update((float)delta);
+                        overlay.BeginFrame();
 
-                    BeginImGui(overlay.Renderer!);
-                    EndImGui(overlay.Renderer!);
+                        BeginImGui(overlay.Renderer!);
+                        EndImGui(overlay.Renderer!);
 
-                    overlay.Render();
+                        overlay.Render();
+                    }
                 }
 
                 // === End Graphics ===
@@ -397,6 +429,8 @@ public abstract class Game
                 // === End of End Graphics ===
 
                 Debug.ClearGizmos();
+
+                Profiler.EndFrame();
             }
             catch (Exception e)
             {

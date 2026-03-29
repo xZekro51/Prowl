@@ -28,13 +28,32 @@ public sealed class ImGuiUIRenderer : Prowl.UI.IUIRenderer
     /// </summary>
     /// <param name="fontPath">Path to a TrueType font file.</param>
     /// <param name="dpiScale">Monitor DPI scale factor (1.0 = 96 DPI). Font pixel sizes are multiplied by this.</param>
-    public static void LoadFonts(string fontPath, float dpiScale = 1.0f)
+    /// <param name="iconFontPath">Optional path to an icon font (e.g. Phosphor Icons) to merge into each size.</param>
+    /// <param name="iconGlyphMin">First Unicode codepoint in the icon font glyph range.</param>
+    /// <param name="iconGlyphMax">Last Unicode codepoint in the icon font glyph range.</param>
+    public static unsafe void LoadFonts(string fontPath, float dpiScale = 1.0f,
+        string? iconFontPath = null, int iconGlyphMin = 0, int iconGlyphMax = 0)
     {
+        bool mergeIcons = !string.IsNullOrEmpty(iconFontPath) && iconGlyphMin > 0 && iconGlyphMax > 0;
         var io = ImGui.GetIO();
-        foreach (int size in new[] { 11, 12, 13, 14, 15, 16, 18, 20 })
+        foreach (int size in new[] { 12, 13, 14, 15, 16, 17, 19, 21 })
         {
             int scaledSize = (int)MathF.Round(size * dpiScale);
             Fonts[size] = io.Fonts.AddFontFromFileTTF(fontPath, scaledSize);
+
+            if (mergeIcons)
+            {
+                ImFontConfigPtr config = ImGuiNative.ImFontConfig_ImFontConfig();
+                config.MergeMode = true;
+                config.PixelSnapH = true;
+                config.GlyphMinAdvanceX = scaledSize;
+                ushort[] ranges = [(ushort)iconGlyphMin, (ushort)iconGlyphMax, 0];
+                fixed (ushort* pRanges = ranges)
+                {
+                    io.Fonts.AddFontFromFileTTF(iconFontPath!, scaledSize, config, (nint)pRanges);
+                }
+                config.Destroy();
+            }
         }
     }
 

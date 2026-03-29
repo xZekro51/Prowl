@@ -98,7 +98,7 @@ public sealed class ScenePanel : EditorPanel
 
         // ── Overlay toolbar (semi-transparent, drawn on top of the scene) ──
         float tbPad = 4 * Game.DpiScale;
-        float tbBtnH = 22 * Game.DpiScale;
+        float tbBtnH = 23 * Game.DpiScale;
         float tbTotalH = tbBtnH + tbPad * 2;
 
 
@@ -265,8 +265,9 @@ public sealed class ScenePanel : EditorPanel
 
     private void DrawMaximizeButton()
     {
-        string label = _isMaximized ? "\u25a3 Restore" : "\u25a1 Maximize";
-        if (ImGui.Button(label, new Vector2(80 * Game.DpiScale, 22 * Game.DpiScale)))
+        var icon = _isMaximized ? EditorIconType.Restore : EditorIconType.Maximize;
+        string label = _isMaximized ? "Restore" : "Maximize";
+        if (EditorIcons.ImageButtonWithLabel("MaxBtn", icon, label, new Vector2(90 * Game.DpiScale, 23 * Game.DpiScale)))
         {
             _isMaximized = !_isMaximized;
         }
@@ -285,7 +286,7 @@ public sealed class ScenePanel : EditorPanel
     private void DrawViewModeDropdown()
     {
         float btnW = 100 * Game.DpiScale;
-        float btnH = 22 * Game.DpiScale;
+        float btnH = 23 * Game.DpiScale;
 
         ImGui.SetNextItemWidth(btnW);
 
@@ -298,7 +299,7 @@ public sealed class ScenePanel : EditorPanel
 
     private void DrawGizmoToggle()
     {
-        var icon = _showGizmos ? EditorIconType.Eye : EditorIconType.EyeOff;
+        var icon = _showGizmos ? EditorIconType.Gizmos : EditorIconType.EyeOff;
 
         if (!_showGizmos)
         {

@@ -54,10 +54,11 @@ public sealed class EditorApplication : Game
     private ConsolePanel? _consolePanel;
     private ProjectSettingsPanel? _projectSettingsPanel;
     private BuildPanel? _buildPanel;
+    private ProfilerPanel? _profilerPanel;
 
     // Maximize state for scene panel
     private bool _sceneMaximized;
-    private bool[] _savedOpenStates = new bool[8]; // hierarchy, inspector, project, game, prefs, console, projSettings, build
+    private bool[] _savedOpenStates = new bool[9]; // hierarchy, inspector, project, game, prefs, console, projSettings, build, profiler
 
     /// <summary> The project folder path passed via --project, or null. </summary>
     public static string? ProjectPath { get; private set; }
@@ -116,7 +117,21 @@ public sealed class EditorApplication : Game
         ProjectPath = projectPath;
     }
 
-    protected override IOverlayManager? CreateOverlayManager() => new ImGuiManager();
+    protected override IOverlayManager? CreateOverlayManager()
+    {
+        var mgr = new ImGuiManager();
+
+        // Extract the embedded Phosphor Icons font so ImGui can merge it into the atlas.
+        string? iconFontPath = ExtractPhosphorFont();
+        if (iconFontPath != null)
+        {
+            mgr.IconFontPath = iconFontPath;
+            mgr.IconGlyphRangeMin = Icons.PhosphorIcons.GlyphRangeMin;
+            mgr.IconGlyphRangeMax = Icons.PhosphorIcons.GlyphRangeMax;
+        }
+
+        return mgr;
+    }
 
     public override void Initialize()
     {
@@ -261,6 +276,7 @@ public sealed class EditorApplication : Game
         _consolePanel = new ConsolePanel();
         _projectSettingsPanel = new ProjectSettingsPanel();
         _buildPanel = new BuildPanel();
+        _profilerPanel = new ProfilerPanel();
 
         // Register ProjectPanel so other panels can find it for cross-panel features
         EditorServices.Register<ProjectPanel>(_projectPanel);
@@ -275,6 +291,7 @@ public sealed class EditorApplication : Game
         _menuBar.OnToggleConsole = () => _consolePanel.IsOpen = !_consolePanel.IsOpen;
         _menuBar.OnToggleProjectSettings = () => _projectSettingsPanel.IsOpen = !_projectSettingsPanel.IsOpen;
         _menuBar.OnToggleBuildWindow = () => _buildPanel.IsOpen = !_buildPanel.IsOpen;
+        _menuBar.OnToggleProfiler = () => _profilerPanel!.IsOpen = !_profilerPanel.IsOpen;
 
         // Initialise the icon system (registers all built-in icons)
         IconManager.Load();
@@ -484,7 +501,7 @@ public sealed class EditorApplication : Game
         _playToolbar?.Draw();
 
         // ── Dockspace (leave room at the bottom for the status bar) ──
-        float statusBarHeight = 24 * Game.DpiScale;
+        float statusBarHeight = 25 * Game.DpiScale;
         Vector2 avail = ImGui.GetContentRegionAvail();
         Vector2 dockSize = new(avail.X, avail.Y - statusBarHeight);
 
@@ -526,6 +543,7 @@ public sealed class EditorApplication : Game
                 _savedOpenStates[5] = _consolePanel?.IsOpen ?? false;
                 _savedOpenStates[6] = _projectSettingsPanel?.IsOpen ?? false;
                 _savedOpenStates[7] = _buildPanel?.IsOpen ?? false;
+                _savedOpenStates[8] = _profilerPanel?.IsOpen ?? false;
 
                 if (_hierarchyPanel != null) _hierarchyPanel.IsOpen = false;
                 if (_inspectorPanel != null) _inspectorPanel.IsOpen = false;
@@ -535,6 +553,7 @@ public sealed class EditorApplication : Game
                 if (_consolePanel != null) _consolePanel.IsOpen = false;
                 if (_projectSettingsPanel != null) _projectSettingsPanel.IsOpen = false;
                 if (_buildPanel != null) _buildPanel.IsOpen = false;
+                if (_profilerPanel != null) _profilerPanel.IsOpen = false;
             }
             else if (!wantMax && _sceneMaximized)
             {
@@ -548,6 +567,7 @@ public sealed class EditorApplication : Game
                 if (_consolePanel != null) _consolePanel.IsOpen = _savedOpenStates[5];
                 if (_projectSettingsPanel != null) _projectSettingsPanel.IsOpen = _savedOpenStates[6];
                 if (_buildPanel != null) _buildPanel.IsOpen = _savedOpenStates[7];
+                if (_profilerPanel != null) _profilerPanel.IsOpen = _savedOpenStates[8];
             }
         }
 
@@ -560,6 +580,7 @@ public sealed class EditorApplication : Game
         _consolePanel?.Draw();
         _projectSettingsPanel?.Draw();
         _buildPanel?.Draw();
+        _profilerPanel?.Draw();
 
         // Persist layout whenever ImGui marks it dirty
         if (ImGui.GetIO().WantSaveIniSettings)
@@ -598,11 +619,11 @@ public sealed class EditorApplication : Game
 
             string prefix = lastEntry.Severity switch
             {
-                LogSeverity.Success => "[+] ",
-                LogSeverity.Warning => "[!] ",
-                LogSeverity.Error => "[x] ",
-                LogSeverity.Exception => "[x] ",
-                _ => "[-] ",
+                LogSeverity.Success => $"{PhosphorIcons.CheckCircle} ",
+                LogSeverity.Warning => $"{PhosphorIcons.Warning} ",
+                LogSeverity.Error => $"{PhosphorIcons.XCircle} ",
+                LogSeverity.Exception => $"{PhosphorIcons.XCircle} ",
+                _ => $"{PhosphorIcons.Info} ",
             };
 
             // Truncate long messages
@@ -928,5 +949,36 @@ public sealed class EditorApplication : Game
         EditorConsoleLogger.Shutdown();
         EditorServices.Clear();
         Debug.Log("Editor shutting down.");
+    }
+
+    /// <summary>
+    /// Extracts the embedded Phosphor Icons TTF to a temp file so ImGui can load it.
+    /// Returns the file path, or null on failure.
+    /// </summary>
+    private static string? ExtractPhosphorFont()
+    {
+        try
+        {
+            var asm = typeof(EditorApplication).Assembly;
+            string? resName = Array.Find(asm.GetManifestResourceNames(),
+                n => n.EndsWith("Phosphor.ttf", StringComparison.OrdinalIgnoreCase));
+            if (resName == null) return null;
+
+            string tempPath = Path.Combine(Path.GetTempPath(), "Prowl_Phosphor.ttf");
+            // Only re-extract if the file doesn't already exist (or is zero-length)
+            if (!File.Exists(tempPath) || new FileInfo(tempPath).Length == 0)
+            {
+                using var stream = asm.GetManifestResourceStream(resName);
+                if (stream == null) return null;
+                using var fs = File.Create(tempPath);
+                stream.CopyTo(fs);
+            }
+            return tempPath;
+        }
+        catch (Exception ex)
+        {
+            Debug.LogWarning($"[Editor] Failed to extract Phosphor icon font: {ex.Message}");
+            return null;
+        }
     }
 }

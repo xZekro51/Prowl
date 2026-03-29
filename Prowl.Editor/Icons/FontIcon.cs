@@ -40,8 +40,15 @@ public sealed class FontIcon : IIcon
         var drawList = ImGui.GetWindowDrawList();
 
         // Use the current ImGui font at the requested size.
-        // ImGui.GetFont() returns the active font; we scale the glyph to fit the requested size.
         var font = ImGui.GetFont();
-        drawList.AddText(font, size, position, ImGui.GetColorU32(color), Character);
+
+        // Offset Y so the glyph is vertically centred within the requested
+        // line height, plus a small downward nudge (~3px at base size) because
+        // Phosphor glyph metrics sit higher than regular text baselines.
+        float glyphHeight = font.FontSize;
+        float yOffset = (size - glyphHeight) * 0.5f + MathF.Round(size * 0.2f);
+        var pos = new Vector2(position.X, position.Y + yOffset);
+
+        drawList.AddText(font, size, pos, ImGui.GetColorU32(color), Character);
     }
 }

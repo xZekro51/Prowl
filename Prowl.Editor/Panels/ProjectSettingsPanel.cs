@@ -190,10 +190,10 @@ public sealed class ProjectSettingsPanel : EditorPanel
             _buildSettings.RenderingBackend = (Runtime.Graphite.GraphicsBackendType)backendIndex;
             SaveBuildSettings();
         }
-        ImGui.Spacing();
-
         ImGui.TextColored(new Vector4(0.5f, 0.5f, 0.5f, 1f),
             "The rendering backend used for scene/game views and the built player.");
+        /*ImGui.Spacing();
+
         ImGui.TextColored(new Vector4(0.5f, 0.5f, 0.5f, 1f),
             "Editor UI always uses OpenGL. Currently only OpenGL is fully implemented.");
         ImGui.Spacing();
@@ -202,7 +202,7 @@ public sealed class ProjectSettingsPanel : EditorPanel
         {
             ImGui.TextColored(new Vector4(0.95f, 0.80f, 0.25f, 1f),
                 "⚠ Warning: Only OpenGL is currently supported. Selecting another backend may cause errors.");
-        }
+        }*/
     }
 
     // ── Load / Save ─────────────────────────────────────────────────

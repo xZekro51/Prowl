@@ -1,6 +1,7 @@
 // This file is part of the Prowl Game Engine
 // Licensed under the MIT License. See the LICENSE file in the project root for details.
 
+using System.Linq;
 using System.Numerics;
 using ImGuiNET;
 using Prowl.ImGuiIntegration;
@@ -46,9 +47,28 @@ public sealed class LauncherApplication : Game
     // Modal: Confirm Delete
     private bool _showDeleteModal;
 
+    // Sort
+    private enum SortMode { LastModified, Name, Path }
+    private SortMode _sortMode = SortMode.LastModified;
+    private bool _sortDescending = true;
+
     // ── Lifecycle ────────────────────────────────────────────────────
 
-    protected override IOverlayManager? CreateOverlayManager() => new ImGuiManager();
+    protected override IOverlayManager? CreateOverlayManager()
+    {
+        var mgr = new ImGuiManager();
+
+        // Extract the embedded Phosphor Icons font for the launcher
+        string? iconFontPath = ExtractEmbeddedFont();
+        if (iconFontPath != null)
+        {
+            mgr.IconFontPath = iconFontPath;
+            mgr.IconGlyphRangeMin = PhosphorGlyphRangeMin;
+            mgr.IconGlyphRangeMax = PhosphorGlyphRangeMax;
+        }
+
+        return mgr;
+    }
 
     public override void Initialize()
     {
@@ -100,34 +120,34 @@ public sealed class LauncherApplication : Game
 
     // ── Sidebar ──────────────────────────────────────────────────────
 
-    private static void DrawSidebar(float width)
+    private void DrawSidebar(float width)
     {
-        ImGui.PushStyleColor(ImGuiCol.ChildBg, new Vector4(0.10f, 0.10f, 0.10f, 1.0f));
+        ImGui.PushStyleColor(ImGuiCol.ChildBg, new Vector4(0.08f, 0.08f, 0.09f, 1.0f));
         ImGui.BeginChild("##Sidebar", new Vector2(width, 0));
 
         ImGui.Spacing(); ImGui.Spacing();
 
         // Logo
-        if (ImGuiUIRenderer.Fonts.TryGetValue(20, out var bigFont))
+        if (ImGuiUIRenderer.Fonts.TryGetValue(21, out var bigFont))
             ImGui.PushFont(bigFont);
 
         ImGui.SetCursorPosX(S(20));
-        ImGui.TextColored(new Vector4(0.30f, 0.56f, 1.00f, 1.00f), "Prowl Engine");
+        ImGui.TextColored(new Vector4(0.30f, 0.56f, 1.00f, 1.00f), "\ue1da  Prowl");
 
-        if (ImGuiUIRenderer.Fonts.TryGetValue(20, out _))
+        if (ImGuiUIRenderer.Fonts.TryGetValue(21, out _))
             ImGui.PopFont();
 
         ImGui.Spacing(); ImGui.Separator(); ImGui.Spacing();
 
         // Navigation
         ImGui.SetCursorPosX(S(8));
-        ImGui.Selectable("  \uf07c  Projects", true, ImGuiSelectableFlags.None, new Vector2(width - S(16), S(28)));
+        ImGui.Selectable("  \ue24a  Projects", true, ImGuiSelectableFlags.None, new Vector2(width - S(16), S(28)));
 
         ImGui.Spacing();
         ImGui.SetCursorPosX(S(8));
         ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.40f, 0.40f, 0.40f, 1f));
-        ImGui.Selectable("  \uf19d  Learn", false, ImGuiSelectableFlags.Disabled, new Vector2(width - S(16), S(28)));
-        ImGui.Selectable("  \uf0c0  Community", false, ImGuiSelectableFlags.Disabled, new Vector2(width - S(16), S(28)));
+        ImGui.Selectable("  \ue914  Templates", false, ImGuiSelectableFlags.Disabled, new Vector2(width - S(16), S(28)));
+        ImGui.Selectable("  \ue272  Settings", false, ImGuiSelectableFlags.Disabled, new Vector2(width - S(16), S(28)));
         ImGui.PopStyleColor();
 
         // Version at bottom
@@ -151,31 +171,29 @@ public sealed class LauncherApplication : Game
         float indent = S(16);
         ImGui.SetCursorPosX(indent);
 
-        if (ImGuiUIRenderer.Fonts.TryGetValue(18, out var headFont))
+        if (ImGuiUIRenderer.Fonts.TryGetValue(19, out var headFont))
             ImGui.PushFont(headFont);
         ImGui.Text("Projects");
-        if (ImGuiUIRenderer.Fonts.TryGetValue(18, out _))
+        if (ImGuiUIRenderer.Fonts.TryGetValue(19, out _))
             ImGui.PopFont();
 
         // Right-aligned action buttons
-        float buttonAreaWidth = S(260);
+        float buttonAreaWidth = S(370);
         ImGui.SameLine(ImGui.GetWindowWidth() - buttonAreaWidth);
 
         // ▸ New Project
-        ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.28f, 0.56f, 1.00f, 1.00f));
-        ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.36f, 0.64f, 1.00f, 1.00f));
-        ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.20f, 0.48f, 0.92f, 1.00f));
-        if (ImGui.Button("New Project", S(100, 28)))
+        PushAccentButton();
+        if (ImGui.Button("\ue3d4  New Project", S(120, 28)))
         {
             _newProjectName = "MyProject";
             _showNewProjectModal = true;
         }
-        ImGui.PopStyleColor(3);
+        PopAccentButton();
 
         ImGui.SameLine();
 
         // ▸ Add existing
-        if (ImGui.Button("Add", S(60, 28)))
+        if (ImGui.Button("\ue24a  Add", S(70, 28)))
         {
             _browsePath = "";
             _showBrowseModal = true;
@@ -187,22 +205,43 @@ public sealed class LauncherApplication : Game
         bool canOpen = _selectedIndex >= 0 && _selectedIndex < _projectManager.Projects.Count
                        && Directory.Exists(_projectManager.Projects[_selectedIndex].Path);
         if (!canOpen) ImGui.BeginDisabled();
-        ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.28f, 0.56f, 1.00f, 1.00f));
-        ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.36f, 0.64f, 1.00f, 1.00f));
-        ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.20f, 0.48f, 0.92f, 1.00f));
-        if (ImGui.Button("Open", S(60, 28)))
+        PushAccentButton();
+        if (ImGui.Button("\ue256  Open", S(70, 28)))
         {
             LaunchEditor(_projectManager.Projects[_selectedIndex]);
         }
-        ImGui.PopStyleColor(3);
+        PopAccentButton();
         if (!canOpen) ImGui.EndDisabled();
+
+        ImGui.SameLine();
+
+        // ▸ Sort dropdown
+        string sortLabel = _sortMode switch
+        {
+            SortMode.Name => "\ue36c  Name",
+            SortMode.Path => "\ue24a  Path",
+            _ => "\ue140  Recent",
+        };
+        if (ImGui.Button(sortLabel, S(90, 28)))
+            ImGui.OpenPopup("##SortPopup");
+
+        if (ImGui.BeginPopup("##SortPopup"))
+        {
+            if (ImGui.Selectable("Recent", _sortMode == SortMode.LastModified))
+            { _sortMode = SortMode.LastModified; _sortDescending = true; }
+            if (ImGui.Selectable("Name", _sortMode == SortMode.Name))
+            { _sortMode = SortMode.Name; _sortDescending = false; }
+            if (ImGui.Selectable("Path", _sortMode == SortMode.Path))
+            { _sortMode = SortMode.Path; _sortDescending = false; }
+            ImGui.EndPopup();
+        }
 
         ImGui.Spacing();
 
         // ── Search / filter bar ──
         ImGui.SetCursorPosX(indent);
         ImGui.SetNextItemWidth(ImGui.GetContentRegionAvail().X - S(16));
-        ImGui.InputTextWithHint("##ProjectSearch", "\ud83d\udd0d Search projects...", ref _searchFilter, 256);
+        ImGui.InputTextWithHint("##ProjectSearch", "\ue30c  Search projects...", ref _searchFilter, 256);
 
         ImGui.Spacing();
     }
@@ -220,15 +259,48 @@ public sealed class LauncherApplication : Game
 
         if (projects.Count == 0)
         {
-            ImGui.Spacing(); ImGui.Spacing();
-            ImGui.SetCursorPosX(S(40));
-            ImGui.TextColored(new Vector4(0.50f, 0.50f, 0.50f, 1f),
-                "No projects yet.  Click \"New Project\" or \"Add\" to get started.");
+            // Empty state with icon
+            float centerY = ImGui.GetContentRegionAvail().Y * 0.35f;
+            ImGui.SetCursorPosY(centerY);
+
+            string emptyIcon = "\ue24a";
+            if (ImGuiUIRenderer.Fonts.TryGetValue(21, out var bigFont))
+                ImGui.PushFont(bigFont);
+            var iconSize = ImGui.CalcTextSize(emptyIcon);
+            ImGui.SetCursorPosX((ImGui.GetContentRegionAvail().X - iconSize.X) * 0.5f);
+            ImGui.TextColored(new Vector4(0.30f, 0.30f, 0.30f, 1f), emptyIcon);
+            if (ImGuiUIRenderer.Fonts.TryGetValue(21, out _))
+                ImGui.PopFont();
+
+            ImGui.Spacing();
+            string emptyMsg = "No projects yet";
+            var msgSize = ImGui.CalcTextSize(emptyMsg);
+            ImGui.SetCursorPosX((ImGui.GetContentRegionAvail().X - msgSize.X) * 0.5f);
+            ImGui.TextColored(new Vector4(0.45f, 0.45f, 0.45f, 1f), emptyMsg);
+
+            string subMsg = "Click \"New Project\" or \"Add\" to get started.";
+            var subSize = ImGui.CalcTextSize(subMsg);
+            ImGui.SetCursorPosX((ImGui.GetContentRegionAvail().X - subSize.X) * 0.5f);
+            ImGui.TextColored(new Vector4(0.35f, 0.35f, 0.35f, 1f), subMsg);
         }
         else
         {
+            // Build a sorted index list
+            var indices = Enumerable.Range(0, projects.Count).ToList();
+
+            indices.Sort((a, b) =>
+            {
+                int cmp = _sortMode switch
+                {
+                    SortMode.Name => string.Compare(projects[a].Name, projects[b].Name, StringComparison.OrdinalIgnoreCase),
+                    SortMode.Path => string.Compare(projects[a].Path, projects[b].Path, StringComparison.OrdinalIgnoreCase),
+                    _ => projects[a].LastModified.CompareTo(projects[b].LastModified),
+                };
+                return _sortDescending ? -cmp : cmp;
+            });
+
             int visibleCount = 0;
-            for (int i = 0; i < projects.Count; i++)
+            foreach (int i in indices)
             {
                 // Apply search filter
                 if (hasFilter && !projects[i].Name.Contains(_searchFilter, StringComparison.OrdinalIgnoreCase)
@@ -309,13 +381,13 @@ public sealed class LauncherApplication : Game
         dl.AddRectFilled(new Vector2(thumbX, thumbY),
             new Vector2(thumbX + thumbSize, thumbY + thumbSize), thumbColor, S(4));
 
-        // Project initial letter on thumbnail
-        string initial = project.Name.Length > 0 ? project.Name[..1].ToUpper() : "?";
-        var initialSize = ImGui.CalcTextSize(initial);
+        // Project icon glyph on thumbnail (Phosphor folder icon, fallback to initial)
+        string iconGlyph = exists ? "\ue24a" : "\ue4e0"; // FolderSimple or Warning
+        var initialSize = ImGui.CalcTextSize(iconGlyph);
         dl.AddText(
             new Vector2(thumbX + (thumbSize - initialSize.X) * 0.5f,
                         thumbY + (thumbSize - initialSize.Y) * 0.5f),
-            ImGui.GetColorU32(new Vector4(1f, 1f, 1f, 0.90f)), initial);
+            ImGui.GetColorU32(new Vector4(1f, 1f, 1f, 0.90f)), iconGlyph);
 
         // Text area start
         float textX = thumbX + thumbSize + padding;
@@ -327,9 +399,9 @@ public sealed class LauncherApplication : Game
             : ImGui.GetColorU32(new Vector4(0.75f, 0.25f, 0.25f, 1f));
         string nameText = exists ? project.Name : $"{project.Name}  (missing)";
 
-        if (ImGuiUIRenderer.Fonts.TryGetValue(16, out var nameFont))
+        if (ImGuiUIRenderer.Fonts.TryGetValue(17, out var nameFont))
         {
-            dl.AddText(nameFont, 16 * Game.DpiScale,
+            dl.AddText(nameFont, 17 * Game.DpiScale,
                 new Vector2(textX, textY), nameCol, nameText);
         }
         else
@@ -350,15 +422,27 @@ public sealed class LauncherApplication : Game
         // Right-click context menu
         if (ImGui.BeginPopupContextItem())
         {
-            if (exists && ImGui.MenuItem("Open"))
+            if (exists && ImGui.MenuItem("\ue256  Open"))
                 LaunchEditor(project);
+            if (exists && ImGui.MenuItem("\ue24a  Show in Explorer"))
+            {
+                try
+                {
+                    System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                    {
+                        FileName = project.Path,
+                        UseShellExecute = true,
+                    });
+                }
+                catch { /* ignore platform errors */ }
+            }
             ImGui.Separator();
-            if (ImGui.MenuItem("Remove from list"))
+            if (ImGui.MenuItem("\ue4f6  Remove from list"))
             {
                 _selectedIndex = index;
                 _showDeleteModal = true;
             }
-            if (exists && ImGui.MenuItem("Delete from disk"))
+            if (exists && ImGui.MenuItem("\ue4a6  Delete from disk"))
             {
                 _projectManager.DeleteProject(project);
                 if (_selectedIndex >= _projectManager.Projects.Count)
@@ -579,24 +663,35 @@ public sealed class LauncherApplication : Game
         ImGui.StyleColorsDark();
         var style = ImGui.GetStyle();
         style.WindowRounding = 0;
-        style.FrameRounding = 4;
-        style.GrabRounding = 2;
+        style.FrameRounding = 6;
+        style.GrabRounding = 4;
         style.TabRounding = 4;
-        style.ScrollbarRounding = 4;
-        style.FramePadding = new Vector2(8, 4);
+        style.ScrollbarRounding = 6;
+        style.PopupRounding = 6;
+        style.ChildRounding = 4;
+        style.FramePadding = new Vector2(10, 5);
         style.ItemSpacing = new Vector2(8, 6);
+        style.ScrollbarSize = 12;
 
         var c = style.Colors;
-        c[(int)ImGuiCol.WindowBg]       = new Vector4(0.12f, 0.12f, 0.12f, 1f);
-        c[(int)ImGuiCol.ChildBg]        = new Vector4(0.14f, 0.14f, 0.14f, 1f);
-        c[(int)ImGuiCol.PopupBg]        = new Vector4(0.14f, 0.14f, 0.14f, 0.96f);
-        c[(int)ImGuiCol.Header]         = new Vector4(0.22f, 0.22f, 0.22f, 1f);
+        c[(int)ImGuiCol.WindowBg]       = new Vector4(0.11f, 0.11f, 0.12f, 1f);
+        c[(int)ImGuiCol.ChildBg]        = new Vector4(0.13f, 0.13f, 0.14f, 1f);
+        c[(int)ImGuiCol.PopupBg]        = new Vector4(0.13f, 0.13f, 0.14f, 0.97f);
+        c[(int)ImGuiCol.Border]         = new Vector4(0.20f, 0.20f, 0.22f, 0.60f);
+        c[(int)ImGuiCol.Header]         = new Vector4(0.20f, 0.20f, 0.22f, 1f);
         c[(int)ImGuiCol.HeaderHovered]  = new Vector4(0.28f, 0.56f, 1.00f, 0.30f);
         c[(int)ImGuiCol.HeaderActive]   = new Vector4(0.28f, 0.56f, 1.00f, 0.50f);
-        c[(int)ImGuiCol.Separator]      = new Vector4(0.22f, 0.22f, 0.22f, 1f);
-        c[(int)ImGuiCol.FrameBg]        = new Vector4(0.18f, 0.18f, 0.18f, 1f);
-        c[(int)ImGuiCol.FrameBgHovered] = new Vector4(0.24f, 0.24f, 0.24f, 1f);
-        c[(int)ImGuiCol.FrameBgActive]  = new Vector4(0.28f, 0.28f, 0.28f, 1f);
+        c[(int)ImGuiCol.Separator]      = new Vector4(0.20f, 0.20f, 0.22f, 0.80f);
+        c[(int)ImGuiCol.FrameBg]        = new Vector4(0.16f, 0.16f, 0.18f, 1f);
+        c[(int)ImGuiCol.FrameBgHovered] = new Vector4(0.22f, 0.22f, 0.24f, 1f);
+        c[(int)ImGuiCol.FrameBgActive]  = new Vector4(0.26f, 0.26f, 0.28f, 1f);
+        c[(int)ImGuiCol.Button]         = new Vector4(0.18f, 0.18f, 0.20f, 1f);
+        c[(int)ImGuiCol.ButtonHovered]  = new Vector4(0.24f, 0.24f, 0.26f, 1f);
+        c[(int)ImGuiCol.ButtonActive]   = new Vector4(0.28f, 0.28f, 0.30f, 1f);
+        c[(int)ImGuiCol.ScrollbarBg]    = new Vector4(0.10f, 0.10f, 0.10f, 0.5f);
+        c[(int)ImGuiCol.ScrollbarGrab]  = new Vector4(0.24f, 0.24f, 0.26f, 1f);
+        c[(int)ImGuiCol.ScrollbarGrabHovered] = new Vector4(0.30f, 0.30f, 0.32f, 1f);
+        c[(int)ImGuiCol.ScrollbarGrabActive]  = new Vector4(0.36f, 0.36f, 0.38f, 1f);
 
         // Scale all style dimensions by the monitor's DPI factor
         style.ScaleAllSizes(Game.DpiScale);
@@ -650,5 +745,40 @@ public sealed class LauncherApplication : Game
 
         System.Diagnostics.Process.Start(startInfo);
         Debug.Log($"[Launcher] Launched editor for project: {project.Name}");
+    }
+
+    // ── Phosphor Icons constants (subset used in launcher) ───────────
+    // Range covers the full Phosphor Regular PUA block.
+    private const int PhosphorGlyphRangeMin = 0xE002;
+    private const int PhosphorGlyphRangeMax = 0xED6E;
+
+    /// <summary>
+    /// Extracts the embedded Phosphor Icons TTF to a temp file so ImGui can load it.
+    /// Returns the file path, or null on failure.
+    /// </summary>
+    private static string? ExtractEmbeddedFont()
+    {
+        try
+        {
+            var asm = typeof(LauncherApplication).Assembly;
+            string? resName = Array.Find(asm.GetManifestResourceNames(),
+                n => n.EndsWith("Phosphor.ttf", StringComparison.OrdinalIgnoreCase));
+            if (resName == null) return null;
+
+            string tempPath = Path.Combine(Path.GetTempPath(), "Prowl_Phosphor.ttf");
+            if (!File.Exists(tempPath) || new FileInfo(tempPath).Length == 0)
+            {
+                using var stream = asm.GetManifestResourceStream(resName);
+                if (stream == null) return null;
+                using var fs = File.Create(tempPath);
+                stream.CopyTo(fs);
+            }
+            return tempPath;
+        }
+        catch (Exception ex)
+        {
+            Debug.LogWarning($"[Launcher] Failed to extract Phosphor icon font: {ex.Message}");
+            return null;
+        }
     }
 }

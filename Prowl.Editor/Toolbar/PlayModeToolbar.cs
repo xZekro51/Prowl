@@ -42,7 +42,7 @@ public sealed class PlayModeToolbar
     /// </summary>
     public void Draw()
     {
-        float barHeight = 32 * Game.DpiScale;
+        float barHeight = 33 * Game.DpiScale;
         ImGui.PushStyleVar(ImGuiStyleVar.ChildRounding, 0f);
         ImGui.PushStyleColor(ImGuiCol.ChildBg, new Vector4(0.16f, 0.16f, 0.16f, 1f));
 
@@ -59,13 +59,13 @@ public sealed class PlayModeToolbar
         if (startX < 0) startX = 0;
         ImGui.SetCursorPosX(startX);
 
-        float yPad = (barHeight - Sz(0, 22).Y) * 0.5f;
+        float yPad = (barHeight - Sz(0, 23).Y) * 0.5f;
         ImGui.SetCursorPosY(yPad);
 
         // Play / Stop
         if (isPlaying)
             ImGui.PushStyleColor(ImGuiCol.Button, PlayActive);
-        if (EditorIcons.ImageButtonWithLabel("PlayStop", isPlaying ? EditorIconType.Stop : EditorIconType.Play, isPlaying ? "Stop" : "Play", Sz(64, 24)))
+        if (EditorIcons.ImageButtonWithLabel("PlayStop", isPlaying ? EditorIconType.Stop : EditorIconType.Play, isPlaying ? "Stop" : "Play", Sz(64, 25)))
             _playMode.TogglePlay();
         if (isPlaying)
             ImGui.PopStyleColor();
@@ -77,7 +77,7 @@ public sealed class PlayModeToolbar
         if (!pauseEnabled) ImGui.BeginDisabled();
         if (isPaused)
             ImGui.PushStyleColor(ImGuiCol.Button, PauseActive);
-        if (EditorIcons.ImageButtonWithLabel("PauseBtn", EditorIconType.Pause, "Pause", Sz(64, 24)))
+        if (EditorIcons.ImageButtonWithLabel("PauseBtn", EditorIconType.Pause, "Pause", Sz(64, 25)))
             _playMode.TogglePause();
         if (isPaused)
             ImGui.PopStyleColor();
@@ -88,7 +88,7 @@ public sealed class PlayModeToolbar
         // Step
         bool stepEnabled = isPaused;
         if (!stepEnabled) ImGui.BeginDisabled();
-        if (EditorIcons.ImageButtonWithLabel("StepBtn", EditorIconType.StepForward, "Step", Sz(56, 24)))
+        if (EditorIcons.ImageButtonWithLabel("StepBtn", EditorIconType.StepForward, "Step", Sz(56, 25)))
             _playMode.StepFrame();
         if (!stepEnabled) ImGui.EndDisabled();
 
@@ -122,7 +122,7 @@ public sealed class PlayModeToolbar
 
         // Compute the right-aligned position
         float rightPad = 8 * Game.DpiScale;
-        Vector2 btnSize = Sz(80, 24);
+        Vector2 btnSize = Sz(80, 25);
         float statusTextWidth = 0;
         string statusText = "";
         Vector4 statusColor = InfoCol;
@@ -204,7 +204,7 @@ public sealed class PlayModeToolbar
         // Compile button
         bool compileDisabled = mgr.IsCompiling;
         if (compileDisabled) ImGui.BeginDisabled();
-        if (EditorIcons.ImageButtonWithLabel("CompileBtn", EditorIconType.Refresh, "Compile", btnSize))
+        if (EditorIcons.ImageButtonWithLabel("CompileBtn", EditorIconType.Compile, "Compile", btnSize))
             mgr.CompileAndLoad();
         if (compileDisabled) ImGui.EndDisabled();
         if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))

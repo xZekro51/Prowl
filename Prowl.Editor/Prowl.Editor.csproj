@@ -15,6 +15,7 @@
 
   <PropertyGroup Condition=" '$(Configuration)' == 'Debug' ">
     <OutputPath>../Build/Editor/Debug/</OutputPath>
+    <DefineConstants>$(DefineConstants);PROWL_PROFILING</DefineConstants>
   </PropertyGroup>
 
   <PropertyGroup Condition=" '$(Configuration)' == 'Release' ">
@@ -34,6 +35,7 @@
 
   <ItemGroup>
     <EmbeddedResource Include="Icons\Resources\*.png" />
+    <EmbeddedResource Include="Icons\Resources\*.ttf" />
   </ItemGroup>
 
 </Project>

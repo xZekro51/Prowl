@@ -19,6 +19,7 @@
 
   <PropertyGroup Condition=" '$(Configuration)' == 'Debug' ">
     <OutputPath>../Build/Runtime/Debug/</OutputPath>
+    <DefineConstants>$(DefineConstants);PROWL_PROFILING</DefineConstants>
   </PropertyGroup>
 
   <PropertyGroup Condition=" '$(Configuration)' == 'Release' ">

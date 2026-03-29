@@ -114,6 +114,9 @@ public sealed class HierarchyPanel : EditorPanel
                 {
                     headerOpen = ImGui.CollapsingHeader($"     {sceneService.CurrentScene.Name}", ImGuiTreeNodeFlags.DefaultOpen);
 
+                    // Draw scene icon over the header label
+                    IconManager.DrawIconOverLastItem("Scene");
+
                     // Context menu on scene header
                     if (ImGui.BeginPopupContextItem("##SceneHeaderCtx"))
                     {
@@ -280,8 +283,8 @@ public sealed class HierarchyPanel : EditorPanel
 
         // Overlay the icon over the label area
         {
-            Vector4 tint = go.Enabled
-                ? (isPrefab ? new Vector4(0.50f, 0.70f, 1.0f, 1.0f) : new Vector4(1f, 1f, 1f, 1f))
+            Vector4? tint = go.Enabled
+                ? (isPrefab ? new Vector4(0.50f, 0.70f, 1.0f, 1.0f) : null)
                 : new Vector4(0.5f, 0.5f, 0.5f, 0.5f);
             IconManager.DrawIconOverLastItem(iconName, tint);
         }
