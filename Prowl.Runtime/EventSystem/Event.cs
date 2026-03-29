@@ -51,6 +51,9 @@ public class Event<T> where T : struct, Enum
         {
             if (snapshot[j] is EventDelegateContainer<T, TArgs> typed)
                 typed.Invoke(args);
+
+            if (args is ICancellable { Cancelled: true })
+                break;
         }
     }
 
@@ -81,8 +84,11 @@ public class Event<T> where T : struct, Enum
             {
                 result = _eventDelegates[eventDelegate.Priority].Remove(eventDelegate);
             }
-            eventDelegate.Unlink();
-            RebuildSnapshot();
+            if (result)
+            {
+                eventDelegate.Unlink();
+                RebuildSnapshot();
+            }
             return result;
         }
     }

@@ -404,11 +404,152 @@ public class EventSystemTests : IDisposable
 
     #endregion
 
+    #region Delegate Self-Unsubscription (IDisposable)
+
+    [Fact]
+    public void DelegateDispose_RemovesFromEvent()
+    {
+        var manager = CreateManager();
+        bool called = false;
+        var container = manager.AddNewDelegate(TestEvents.EventA, () => called = true);
+
+        container.Dispose();
+        manager.InvokeEvent(TestEvents.EventA);
+
+        Assert.False(called);
+    }
+
+    [Fact]
+    public void DelegateDispose_UsingPattern_RemovesFromEvent()
+    {
+        var manager = CreateManager();
+        bool called = false;
+
+        using (var container = manager.AddNewDelegate(TestEvents.EventA, () => called = true))
+        {
+            manager.InvokeEvent(TestEvents.EventA);
+            Assert.True(called);
+
+            called = false;
+        }
+
+        manager.InvokeEvent(TestEvents.EventA);
+        Assert.False(called);
+    }
+
+    [Fact]
+    public void DelegateDispose_WhenNotLinked_DoesNotThrow()
+    {
+        var manager = CreateManager();
+        var container = manager.AddNewDelegate(TestEvents.EventA, () => { });
+
+        manager.RemoveDelegate(container);
+
+        // Dispose on already-unlinked delegate should be safe
+        var ex = Record.Exception(() => container.Dispose());
+        Assert.Null(ex);
+    }
+
+    #endregion
+
+    #region Remove/Unlink Bug Fix
+
+    [Fact]
+    public void Remove_WrongEvent_DoesNotUnlink()
+    {
+        var manager = CreateManager();
+        bool called = false;
+        var container = manager.AddNewDelegate(TestEvents.EventA, () => called = true);
+
+        // Try to remove from EventB — should fail and NOT unlink the delegate from EventA
+        manager.RemoveDelegate(new EventDelegateContainer<TestEvents, Unit>(TestEvents.EventB, _ => { }));
+
+        // The original delegate should still be linked and invocable
+        manager.InvokeEvent(TestEvents.EventA);
+        Assert.True(called);
+        Assert.NotNull(container.Event);
+    }
+
+    #endregion
+
+    #region Event Cancellation
+
+    [Fact]
+    public void Cancellation_StopsPropagation()
+    {
+        var manager = CreateManager();
+        var order = new List<int>();
+
+        manager.AddNewDelegate<CancellableTestArgs>(TestEvents.EventA, args =>
+        {
+            order.Add(0);
+            args.Cancelled = true;
+        }, priority: 0);
+        manager.AddNewDelegate<CancellableTestArgs>(TestEvents.EventA, args =>
+        {
+            order.Add(1);
+        }, priority: 1);
+
+        var cancellable = new CancellableTestArgs();
+        manager.InvokeEvent(TestEvents.EventA, cancellable);
+
+        Assert.Single(order);
+        Assert.Equal(0, order[0]);
+    }
+
+    [Fact]
+    public void Cancellation_NotSet_AllDelegatesCalled()
+    {
+        var manager = CreateManager();
+        var order = new List<int>();
+
+        manager.AddNewDelegate<CancellableTestArgs>(TestEvents.EventA, args => order.Add(0), priority: 0);
+        manager.AddNewDelegate<CancellableTestArgs>(TestEvents.EventA, args => order.Add(1), priority: 1);
+        manager.AddNewDelegate<CancellableTestArgs>(TestEvents.EventA, args => order.Add(2), priority: 2);
+
+        var cancellable = new CancellableTestArgs();
+        manager.InvokeEvent(TestEvents.EventA, cancellable);
+
+        Assert.Equal([0, 1, 2], order);
+    }
+
+    [Fact]
+    public void Cancellation_MidChain_StopsRemainingDelegates()
+    {
+        var manager = CreateManager();
+        var order = new List<int>();
+
+        manager.AddNewDelegate<CancellableTestArgs>(TestEvents.EventA, args => order.Add(0), priority: 0);
+        manager.AddNewDelegate<CancellableTestArgs>(TestEvents.EventA, args =>
+        {
+            order.Add(1);
+            args.Cancelled = true;
+        }, priority: 1);
+        manager.AddNewDelegate<CancellableTestArgs>(TestEvents.EventA, args => order.Add(2), priority: 2);
+
+        var cancellable = new CancellableTestArgs();
+        manager.InvokeEvent(TestEvents.EventA, cancellable);
+
+        Assert.Equal([0, 1], order);
+        Assert.True(cancellable.Cancelled);
+    }
+
+    #endregion
+
     /// <summary>
     /// Test event argument class used by typed-args tests.
     /// </summary>
     private class TestParam
     {
+        public int Data { get; set; }
+    }
+
+    /// <summary>
+    /// Cancellable event argument class used by cancellation tests.
+    /// </summary>
+    private class CancellableTestArgs : ICancellable
+    {
+        public bool Cancelled { get; set; }
         public int Data { get; set; }
     }
 }

@@ -6,8 +6,9 @@ namespace Prowl.Runtime.EventSystem;
 /// Non-generic base class for delegate containers, enabling heterogeneous storage
 /// within a single <see cref="Event{T}"/>. Subscribe via the typed
 /// <see cref="EventDelegateContainer{T, TArgs}"/> derived class.
+/// Implements <see cref="IDisposable"/> for self-unsubscription.
 /// </summary>
-public abstract class EventDelegateContainer<T> where T : struct, Enum
+public abstract class EventDelegateContainer<T> : IDisposable where T : struct, Enum
 {
     public EventManager<T>? EventManager => Event?.EventManager;
 
@@ -21,14 +22,8 @@ public abstract class EventDelegateContainer<T> where T : struct, Enum
         }
     }
 
-    private int priority;
-
-    private T eventType;
-    public T EventType
-    {
-        get { return eventType; }
-        private set { eventType = value; }
-    }
+    private readonly T eventType;
+    public T EventType => eventType;
 
     private bool enabled = true;
     public bool Enabled
@@ -37,11 +32,8 @@ public abstract class EventDelegateContainer<T> where T : struct, Enum
         private set => enabled = value;
     }
 
-    public int Priority
-    {
-        get => priority;
-        private set => priority = value;
-    }
+    private readonly int priority;
+    public int Priority => priority;
 
     public void Link(Event<T> @event)
     {
@@ -56,7 +48,7 @@ public abstract class EventDelegateContainer<T> where T : struct, Enum
     protected EventDelegateContainer(T eventType, int priority)
     {
         this.priority = priority;
-        this.EventType = eventType;
+        this.eventType = eventType;
     }
 
     public void Enable()
@@ -66,6 +58,15 @@ public abstract class EventDelegateContainer<T> where T : struct, Enum
     public void Disable()
     {
         Enabled = false;
+    }
+
+    /// <summary>
+    /// Removes this delegate from its parent event, enabling <c>using</c> patterns
+    /// and preventing leaks.
+    /// </summary>
+    public void Dispose()
+    {
+        Event?.Remove(this);
     }
 }
 

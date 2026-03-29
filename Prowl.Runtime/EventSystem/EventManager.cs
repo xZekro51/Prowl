@@ -7,6 +7,7 @@ public class EventManager<T> : IDisposable where T : struct, Enum
 {
     private static readonly List<EventManager<T>> s_instances = new List<EventManager<T>>();
     private static readonly object s_instancesLock = new();
+    private bool _disposed;
 
     /// <summary>
     /// Copy-on-write snapshot of the static instances list, rebuilt only on Add/Remove.
@@ -191,11 +192,21 @@ public class EventManager<T> : IDisposable where T : struct, Enum
 
     public void Dispose()
     {
+        if (_disposed) return;
+        _disposed = true;
         lock (s_instancesLock)
         {
             s_instances.Remove(this);
             s_instancesSnapshot = [.. s_instances];
         }
+        GC.SuppressFinalize(this);
     }
 
+    ~EventManager()
+    {
+        if (!_disposed)
+        {
+            Debug.LogWarning($"EventManager<{typeof(T).Name}> was not disposed before finalization.");
+        }
+    }
 }
