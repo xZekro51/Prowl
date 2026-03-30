@@ -47,13 +47,6 @@ public sealed class ProjectAssemblyManager : IDisposable, IProjectTypeResolver
     private Dictionary<string, DateTime>? _knownFileTimestamps;
 
     /// <summary>
-    /// Raised after a new script assembly has been successfully loaded (or
-    /// after the previous one was unloaded due to compilation failure).
-    /// Listeners should invalidate any cached type lists.
-    /// </summary>
-    public event Action? OnAssemblyChanged;
-
-    /// <summary>
     /// The currently loaded user-script assembly, or <c>null</c> if none is loaded.
     /// </summary>
     public Assembly? LoadedAssembly => _loadedAssembly;
@@ -162,7 +155,7 @@ public sealed class ProjectAssemblyManager : IDisposable, IProjectTypeResolver
         // detect our own compilation as a change.
         SnapshotFileTimestamps();
 
-        OnAssemblyChanged?.Invoke();
+        EditorApplication.EditorEventManager.InvokeEvent(Editor.Core.EditorEvents.OnAssemblyChanged);
         return result;
     }
 

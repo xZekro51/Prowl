@@ -3,8 +3,10 @@
 
 using System.Reflection;
 
+using Prowl.Editor.Core;
 using Prowl.Editor.Project;
 using Prowl.Runtime;
+using Prowl.Runtime.EventSystem;
 
 using Xunit;
 
@@ -80,7 +82,8 @@ public sealed class ProjectAssemblyManagerTests : IDisposable
 
         using var mgr = new ProjectAssemblyManager(_projectPath);
         int callCount = 0;
-        mgr.OnAssemblyChanged += () => callCount++;
+        using var sub = EditorApplication.EditorEventManager.AddNewDelegate(
+            EditorEvents.OnAssemblyChanged, () => callCount++);
 
         mgr.CompileAndLoad();
 
@@ -150,7 +153,8 @@ public sealed class ProjectAssemblyManagerTests : IDisposable
 
         using var mgr = new ProjectAssemblyManager(_projectPath);
         int callCount = 0;
-        mgr.OnAssemblyChanged += () => callCount++;
+        using var sub = EditorApplication.EditorEventManager.AddNewDelegate(
+            EditorEvents.OnAssemblyChanged, () => callCount++);
 
         // No pending request — should not compile.
         mgr.ProcessPendingRecompile();

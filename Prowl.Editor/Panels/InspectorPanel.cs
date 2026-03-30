@@ -10,6 +10,7 @@ using Prowl.Runtime;
 using Prowl.Runtime.Prefabs;
 using Prowl.Runtime.Utils;
 using Prowl.Runtime.Resources;
+using Prowl.Editor.Core;
 using Prowl.Editor.Docking;
 using Prowl.Editor.Icons;
 using Prowl.Editor.Inspector;
@@ -62,8 +63,8 @@ public sealed class InspectorPanel : EditorPanel
     public InspectorPanel() : base("Inspector")
     {
         // Invalidate cached component list when user scripts are recompiled
-        if (EditorApplication.ScriptAssemblyManager != null)
-            EditorApplication.ScriptAssemblyManager.OnAssemblyChanged += InvalidateComponentCache;
+        EditorApplication.EditorEventManager.AddNewDelegate(
+            EditorEvents.OnAssemblyChanged, InvalidateComponentCache);
     }
 
     /// <summary>

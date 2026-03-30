@@ -2,6 +2,7 @@
 // Licensed under the MIT License. See the LICENSE file in the project root for details.
 
 using Prowl.Runtime;
+using Prowl.Runtime.EventSystem;
 using Prowl.Runtime.Resources;
 using Prowl.Editor.Services;
 
@@ -35,9 +36,6 @@ public sealed class EditorPlayMode
     /// <summary> Current play mode state. </summary>
     public PlayModeState State { get; private set; } = PlayModeState.Stopped;
 
-    /// <summary> Fires when the play mode state changes. </summary>
-    public event Action<PlayModeState>? StateChanged;
-
     /// <summary>
     /// Ensures physics and gameplay are disabled in edit mode at startup.
     /// Call this once during editor initialization.
@@ -68,13 +66,13 @@ public sealed class EditorPlayMode
         {
             State = PlayModeState.Paused;
             EditorServices.Get<IEditorTime>().Pause();
-            StateChanged?.Invoke(State);
+            EditorApplication.EditorEventManager.InvokeEvent(EditorEvents.OnPlayModeStateChanged, new PlayModeChangedArgs(State));
         }
         else if (State == PlayModeState.Paused)
         {
             State = PlayModeState.Playing;
             EditorServices.Get<IEditorTime>().Play();
-            StateChanged?.Invoke(State);
+            EditorApplication.EditorEventManager.InvokeEvent(EditorEvents.OnPlayModeStateChanged, new PlayModeChangedArgs(State));
         }
     }
 
@@ -125,7 +123,7 @@ public sealed class EditorPlayMode
         time.Play();
 
         State = PlayModeState.Playing;
-        StateChanged?.Invoke(State);
+        EditorApplication.EditorEventManager.InvokeEvent(EditorEvents.OnPlayModeStateChanged, new PlayModeChangedArgs(State));
 
         Debug.Log("[PlayMode] Entered play mode.");
     }
@@ -147,7 +145,7 @@ public sealed class EditorPlayMode
         _sceneSnapshot = null;
 
         State = PlayModeState.Stopped;
-        StateChanged?.Invoke(State);
+        EditorApplication.EditorEventManager.InvokeEvent(EditorEvents.OnPlayModeStateChanged, new PlayModeChangedArgs(State));
 
         Debug.Log("[PlayMode] Exited play mode. Scene restored.");
     }

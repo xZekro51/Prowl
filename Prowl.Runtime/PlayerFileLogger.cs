@@ -4,10 +4,12 @@
 using System;
 using System.IO;
 
+using Prowl.Runtime.EventSystem;
+
 namespace Prowl.Runtime;
 
 /// <summary>
-/// A file-based log sink that subscribes to <see cref="Debug.OnLog"/> and writes
+/// A file-based log sink that subscribes to <see cref="Debug.DebugEventManager"/> and writes
 /// every message to a <c>Player.log</c> file beside the executable.
 /// Designed for standalone player builds — call <see cref="Initialize"/> at startup
 /// (before <see cref="Game.Run"/>) and <see cref="Shutdown"/> at exit.
@@ -17,6 +19,7 @@ public static class PlayerFileLogger
     private static StreamWriter? _writer;
     private static readonly object _lock = new();
     private static bool _initialized;
+    private static IDisposable? _logSubscription;
 
     /// <summary>
     /// Initializes the file logger, creating or overwriting the log file at
@@ -41,7 +44,8 @@ public static class PlayerFileLogger
             _writer.WriteLine(new string('=', 72));
             _writer.WriteLine();
 
-            Debug.OnLog += OnLogReceived;
+            _logSubscription = Debug.DebugEventManager.AddNewDelegate<LogEventArgs>(
+                DebugEvents.OnLog, args => OnLogReceived(args.Message, args.StackTrace, args.Severity));
             _initialized = true;
         }
         catch (Exception ex)
@@ -51,13 +55,14 @@ public static class PlayerFileLogger
     }
 
     /// <summary>
-    /// Flushes and closes the log file and unsubscribes from <see cref="Debug.OnLog"/>.
+    /// Flushes and closes the log file and unsubscribes from <see cref="Debug.DebugEventManager"/>.
     /// </summary>
     public static void Shutdown()
     {
         if (!_initialized) return;
 
-        Debug.OnLog -= OnLogReceived;
+        _logSubscription?.Dispose();
+        _logSubscription = null;
         _initialized = false;
 
         lock (_lock)
