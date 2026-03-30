@@ -61,7 +61,6 @@ public class EventManager<T> : IDisposable where T : struct, Enum
     public EventManager(bool global = false)
     {
         Global = global;
-        Initialize();
         lock (s_instancesLock)
         {
             s_instances.Add(this);
@@ -69,24 +68,32 @@ public class EventManager<T> : IDisposable where T : struct, Enum
         }
     }
 
-    private void AddEvent(Event<T> xEvent)
+    /// <summary>
+    /// Returns the <see cref="Event{T}"/> for the given enum value,
+    /// creating it lazily on first access.
+    /// </summary>
+    private Event<T> GetOrCreateEvent(T eventType)
     {
-        _events.TryAdd(xEvent.EventType, xEvent);
+        if (!_events.TryGetValue(eventType, out Event<T>? evt))
+        {
+            evt = new Event<T>(this, eventType);
+            if (!enabled)
+                evt.Enabled = false;
+            _events[eventType] = evt;
+        }
+        return evt;
     }
 
     public void AddDelegate(EventDelegateContainer<T> eventDelegate)
     {
-        if (_events.TryGetValue(eventDelegate.EventType, out Event<T>? value))
-        {
-            value.Add(eventDelegate);
-        }
+        GetOrCreateEvent(eventDelegate.EventType).Add(eventDelegate);
     }
 
     public void RemoveDelegate(EventDelegateContainer<T> eventDelegate)
     {
-        if (_events.TryGetValue(eventDelegate.EventType, out Event<T>? value))
+        if (_events.TryGetValue(eventDelegate.EventType, out var evt))
         {
-            value.Remove(eventDelegate);
+            evt.Remove(eventDelegate);
         }
     }
 
@@ -102,27 +109,12 @@ public class EventManager<T> : IDisposable where T : struct, Enum
 
     public void EnableEvent(T eventType)
     {
-        if (_events.TryGetValue(eventType, out Event<T>? evt))
-        {
-            evt.Enabled = true;
-        }
+        GetOrCreateEvent(eventType).Enabled = true;
     }
 
     public void DisableEvent(T eventType)
     {
-        if (_events.TryGetValue(eventType, out Event<T>? value))
-        {
-            value.Enabled = false;
-        }
-    }
-
-    private void Initialize()
-    {
-        T[] values = Enum.GetValues<T>();
-        for (int i = 0; i < values.Length; i++)
-        {
-            AddEvent(new Event<T>(this, values[i]));
-        }
+        GetOrCreateEvent(eventType).Enabled = false;
     }
 
 
@@ -145,6 +137,16 @@ public class EventManager<T> : IDisposable where T : struct, Enum
 
         if (_events.TryGetValue(eventType, out var evt))
             evt.Invoke(args);
+    }
+
+    /// <summary>
+    /// Returns the <see cref="Event{T}"/> for the given enum value if it
+    /// has been created, or <c>null</c> if no subscribers have been registered.
+    /// </summary>
+    public Event<T>? GetEvent(T eventType)
+    {
+        _events.TryGetValue(eventType, out var evt);
+        return evt;
     }
 
     /// <summary>
@@ -182,7 +184,7 @@ public class EventManager<T> : IDisposable where T : struct, Enum
 #else
         EventDelegateContainer<T, TArgs> container = new(eventType, eventDelegate, priority);
 #endif
-        _events[eventType].Add(container);
+        GetOrCreateEvent(eventType).Add(container);
         return container;
     }
 
