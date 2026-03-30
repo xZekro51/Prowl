@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Reflection;
 
 namespace Prowl.Runtime.EventSystem;
 
@@ -38,14 +39,21 @@ public class Event<T> where T : struct, Enum
     /// <summary>
     /// Per-<c>TArgs</c> typed COW snapshots keyed by <see cref="Type"/>.
     /// Each value is a <c>EventDelegateContainer&lt;T, TArgs&gt;[]</c> stored as
-    /// <see cref="object"/> (the concrete array type is created via
-    /// <see cref="Array.CreateInstance"/> at rebuild time).
+    /// <see cref="object"/>.
     /// <para>
     /// <see cref="Invoke{TArgs}"/> retrieves the matching typed array with a single
     /// dictionary lookup and one array-reference cast — <b>no per-element type check</b>.
     /// </para>
     /// </summary>
     private readonly Dictionary<Type, object> _typedSnapshots = new();
+
+    /// <summary>
+    /// Per-<c>TArgs</c> cached factory delegates that build strongly typed
+    /// <c>EventDelegateContainer&lt;T, TArgs&gt;[]</c> from a list of base containers.
+    /// Avoids repeated <see cref="Array.CreateInstance"/> and per-element
+    /// <see cref="Array.SetValue"/> overhead.
+    /// </summary>
+    private static readonly Dictionary<Type, Func<List<EventDelegateContainer<T>>, object>> s_arrayBuilders = new();
 
     private volatile bool _enabled = true;
     public bool Enabled
@@ -215,9 +223,9 @@ public class Event<T> where T : struct, Enum
     /// <summary>
     /// Rebuilds per-<c>TArgs</c> typed snapshot arrays from the priority-sorted
     /// delegate buckets.  Each resulting array is a properly typed
-    /// <c>EventDelegateContainer&lt;T, TArgs&gt;[]</c> created via
-    /// <see cref="Array.CreateInstance"/>, enabling <see cref="Invoke{TArgs}"/>
-    /// to iterate with direct method calls and zero per-element type checks.
+    /// <c>EventDelegateContainer&lt;T, TArgs&gt;[]</c>, enabling
+    /// <see cref="Invoke{TArgs}"/> to iterate with direct method calls and
+    /// zero per-element type checks.
     /// Must be called under <see cref="_lock"/>.
     /// </summary>
     private void RebuildTypedSnapshots()
@@ -248,15 +256,43 @@ public class Event<T> where T : struct, Enum
         if (groups is null)
             return;
 
-        // Second pass: create properly typed arrays so Invoke<TArgs> can cast
-        // the whole array reference once instead of checking each element.
+        // Second pass: create properly typed arrays via cached generic delegates,
+        // avoiding Array.CreateInstance + per-element SetValue overhead.
         foreach (var (argsType, list) in groups)
         {
-            var elementType = typeof(EventDelegateContainer<,>).MakeGenericType(typeof(T), argsType);
-            var typedArray = Array.CreateInstance(elementType, list.Count);
-            for (int i = 0; i < list.Count; i++)
-                typedArray.SetValue(list[i], i);
-            _typedSnapshots[argsType] = typedArray;
+            if (!s_arrayBuilders.TryGetValue(argsType, out var builder))
+            {
+                builder = CreateArrayBuilder(argsType);
+                s_arrayBuilders[argsType] = builder;
+            }
+            _typedSnapshots[argsType] = builder(list);
         }
+    }
+
+    /// <summary>
+    /// Generic helper invoked through a cached delegate.  Creates a strongly typed
+    /// array and populates it with simple reference casts — no <see cref="Array.SetValue"/>
+    /// overhead.
+    /// </summary>
+    private static object BuildTypedArray<TArgs>(List<EventDelegateContainer<T>> list)
+    {
+        var result = new EventDelegateContainer<T, TArgs>[list.Count];
+        for (int i = 0; i < list.Count; i++)
+            result[i] = (EventDelegateContainer<T, TArgs>)list[i];
+        return result;
+    }
+
+    /// <summary>
+    /// Creates and returns a delegate that calls <see cref="BuildTypedArray{TArgs}"/>
+    /// closed over the given <paramref name="argsType"/>.  The reflection cost is paid
+    /// once; subsequent rebuilds reuse the cached delegate.
+    /// </summary>
+    private static Func<List<EventDelegateContainer<T>>, object> CreateArrayBuilder(Type argsType)
+    {
+        MethodInfo openMethod = typeof(Event<T>)
+            .GetMethod(nameof(BuildTypedArray), BindingFlags.NonPublic | BindingFlags.Static)!;
+        MethodInfo closedMethod = openMethod.MakeGenericMethod(argsType);
+        return (Func<List<EventDelegateContainer<T>>, object>)
+            Delegate.CreateDelegate(typeof(Func<List<EventDelegateContainer<T>>, object>), closedMethod);
     }
 }
