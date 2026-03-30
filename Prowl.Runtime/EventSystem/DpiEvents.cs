@@ -13,6 +13,7 @@ public enum DpiEvents
     /// Raised when the DPI scale changes (e.g., window dragged to a monitor
     /// with a different scaling setting).
     /// </summary>
+    [EventArgs(typeof(DpiChangedArgs))]
     OnDpiChanged,
 }
 

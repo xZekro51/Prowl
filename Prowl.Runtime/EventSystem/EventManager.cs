@@ -133,6 +133,16 @@ public class EventManager<T> : IDisposable where T : struct, Enum
     public void InvokeEvent<TArgs>(T eventType, TArgs args)
     {
         if (_disposed || !Enabled) return;
+
+        if (!EventArgsContract<T>.IsValid<TArgs>(eventType))
+        {
+            Debug.LogError(
+                $"[EventSystem] Type mismatch on {typeof(T).Name}.{eventType}: " +
+                $"invoked with '{typeof(TArgs).Name}' but the event declares " +
+                $"'{EventArgsContract<T>.GetDeclaredName(eventType)}' via [EventArgs].");
+            return;
+        }
+
         if (_events.TryGetValue(eventType, out var evt))
             evt.Invoke(args);
     }
@@ -158,6 +168,15 @@ public class EventManager<T> : IDisposable where T : struct, Enum
     )
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
+
+        if (!EventArgsContract<T>.IsValid<TArgs>(eventType))
+        {
+            throw new InvalidOperationException(
+                $"[EventSystem] Type mismatch on {typeof(T).Name}.{eventType}: " +
+                $"handler registered with '{typeof(TArgs).Name}' but the event " +
+                $"declares '{EventArgsContract<T>.GetDeclaredName(eventType)}' " +
+                $"via [EventArgs]. Fix the subscriber's type parameter.");
+        }
 #if DEBUG
         EventDelegateContainer<T, TArgs> container = new(eventType, eventDelegate, priority, sourceFile, sourceLine, sourceMember);
 #else

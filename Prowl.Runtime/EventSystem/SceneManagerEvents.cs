@@ -12,8 +12,10 @@ namespace Prowl.Runtime.EventSystem;
 public enum SceneManagerEvents
 {
     /// <summary>Raised after a scene is loaded additively.</summary>
+    [EventArgs(typeof(SceneEventArgs))]
     OnSceneLoaded,
     /// <summary>Raised after a scene is unloaded.</summary>
+    [EventArgs(typeof(SceneEventArgs))]
     OnSceneUnloaded,
 }
 

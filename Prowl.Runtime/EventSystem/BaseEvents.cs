@@ -5,8 +5,12 @@ namespace Prowl.Runtime.EventSystem;
 
 public enum BaseEvents
 {
+    [EventArgs(typeof(Unit))]
     OnBeforeUpdate,
+    [EventArgs(typeof(Unit))]
     OnAfterUpdate,
+    [EventArgs(typeof(Unit))]
     OnBeforeLateUpdate,
+    [EventArgs(typeof(Unit))]
     OnAfterLateUpdate,
 }

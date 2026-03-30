@@ -755,6 +755,85 @@ public class EventSystemTests : IDisposable
 
     #endregion
 
+    #region [EventArgs] Contract Validation
+
+    private enum ContractedEvents
+    {
+        [EventArgs(typeof(int))]
+        TypedEvent,
+
+        UntypedEvent,
+    }
+
+    private EventManager<ContractedEvents> CreateContractedManager()
+    {
+        var mgr = new EventManager<ContractedEvents>();
+        _disposables.Add(mgr);
+        return mgr;
+    }
+
+    [Fact]
+    public void AddNewDelegate_MatchingContract_Succeeds()
+    {
+        var manager = CreateContractedManager();
+        var ex = Record.Exception(() =>
+            manager.AddNewDelegate<int>(ContractedEvents.TypedEvent, _ => { }));
+
+        Assert.Null(ex);
+    }
+
+    [Fact]
+    public void AddNewDelegate_MismatchedContract_ThrowsInvalidOperation()
+    {
+        var manager = CreateContractedManager();
+
+        Assert.Throws<InvalidOperationException>(() =>
+            manager.AddNewDelegate<string>(ContractedEvents.TypedEvent, _ => { }));
+    }
+
+    [Fact]
+    public void AddNewDelegate_NoContract_AcceptsAnyType()
+    {
+        var manager = CreateContractedManager();
+
+        var ex1 = Record.Exception(() =>
+            manager.AddNewDelegate<int>(ContractedEvents.UntypedEvent, _ => { }));
+        var ex2 = Record.Exception(() =>
+            manager.AddNewDelegate<string>(ContractedEvents.UntypedEvent, _ => { }));
+
+        Assert.Null(ex1);
+        Assert.Null(ex2);
+    }
+
+    [Fact]
+    public void InvokeEvent_MismatchedContract_DoesNotInvokeAndDoesNotThrow()
+    {
+        var manager = CreateContractedManager();
+        bool called = false;
+        manager.AddNewDelegate<int>(ContractedEvents.TypedEvent, _ => called = true);
+
+        // Invoke with wrong type — should be silently rejected by the contract check
+        var ex = Record.Exception(() =>
+            manager.InvokeEvent(ContractedEvents.TypedEvent, "wrong"));
+
+        Assert.Null(ex);
+        Assert.False(called);
+    }
+
+    [Fact]
+    public void InvokeEvent_MatchingContract_InvokesHandler()
+    {
+        var manager = CreateContractedManager();
+        int received = 0;
+        manager.AddNewDelegate<int>(ContractedEvents.TypedEvent, x => received = x);
+
+        manager.InvokeEvent(ContractedEvents.TypedEvent, 42);
+
+        Assert.Equal(42, received);
+    }
+
+    #endregion
+
     /// <summary>
     /// Test event argument class used by typed-args tests.
     /// </summary>
