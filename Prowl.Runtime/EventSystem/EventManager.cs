@@ -161,9 +161,9 @@ public class EventManager<T> : IDisposable where T : struct, Enum
     /// Register a typed delegate for an event.
     /// </summary>
     public EventDelegateContainer<T, TArgs> AddNewDelegate<TArgs>(
-        T eventType, Action<TArgs> eventDelegate, int priority = 0,
+        T eventType, Action<TArgs> eventDelegate, int priority = 0
 #if DEBUG
-        [CallerFilePath] string? sourceFile = null,
+        , [CallerFilePath] string? sourceFile = null,
         [CallerLineNumber] int sourceLine = 0,
         [CallerMemberName] string? sourceMember = null
 #endif
@@ -192,9 +192,9 @@ public class EventManager<T> : IDisposable where T : struct, Enum
     /// Register a parameterless delegate for an event.
     /// </summary>
     public EventDelegateContainer<T, Unit> AddNewDelegate(
-        T eventType, Action eventDelegate, int priority = 0,
+        T eventType, Action eventDelegate, int priority = 0
 #if DEBUG
-        [CallerFilePath] string? sourceFile = null,
+        , [CallerFilePath] string? sourceFile = null,
         [CallerLineNumber] int sourceLine = 0,
         [CallerMemberName] string? sourceMember = null
 #endif
