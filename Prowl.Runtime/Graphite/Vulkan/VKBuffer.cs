@@ -11,12 +11,14 @@ namespace Prowl.Runtime.Graphite.Vulkan;
 
 /// <summary>
 /// Vulkan implementation of a GPU buffer.
+/// Uses the device's <see cref="VKMemoryAllocator"/> for sub-allocated memory,
+/// avoiding the ~4096 <c>vkAllocateMemory</c> driver limit.
 /// </summary>
 internal unsafe class VKBuffer : Buffer
 {
     private readonly VKGraphiteDevice _device;
     internal VkBuffer Handle { get; }
-    internal DeviceMemory Memory { get; }
+    internal VKAllocation Allocation { get; }
 
     internal VKBuffer(VKGraphiteDevice device, in BufferDescriptor descriptor)
     {
@@ -39,45 +41,42 @@ internal unsafe class VKBuffer : Buffer
 
         device.Vk.GetBufferMemoryRequirements(device.Device, Handle, out var memReqs);
 
-        var allocInfo = new MemoryAllocateInfo
-        {
-            SType = StructureType.MemoryAllocateInfo,
-            AllocationSize = memReqs.Size,
-            MemoryTypeIndex = device.FindMemoryType(memReqs.MemoryTypeBits, ToMemoryProperties(descriptor.MemoryAccess)),
-        };
+        // Sub-allocate from the shared memory allocator
+        Allocation = device.MemoryAllocator.Allocate(memReqs, ToMemoryProperties(descriptor.MemoryAccess));
+        VKGraphiteDevice.Check(device.Vk.BindBufferMemory(device.Device, Handle, Allocation.Memory, Allocation.Offset));
 
-        VKGraphiteDevice.Check(device.Vk.AllocateMemory(device.Device, &allocInfo, null, out var memory));
-        Memory = memory;
-
-        VKGraphiteDevice.Check(device.Vk.BindBufferMemory(device.Device, Handle, Memory, 0));
+        // Set debug name via VK_EXT_debug_utils for GPU debugger visibility
+        device.SetDebugName(ObjectType.Buffer, Handle.Handle, descriptor.DebugName);
 
         if (descriptor.InitialData.HasValue)
         {
             var span = descriptor.InitialData.Value.Span;
             if (descriptor.MemoryAccess == Graphite.MemoryAccess.GpuOnly)
             {
-                // Use staging buffer via device UpdateBuffer
+                // Use staging buffer for GPU-only memory
                 var tempDesc = new BufferDescriptor((uint)span.Length, BufferUsage.CopySource, Graphite.MemoryAccess.CpuToGpu);
-                using var staging = new VKBuffer(device, in tempDesc);
+                var staging = new VKBuffer(device, in tempDesc);
 
-                void* mapped;
-                VKGraphiteDevice.Check(device.Vk.MapMemory(device.Device, staging.Memory, 0, (ulong)span.Length, 0, &mapped));
+                var mappedPtr = staging.Allocation.GetMappedData();
                 fixed (byte* src = span)
-                    System.Buffer.MemoryCopy(src, mapped, span.Length, span.Length);
-                device.Vk.UnmapMemory(device.Device, staging.Memory);
+                    System.Buffer.MemoryCopy(src, mappedPtr, span.Length, span.Length);
 
                 var cmd = device.BeginSingleTimeCommands();
                 var region = new BufferCopy { SrcOffset = 0, DstOffset = 0, Size = (ulong)span.Length };
                 device.Vk.CmdCopyBuffer(cmd, staging.Handle, Handle, 1, &region);
                 device.EndSingleTimeCommands(cmd);
+
+                if (device.IsUploadBatching)
+                    device.TrackBatchResource(staging);
+                else
+                    staging.Dispose();
             }
             else
             {
-                void* mapped;
-                VKGraphiteDevice.Check(device.Vk.MapMemory(device.Device, Memory, 0, (ulong)span.Length, 0, &mapped));
+                // Host-visible: write directly to the persistently mapped sub-allocation
+                var mappedPtr = Allocation.GetMappedData();
                 fixed (byte* src = span)
-                    System.Buffer.MemoryCopy(src, mapped, span.Length, span.Length);
-                device.Vk.UnmapMemory(device.Device, Memory);
+                    System.Buffer.MemoryCopy(src, mappedPtr, span.Length, span.Length);
             }
         }
     }
@@ -85,7 +84,8 @@ internal unsafe class VKBuffer : Buffer
     protected override void DisposeResources()
     {
         _device.Vk.DestroyBuffer(_device.Device, Handle, null);
-        _device.Vk.FreeMemory(_device.Device, Memory, null);
+        var alloc = Allocation;
+        _device.MemoryAllocator.Free(in alloc);
     }
 
     private static BufferUsageFlags ToVkBufferUsage(BufferUsage usage)

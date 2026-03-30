@@ -470,7 +470,9 @@ internal unsafe class VKCommandList : CommandList
                 SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
                 DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
             };
-            _device.Vk.CmdPipelineBarrier(Handle, PipelineStageFlags.AllCommandsBit, PipelineStageFlags.AllCommandsBit,
+            _device.Vk.CmdPipelineBarrier(Handle,
+                ToPipelineStageFlags(barrier.StateBefore),
+                ToPipelineStageFlags(barrier.StateAfter),
                 0, 0, null, 1, &memBarrier, 0, null);
         }
     }
@@ -483,7 +485,11 @@ internal unsafe class VKCommandList : CommandList
             SrcAccessMask = AccessFlags.MemoryWriteBit,
             DstAccessMask = AccessFlags.MemoryReadBit,
         };
-        _device.Vk.CmdPipelineBarrier(Handle, PipelineStageFlags.AllCommandsBit, PipelineStageFlags.AllCommandsBit,
+        // Use bottom-of-pipe → top-of-pipe for a full execution+memory barrier.
+        // This is equivalent to AllCommandsBit but more explicit about intent.
+        _device.Vk.CmdPipelineBarrier(Handle,
+            PipelineStageFlags.BottomOfPipeBit,
+            PipelineStageFlags.TopOfPipeBit,
             0, 1, &barrier, 0, null, 0, null);
     }
 
@@ -493,15 +499,17 @@ internal unsafe class VKCommandList : CommandList
 
     protected override void PushDebugGroupCore(string name)
     {
-        // Debug markers require VK_EXT_debug_utils - no-op if not available
+        _device.CmdBeginDebugLabel(Handle, name);
     }
 
     protected override void PopDebugGroupCore()
     {
+        _device.CmdEndDebugLabel(Handle);
     }
 
     protected override void InsertDebugMarkerCore(string name)
     {
+        _device.CmdInsertDebugLabel(Handle, name);
     }
 
     #endregion
@@ -543,6 +551,20 @@ internal unsafe class VKCommandList : CommandList
         ResourceState.CopyDestination => AccessFlags.TransferWriteBit,
         ResourceState.Present => AccessFlags.None,
         _ => AccessFlags.None,
+    };
+
+    private static PipelineStageFlags ToPipelineStageFlags(ResourceState state) => state switch
+    {
+        ResourceState.Common => PipelineStageFlags.TopOfPipeBit,
+        ResourceState.RenderTarget => PipelineStageFlags.ColorAttachmentOutputBit,
+        ResourceState.DepthWrite => PipelineStageFlags.EarlyFragmentTestsBit | PipelineStageFlags.LateFragmentTestsBit,
+        ResourceState.DepthRead => PipelineStageFlags.EarlyFragmentTestsBit | PipelineStageFlags.LateFragmentTestsBit,
+        ResourceState.ShaderResource => PipelineStageFlags.VertexShaderBit | PipelineStageFlags.FragmentShaderBit,
+        ResourceState.UnorderedAccess => PipelineStageFlags.ComputeShaderBit,
+        ResourceState.CopySource => PipelineStageFlags.TransferBit,
+        ResourceState.CopyDestination => PipelineStageFlags.TransferBit,
+        ResourceState.Present => PipelineStageFlags.BottomOfPipeBit,
+        _ => PipelineStageFlags.AllCommandsBit,
     };
 
     #endregion

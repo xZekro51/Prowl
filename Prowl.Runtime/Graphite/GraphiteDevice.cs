@@ -121,6 +121,21 @@ public abstract class GraphiteDevice : IDisposable
     /// <summary>Current swapchain height.</summary>
     public abstract uint SwapchainHeight { get; }
 
+    /// <summary>
+    /// The number of frames that may be in-flight simultaneously on the GPU.
+    /// Render resources (e.g. pooled render textures) must not be reused until
+    /// this many frames have elapsed to avoid GPU data races.
+    /// Defaults to 1 (OpenGL); Vulkan overrides to match its fence count.
+    /// </summary>
+    public virtual int FramesInFlight => 1;
+
+    /// <summary>
+    /// Index of the current frame slot (0 .. <see cref="FramesInFlight"/>-1).
+    /// Used by renderers that need per-frame-in-flight resource sets.
+    /// Defaults to 0 (OpenGL has no multi-frame overlap).
+    /// </summary>
+    public virtual int CurrentFrameIndex => 0;
+
     #endregion
 
     #region Initialization
@@ -245,6 +260,25 @@ public abstract class GraphiteDevice : IDisposable
     #endregion
 
     #region Resource Updates
+
+    /// <summary>
+    /// Allocates a sub-region from a per-frame transient uniform buffer and copies
+    /// data into it. Eliminates per-draw buffer creation overhead on backends that
+    /// support it (Vulkan). The returned buffer and offset are valid for the
+    /// current frame only.
+    /// <para>Default implementation creates a regular CpuToGpu buffer.</para>
+    /// </summary>
+    public virtual (Buffer Buffer, uint Offset) AllocateTransientUniform(ReadOnlySpan<byte> data)
+    {
+        var desc = new BufferDescriptor
+        {
+            SizeInBytes = (uint)data.Length,
+            Usage = BufferUsage.Uniform,
+            MemoryAccess = MemoryAccess.CpuToGpu,
+            InitialData = data.ToArray(),
+        };
+        return (CreateBuffer(in desc), 0);
+    }
 
     /// <summary>
     /// Updates buffer data from the CPU. Blocks until complete.

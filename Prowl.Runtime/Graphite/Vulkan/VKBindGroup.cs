@@ -5,6 +5,8 @@ using System;
 
 using Silk.NET.Vulkan;
 
+using VkBuffer = Silk.NET.Vulkan.Buffer;
+
 namespace Prowl.Runtime.Graphite.Vulkan;
 
 /// <summary>
@@ -26,10 +28,20 @@ internal unsafe class VKBindGroupLayout : BindGroupLayout
         for (int i = 0; i < descriptor.Entries.Length; i++)
         {
             ref readonly var entry = ref descriptor.Entries[i];
+            var descType = VKFormatHelper.ToVkDescriptorType(entry.Type);
+            if (entry.HasDynamicOffset)
+            {
+                descType = descType switch
+                {
+                    DescriptorType.UniformBuffer => DescriptorType.UniformBufferDynamic,
+                    DescriptorType.StorageBuffer => DescriptorType.StorageBufferDynamic,
+                    _ => descType,
+                };
+            }
             bindings[i] = new DescriptorSetLayoutBinding
             {
                 Binding = entry.Binding,
-                DescriptorType = VKFormatHelper.ToVkDescriptorType(entry.Type),
+                DescriptorType = descType,
                 DescriptorCount = entry.Count,
                 StageFlags = VKFormatHelper.ToVkShaderStageFlags(entry.Visibility),
                 PImmutableSamplers = null,
@@ -54,71 +66,24 @@ internal unsafe class VKBindGroupLayout : BindGroupLayout
 }
 
 /// <summary>
-/// Vulkan implementation of a bind group (descriptor set + pool).
-/// Each bind group owns its own descriptor pool for simplicity.
+/// Vulkan implementation of a bind group (descriptor set).
+/// Uses the device's shared <see cref="VKDescriptorPoolManager"/> instead of
+/// creating a dedicated pool per bind group. Descriptor sets are pooled and
+/// reset at frame boundaries, so this class does not own any pool resources.
 /// </summary>
 internal unsafe class VKBindGroup : BindGroup
 {
-    private readonly VKGraphiteDevice _device;
     internal DescriptorSet DescriptorSet { get; }
-    private readonly DescriptorPool _pool;
 
     internal VKBindGroup(VKGraphiteDevice device, in BindGroupDescriptor descriptor)
     {
-        _device = device;
         Layout = descriptor.Layout;
         DebugName = descriptor.DebugName;
 
         var vkLayout = (VKBindGroupLayout)descriptor.Layout;
 
-        // Calculate pool sizes from layout entries
-        Span<DescriptorPoolSize> poolSizes = stackalloc DescriptorPoolSize[descriptor.Entries.Length];
-        int poolSizeCount = 0;
-
-        foreach (var entry in vkLayout.Entries)
-        {
-            var descType = VKFormatHelper.ToVkDescriptorType(entry.Type);
-            bool found = false;
-            for (int i = 0; i < poolSizeCount; i++)
-            {
-                if (poolSizes[i].Type == descType)
-                {
-                    poolSizes[i].DescriptorCount += entry.Count;
-                    found = true;
-                    break;
-                }
-            }
-            if (!found)
-            {
-                poolSizes[poolSizeCount] = new DescriptorPoolSize { Type = descType, DescriptorCount = entry.Count };
-                poolSizeCount++;
-            }
-        }
-
-        fixed (DescriptorPoolSize* pPoolSizes = poolSizes)
-        {
-            var poolInfo = new DescriptorPoolCreateInfo
-            {
-                SType = StructureType.DescriptorPoolCreateInfo,
-                MaxSets = 1,
-                PoolSizeCount = (uint)poolSizeCount,
-                PPoolSizes = pPoolSizes,
-            };
-
-            VKGraphiteDevice.Check(device.Vk.CreateDescriptorPool(device.Device, &poolInfo, null, out _pool));
-        }
-
-        var setLayout = vkLayout.Handle;
-        var allocInfo = new DescriptorSetAllocateInfo
-        {
-            SType = StructureType.DescriptorSetAllocateInfo,
-            DescriptorPool = _pool,
-            DescriptorSetCount = 1,
-            PSetLayouts = &setLayout,
-        };
-
-        VKGraphiteDevice.Check(device.Vk.AllocateDescriptorSets(device.Device, &allocInfo, out var descriptorSet));
-        DescriptorSet = descriptorSet;
+        // Allocate descriptor set from the shared per-frame pool manager
+        DescriptorSet = device.DescriptorPoolManager.Allocate(vkLayout.Handle);
 
         // Write descriptor bindings
         var writes = new WriteDescriptorSet[descriptor.Entries.Length];
@@ -142,6 +107,15 @@ internal unsafe class VKBindGroup : BindGroup
                 if (layoutEntry.Binding == entry.Binding)
                 {
                     descType = VKFormatHelper.ToVkDescriptorType(layoutEntry.Type);
+                    if (layoutEntry.HasDynamicOffset)
+                    {
+                        descType = descType switch
+                        {
+                            DescriptorType.UniformBuffer => DescriptorType.UniformBufferDynamic,
+                            DescriptorType.StorageBuffer => DescriptorType.StorageBufferDynamic,
+                            _ => descType,
+                        };
+                    }
                     break;
                 }
             }
@@ -149,10 +123,18 @@ internal unsafe class VKBindGroup : BindGroup
 
             if (entry.Buffer.HasValue)
             {
-                var buf = (VKBuffer)entry.Buffer.Value.Buffer;
+                // Support both VKBuffer (regular allocations) and VKRingSubBuffer (ring buffer)
+                VkBuffer vkHandle;
+                if (entry.Buffer.Value.Buffer is VKBuffer vkBuf)
+                    vkHandle = vkBuf.Handle;
+                else if (entry.Buffer.Value.Buffer is VKRingSubBuffer ringBuf)
+                    vkHandle = ringBuf.VkHandle;
+                else
+                    throw new InvalidOperationException($"Unexpected buffer type: {entry.Buffer.Value.Buffer.GetType().Name}");
+
                 bufferInfos[i] = new DescriptorBufferInfo
                 {
-                    Buffer = buf.Handle,
+                    Buffer = vkHandle,
                     Offset = entry.Buffer.Value.Offset,
                     Range = entry.Buffer.Value.Size == 0 ? Vk.WholeSize : entry.Buffer.Value.Size,
                 };
@@ -161,6 +143,12 @@ internal unsafe class VKBindGroup : BindGroup
             {
                 var tex = (VKTexture)entry.Texture;
                 var samp = (VKSampler)entry.Sampler;
+                if (tex.IsDisposed)
+                    throw new ObjectDisposedException(tex.DebugName ?? nameof(VKTexture),
+                        $"Cannot create bind group: texture at binding {entry.Binding} has been disposed.");
+                if (samp.IsDisposed)
+                    throw new ObjectDisposedException(samp.DebugName ?? nameof(VKSampler),
+                        $"Cannot create bind group: sampler at binding {entry.Binding} has been disposed.");
                 imageInfos[i] = new DescriptorImageInfo
                 {
                     Sampler = samp.Handle,
@@ -176,6 +164,9 @@ internal unsafe class VKBindGroup : BindGroup
                         $"Use BindGroupEntry.ForTextureSampler() instead of BindGroupEntry.ForTexture().");
 
                 var tex = (VKTexture)entry.Texture;
+                if (tex.IsDisposed)
+                    throw new ObjectDisposedException(tex.DebugName ?? nameof(VKTexture),
+                        $"Cannot create bind group: texture at binding {entry.Binding} has been disposed.");
                 imageInfos[i] = new DescriptorImageInfo
                 {
                     ImageView = tex.ImageView,
@@ -185,6 +176,9 @@ internal unsafe class VKBindGroup : BindGroup
             else if (entry.Sampler != null)
             {
                 var samp = (VKSampler)entry.Sampler;
+                if (samp.IsDisposed)
+                    throw new ObjectDisposedException(samp.DebugName ?? nameof(VKSampler),
+                        $"Cannot create bind group: sampler at binding {entry.Binding} has been disposed.");
                 imageInfos[i] = new DescriptorImageInfo
                 {
                     Sampler = samp.Handle,
@@ -212,6 +206,7 @@ internal unsafe class VKBindGroup : BindGroup
 
     protected override void DisposeResources()
     {
-        _device.Vk.DestroyDescriptorPool(_device.Device, _pool, null);
+        // Descriptor sets are pooled and reset at frame boundaries by VKDescriptorPoolManager.
+        // No per-bind-group cleanup is needed.
     }
 }

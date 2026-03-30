@@ -207,14 +207,15 @@ public sealed class RenderTexture : EngineObject, ISerializable
         RenderTexture renderTexture;
         if (pool.TryGetValue(key, out List<(RenderTexture, long frameCreated)>? list) && list.Count > 0)
         {
-            // Only reuse render textures released in a previous frame.
-            // Textures released in the current frame may still be in-flight
-            // on the GPU (e.g. a blit command reading from them), so handing
-            // them to a different render pass would cause a data race.
+            // With multiple frames in flight (e.g. Vulkan double-buffering),
+            // the GPU may still be reading a render target from a previous
+            // frame.  Only reuse textures whose release frame is old enough
+            // that the corresponding GPU fence has been waited on.
+            int minFrameAge = Graphics.IsGraphiteReady ? Graphics.Graphite.FramesInFlight : 1;
             int foundIdx = -1;
             for (int i = list.Count - 1; i >= 0; i--)
             {
-                if (list[i].frameCreated != Time.FrameCount)
+                if (Time.FrameCount - list[i].frameCreated >= minFrameAge)
                 {
                     foundIdx = i;
                     break;

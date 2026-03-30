@@ -62,6 +62,30 @@ public static class ImGuiTextureRegistry
     }
 
     /// <summary>
+    /// Removes all entries whose <see cref="Graphite.Texture"/> has been disposed.
+    /// Called by <see cref="ImGuiRendererGraphite"/> during per-frame cleanup so
+    /// that stale mappings from replaced/recreated textures are discarded.
+    /// </summary>
+    internal static void PurgeDisposed()
+    {
+        List<Graphite.Texture>? stale = null;
+        foreach (var kvp in s_registered)
+        {
+            if (kvp.Key.IsDisposed)
+            {
+                stale ??= new List<Graphite.Texture>();
+                stale.Add(kvp.Key);
+            }
+        }
+
+        if (stale != null)
+        {
+            foreach (var tex in stale)
+                s_registered.Remove(tex);
+        }
+    }
+
+    /// <summary>
     /// Clears all registrations. Called during shutdown.
     /// </summary>
     internal static void Clear()

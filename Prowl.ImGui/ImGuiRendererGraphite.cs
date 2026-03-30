@@ -52,24 +52,33 @@ public sealed class ImGuiRendererGraphite : IDisposable
         """;
 
     // ── Graphite resources ──────────────────────────────────────────
-    private Graphite.Buffer? _vertexBuffer;
-    private Graphite.Buffer? _indexBuffer;
+    // Per-frame-in-flight buffer arrays (indexed by frame slot) to avoid
+    // GPU data races when the CPU overwrites CpuToGpu mapped memory while
+    // the GPU from a previous frame is still reading it.
+    private int _framesInFlight = 1;
+    private Graphite.Buffer?[]? _vertexBuffers;
+    private Graphite.Buffer?[]? _indexBuffers;
+    private Graphite.Buffer?[]? _projectionUBOs;
+
     private Graphite.Texture? _fontTexture;
     private Sampler? _fontSampler;
     private BindGroupLayout? _uboBGL;
     private BindGroupLayout? _textureBGL;
     private BindGroupLayout[]? _bindGroupLayouts;
-    private BindGroup? _uboBindGroup;
-    private BindGroup? _fontTextureBindGroup;
-    private Graphite.Buffer? _projectionUBO;
     private ShaderModule? _vertexShaderModule;
     private ShaderModule? _fragmentShaderModule;
     private PipelineState? _pipeline;
 
+    // Deferred buffer disposal — old buffers replaced by EnsureBufferSize
+    // that may still be referenced by an in-flight GPU frame.
+    private readonly List<(Graphite.Buffer Buffer, int FramesRemaining)> _retiredBuffers = new();
+    private int _lastRetirementFrame = -1;
+
     // ── Vertex layout ───────────────────────────────────────────────
     private VertexLayoutDescriptor _vertexLayout;
 
-    // ── Per-frame texture bind group cache ───────────────────────────
+    // ── Per-frame bind group cache (recreated each frame because the ──
+    // ── Vulkan descriptor pool manager resets pools at frame boundaries) ──
     private readonly Dictionary<nint, BindGroup> _textureBindGroups = new();
 
     // ── Texture registration for ImGui.Image() ──────────────────────
@@ -130,12 +139,17 @@ public sealed class ImGuiRendererGraphite : IDisposable
                 new VertexAttribute(1, Graphite.VertexFormat.Float2, 8),
                 new VertexAttribute(2, Graphite.VertexFormat.UByte4Norm, 16)));
 
-        // ── Buffers (will grow as needed) ────────────────────────
-        _vertexBuffer = device.CreateBuffer(BufferDescriptor.Vertex(64 * 1024, dynamic: true));
-        _indexBuffer = device.CreateBuffer(BufferDescriptor.Index(64 * 1024, dynamic: true));
-
-        // ── UBO for projection matrix (single mat4 = 64 bytes) ──
-        _projectionUBO = device.CreateBuffer(BufferDescriptor.Uniform(64));
+        // ── Per-frame-in-flight buffers (will grow as needed) ────
+        _framesInFlight = device.FramesInFlight;
+        _vertexBuffers = new Graphite.Buffer?[_framesInFlight];
+        _indexBuffers = new Graphite.Buffer?[_framesInFlight];
+        _projectionUBOs = new Graphite.Buffer?[_framesInFlight];
+        for (int i = 0; i < _framesInFlight; i++)
+        {
+            _vertexBuffers[i] = device.CreateBuffer(BufferDescriptor.Vertex(64 * 1024, dynamic: true));
+            _indexBuffers[i] = device.CreateBuffer(BufferDescriptor.Index(64 * 1024, dynamic: true));
+            _projectionUBOs[i] = device.CreateBuffer(BufferDescriptor.Uniform(64));
+        }
 
         // ── Bind group layouts ──────────────────────────────────
         _uboBGL = device.CreateBindGroupLayout(new BindGroupLayoutDescriptor(
@@ -145,11 +159,6 @@ public sealed class ImGuiRendererGraphite : IDisposable
             BindGroupLayoutEntry.CombinedTextureSampler(0, ShaderStage.Fragment, name: "sTexture")));
 
         _bindGroupLayouts = [_uboBGL, _textureBGL];
-
-        // ── UBO bind group ──────────────────────────────────────
-        _uboBindGroup = device.CreateBindGroup(new BindGroupDescriptor(
-            _uboBGL,
-            BindGroupEntry.ForBuffer(0, _projectionUBO, 0, 64)));
 
         // ── Default sampler (linear, clamp) ─────────────────────
         _fontSampler = device.CreateSampler(SamplerDescriptor.LinearClamp);
@@ -169,8 +178,7 @@ public sealed class ImGuiRendererGraphite : IDisposable
 
         io.Fonts.GetTexDataAsRGBA32(out IntPtr pixels, out int width, out int height, out int bytesPerPixel);
 
-        // Dispose old font texture and bind group
-        _fontTextureBindGroup?.Dispose();
+        // Dispose old font texture
         _fontTexture?.Dispose();
 
         _fontTexture = device.CreateTexture(TextureDescriptor.Texture2D(
@@ -182,13 +190,8 @@ public sealed class ImGuiRendererGraphite : IDisposable
             TextureUpdateDescriptor.FullMip((uint)width, (uint)height),
             new ReadOnlySpan<byte>(pixels.ToPointer(), width * height * bytesPerPixel));
 
-        // Create bind group for font texture
-        _fontTextureBindGroup = device.CreateBindGroup(new BindGroupDescriptor(
-            _textureBGL!,
-            BindGroupEntry.ForTextureSampler(0, _fontTexture, _fontSampler!)));
-
-        // Register the font atlas and tell ImGui about it
-        _fontAtlasTexId = RegisterTextureInternal(_fontTexture, _fontTextureBindGroup);
+        // Register the font atlas (bind group will be created per-frame in RenderDrawData)
+        _fontAtlasTexId = RegisterTextureInternal(_fontTexture, null!);
         io.Fonts.SetTexID(_fontAtlasTexId);
         io.Fonts.ClearTexData();
     }
@@ -216,10 +219,14 @@ public sealed class ImGuiRendererGraphite : IDisposable
             return;
 
         var device = Graphics.Graphite;
+        int frameSlot = device.CurrentFrameIndex;
         int fbWidth = (int)(drawData.DisplaySize.X * drawData.FramebufferScale.X);
         int fbHeight = (int)(drawData.DisplaySize.Y * drawData.FramebufferScale.Y);
         if (fbWidth <= 0 || fbHeight <= 0)
             return;
+
+        // Flush retired buffers whose GPU references have expired
+        FlushRetiredBuffers();
 
         // ── Upload projection matrix ────────────────────────────
         float L = drawData.DisplayPos.X;
@@ -227,15 +234,10 @@ public sealed class ImGuiRendererGraphite : IDisposable
         float T = drawData.DisplayPos.Y;
         float B = drawData.DisplayPos.Y + drawData.DisplaySize.Y;
 
-        // Float4x4 stores columns (c0–c3). The scalar constructor treats
-        // parameters as m_row_col and transposes into column-major layout,
-        // so the translation terms must appear in the *last column* of the
-        // visual layout (not the last row).
-        // Using CreateOrthoOffCenter (same as PaperRenderer) avoids any
-        // layout confusion and produces a correct column-major matrix.
         Float4x4 projection = Float4x4.CreateOrthoOffCenter(L, R, B, T, -1, 1);
 
-        device.UpdateBuffer(_projectionUBO!, 0, new ReadOnlySpan<Float4x4>(ref projection));
+        var projectionUBO = _projectionUBOs![frameSlot]!;
+        device.UpdateBuffer(projectionUBO, 0, new ReadOnlySpan<Float4x4>(ref projection));
 
         // ── Ensure pipeline is created ──────────────────────────
         var swapchainTex = device.GetSwapchainTexture();
@@ -259,12 +261,40 @@ public sealed class ImGuiRendererGraphite : IDisposable
 
         cmd.SetPipeline(_pipeline!);
         cmd.SetViewport(0, 0, fbWidth, fbHeight);
-        cmd.SetBindGroup(0, _uboBindGroup!);
+
+        // ── Recreate bind groups for this frame ─────────────────
+        // The Vulkan descriptor pool manager resets all pools at frame
+        // boundaries, invalidating any previously allocated descriptor
+        // sets.  Recreate the UBO and texture bind groups each frame
+        // so they reference valid descriptor sets from the current pool.
+        _textureBindGroups.Clear();
+
+        // Purge textures that were disposed by engine code (e.g. render
+        // target resize, texture re-upload).  Their Vulkan ImageView
+        // handles are destroyed — passing them to vkUpdateDescriptorSets
+        // would cause a native access-violation crash.
+        PurgeDisposedTextures();
+
+        var uboBindGroup = device.CreateBindGroup(new BindGroupDescriptor(
+            _uboBGL!,
+            BindGroupEntry.ForBuffer(0, projectionUBO, 0, 64)));
+        cmd.SetBindGroup(0, uboBindGroup);
+
+        // Rebuild texture bind groups for all registered textures
+        foreach (var kvp in _registeredTextures)
+        {
+            var bg = device.CreateBindGroup(new BindGroupDescriptor(
+                _textureBGL!,
+                BindGroupEntry.ForTextureSampler(0, kvp.Value, _fontSampler!)));
+            _textureBindGroups[kvp.Key] = bg;
+        }
 
         // ── Upload all draw-list vertex/index data into contiguous buffers ──
-        // All data must be present before the command buffer is submitted,
-        // because CpuToGpu writes happen on the CPU immediately while the
-        // GPU reads occur later during execution.
+        // Use the current frame slot's buffers so we never overwrite data the
+        // GPU is still reading from a previous in-flight frame.
+        ref var vertexBuffer = ref _vertexBuffers![frameSlot];
+        ref var indexBuffer = ref _indexBuffers![frameSlot];
+
         uint totalVtxBytes = 0;
         uint totalIdxBytes = 0;
         for (int n = 0; n < drawData.CmdListsCount; n++)
@@ -274,8 +304,8 @@ public sealed class ImGuiRendererGraphite : IDisposable
             totalIdxBytes += (uint)(cmdList.IdxBuffer.Size * sizeof(ushort));
         }
 
-        EnsureBufferSize(ref _vertexBuffer, totalVtxBytes, BufferUsage.Vertex | BufferUsage.CopyDestination);
-        EnsureBufferSize(ref _indexBuffer, totalIdxBytes, BufferUsage.Index | BufferUsage.CopyDestination);
+        EnsureBufferSize(ref vertexBuffer, totalVtxBytes, BufferUsage.Vertex | BufferUsage.CopyDestination);
+        EnsureBufferSize(ref indexBuffer, totalIdxBytes, BufferUsage.Index | BufferUsage.CopyDestination);
 
         uint vtxOffset = 0;
         uint idxOffset = 0;
@@ -285,17 +315,17 @@ public sealed class ImGuiRendererGraphite : IDisposable
             uint vtxSize = (uint)(cmdList.VtxBuffer.Size * Unsafe.SizeOf<ImDrawVert>());
             uint idxSize = (uint)(cmdList.IdxBuffer.Size * sizeof(ushort));
 
-            device.UpdateBuffer(_vertexBuffer!, vtxOffset,
+            device.UpdateBuffer(vertexBuffer!, vtxOffset,
                 new ReadOnlySpan<byte>(cmdList.VtxBuffer.Data.ToPointer(), (int)vtxSize));
-            device.UpdateBuffer(_indexBuffer!, idxOffset,
+            device.UpdateBuffer(indexBuffer!, idxOffset,
                 new ReadOnlySpan<byte>(cmdList.IdxBuffer.Data.ToPointer(), (int)idxSize));
 
             vtxOffset += vtxSize;
             idxOffset += idxSize;
         }
 
-        cmd.SetVertexBuffer(0, _vertexBuffer!);
-        cmd.SetIndexBuffer(_indexBuffer!, IndexFormat.Uint16);
+        cmd.SetVertexBuffer(0, vertexBuffer!);
+        cmd.SetIndexBuffer(indexBuffer!, IndexFormat.Uint16);
 
         // ── Iterate draw lists ──────────────────────────────────
         System.Numerics.Vector2 clipOff = drawData.DisplayPos;
@@ -350,6 +380,13 @@ public sealed class ImGuiRendererGraphite : IDisposable
 
         cmd.EndRenderPass();
         cmd.Submit();
+
+        // Dispose per-frame bind groups to suppress finalizer warnings.
+        // VKBindGroup.DisposeResources() is a no-op (descriptor sets are
+        // pool-managed), so this just calls GC.SuppressFinalize().
+        uboBindGroup.Dispose();
+        foreach (var bg in _textureBindGroups.Values)
+            bg.Dispose();
     }
 
     // ── Texture registration ────────────────────────────────────────
@@ -370,12 +407,7 @@ public sealed class ImGuiRendererGraphite : IDisposable
                 return kvp.Key;
         }
 
-        // Create a bind group for this texture
-        var bindGroup = Graphics.Graphite.CreateBindGroup(new BindGroupDescriptor(
-            _textureBGL!,
-            BindGroupEntry.ForTextureSampler(0, texture, _fontSampler!)));
-
-        return RegisterTextureInternal(texture, bindGroup);
+        return RegisterTextureInternal(texture, null!);
     }
 
     /// <summary>
@@ -383,13 +415,7 @@ public sealed class ImGuiRendererGraphite : IDisposable
     /// </summary>
     public void UnregisterTexture(nint id)
     {
-        if (_textureBindGroups.TryGetValue(id, out var bg))
-        {
-            // Don't dispose the font bind group
-            if (id != _fontAtlasTexId)
-                bg.Dispose();
-            _textureBindGroups.Remove(id);
-        }
+        _textureBindGroups.Remove(id);
         _registeredTextures.Remove(id);
     }
 
@@ -405,33 +431,68 @@ public sealed class ImGuiRendererGraphite : IDisposable
         _vertexShaderModule?.Dispose();
         _fragmentShaderModule?.Dispose();
 
-        foreach (var kvp in _textureBindGroups)
-            kvp.Value?.Dispose();
+        // Per-frame bind groups are ephemeral (descriptor pool is reset); no need to dispose.
         _textureBindGroups.Clear();
         _registeredTextures.Clear();
 
-        _uboBindGroup?.Dispose();
-        _projectionUBO?.Dispose();
+        if (_projectionUBOs != null)
+            foreach (var b in _projectionUBOs) b?.Dispose();
         _uboBGL?.Dispose();
         _textureBGL?.Dispose();
 
         _fontTexture?.Dispose();
         _fontSampler?.Dispose();
 
-        _vertexBuffer?.Dispose();
-        _indexBuffer?.Dispose();
+        if (_vertexBuffers != null)
+            foreach (var b in _vertexBuffers) b?.Dispose();
+        if (_indexBuffers != null)
+            foreach (var b in _indexBuffers) b?.Dispose();
+
+        foreach (var (buf, _) in _retiredBuffers)
+            buf.Dispose();
+        _retiredBuffers.Clear();
     }
 
     // ── Private helpers ─────────────────────────────────────────────
 
-    private nint RegisterTextureInternal(Graphite.Texture texture, BindGroup bindGroup)
+    /// <summary>
+    /// Removes any textures that have been disposed by engine code from the
+    /// internal registry and the static <see cref="ImGuiTextureRegistry"/>.
+    /// This prevents passing destroyed Vulkan handles to
+    /// <c>vkUpdateDescriptorSets</c>, which would cause a native crash.
+    /// </summary>
+    private void PurgeDisposedTextures()
     {
-        nint id = (nint)(texture.GetHashCode() ^ bindGroup.GetHashCode());
+        List<nint>? staleIds = null;
+        foreach (var kvp in _registeredTextures)
+        {
+            if (kvp.Value.IsDisposed)
+            {
+                staleIds ??= new List<nint>();
+                staleIds.Add(kvp.Key);
+            }
+        }
+
+        if (staleIds != null)
+        {
+            foreach (var id in staleIds)
+                _registeredTextures.Remove(id);
+
+            // Also clean the static texture-to-ID mapping so the next
+            // GetOrRegister call with a replacement texture works correctly.
+            ImGuiTextureRegistry.PurgeDisposed();
+        }
+    }
+
+    private nint RegisterTextureInternal(Graphite.Texture texture, BindGroup? bindGroup)
+    {
+        nint id = (nint)texture.GetHashCode();
         // Ensure uniqueness
-        while (_textureBindGroups.ContainsKey(id))
+        while (_registeredTextures.ContainsKey(id))
             id++;
 
-        _textureBindGroups[id] = bindGroup;
+        if (bindGroup != null)
+            _textureBindGroups[id] = bindGroup;
         _registeredTextures[id] = texture;
         return id;
     }
@@ -465,14 +526,40 @@ public sealed class ImGuiRendererGraphite : IDisposable
         _pipeline = Graphics.Graphite.CreatePipelineState(in descriptor);
     }
 
-    private static void EnsureBufferSize(ref Graphite.Buffer? buffer, uint requiredSize, BufferUsage usage)
+    private void EnsureBufferSize(ref Graphite.Buffer? buffer, uint requiredSize, BufferUsage usage)
     {
         if (buffer != null && buffer.SizeInBytes >= requiredSize)
             return;
 
         uint newSize = Math.Max(requiredSize, (buffer?.SizeInBytes ?? 4096u) * 2);
-        buffer?.Dispose();
+
+        // Defer disposal — the old buffer may still be referenced by an in-flight GPU frame.
+        if (buffer != null)
+            _retiredBuffers.Add((buffer, _framesInFlight));
+
         buffer = Graphics.Graphite.CreateBuffer(new BufferDescriptor(
             newSize, usage, MemoryAccess.CpuToGpu));
+    }
+
+    private void FlushRetiredBuffers()
+    {
+        int currentFrame = Graphics.Graphite.CurrentFrameIndex;
+        if (currentFrame == _lastRetirementFrame)
+            return; // Already flushed this frame
+        _lastRetirementFrame = currentFrame;
+
+        for (int i = _retiredBuffers.Count - 1; i >= 0; i--)
+        {
+            var (buf, remaining) = _retiredBuffers[i];
+            if (remaining <= 0)
+            {
+                buf.Dispose();
+                _retiredBuffers.RemoveAt(i);
+            }
+            else
+            {
+                _retiredBuffers[i] = (buf, remaining - 1);
+            }
+        }
     }
 }

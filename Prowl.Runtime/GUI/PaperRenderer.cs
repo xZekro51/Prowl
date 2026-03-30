@@ -41,14 +41,23 @@ public class PaperRenderer : ICanvasRenderer
     private const int MaxDrawsPerFrame = 512;
     private static readonly uint UboRingBufferSize = UboSlotSize * MaxDrawsPerFrame;
 
-    // Graphite resources
-    private Graphite.Buffer? _vertexBuffer;
-    private Graphite.Buffer? _indexBuffer;
-    private Graphite.Buffer? _uboRingBuffer;
+    // Maximum number of frames that may be in-flight simultaneously.
+    // Each frame slot gets its own vertex/index/UBO buffers to avoid
+    // GPU data races when the CPU overwrites buffer data while the GPU
+    // from a previous frame is still reading it.
+    private int _framesInFlight = 1;
+
+    // Per-frame-in-flight Graphite resources (indexed by frame slot)
+    private Graphite.Buffer?[]? _vertexBuffers;
+    private Graphite.Buffer?[]? _indexBuffers;
+    private Graphite.Buffer?[]? _uboRingBuffers;
+    private BindGroup?[]? _uboBindGroups;
+    private byte[]?[]? _uboStagingBuffers;
+
+    // Shared resources (not per-frame)
     private BindGroupLayout? _uboBindGroupLayout;
     private BindGroupLayout? _textureBindGroupLayout;
     private BindGroupLayout[]? _bindGroupLayouts;
-    private BindGroup? _uboBindGroup;
 
     // Shader program (kept for module references used by PipelineStateCache)
     private GraphicsProgram? _shaderProgram;
@@ -68,8 +77,10 @@ public class PaperRenderer : ICanvasRenderer
     private int _viewportWidth;
     private int _viewportHeight;
 
-    // CPU staging buffer for the UBO ring
-    private byte[]? _uboStagingBuffer;
+    // Deferred buffer disposal — old buffers that were replaced by EnsureBufferSize
+    // but may still be referenced by an in-flight GPU frame.
+    private readonly List<(Graphite.Buffer Buffer, int FramesRemaining)> _retiredBuffers = new();
+    private int _lastRetirementFrame = -1;
 
     /// <summary>
     /// The render target to render into. Set this before Paper.EndFrame() is called.
@@ -104,10 +115,15 @@ public class PaperRenderer : ICanvasRenderer
 
     public void Cleanup()
     {
-        _vertexBuffer?.Dispose();
-        _indexBuffer?.Dispose();
-        _uboRingBuffer?.Dispose();
-        _uboBindGroup?.Dispose();
+        if (_vertexBuffers != null)
+            foreach (var b in _vertexBuffers) b?.Dispose();
+        if (_indexBuffers != null)
+            foreach (var b in _indexBuffers) b?.Dispose();
+        if (_uboRingBuffers != null)
+            foreach (var b in _uboRingBuffers) b?.Dispose();
+        if (_uboBindGroups != null)
+            foreach (var bg in _uboBindGroups) bg?.Dispose();
+
         _uboBindGroupLayout?.Dispose();
         _textureBindGroupLayout?.Dispose();
 
@@ -115,21 +131,25 @@ public class PaperRenderer : ICanvasRenderer
             bg?.Dispose();
         _textureBindGroups.Clear();
 
+        foreach (var (buf, _) in _retiredBuffers)
+            buf.Dispose();
+        _retiredBuffers.Clear();
+
         _shaderProgram?.Dispose();
         _defaultTexture?.Dispose();
         _defaultSampler?.Dispose();
 
-        _vertexBuffer = null;
-        _indexBuffer = null;
-        _uboRingBuffer = null;
-        _uboBindGroup = null;
+        _vertexBuffers = null;
+        _indexBuffers = null;
+        _uboRingBuffers = null;
+        _uboBindGroups = null;
+        _uboStagingBuffers = null;
         _uboBindGroupLayout = null;
         _textureBindGroupLayout = null;
         _bindGroupLayouts = null;
         _shaderProgram = null;
         _defaultTexture = null;
         _defaultSampler = null;
-        _uboStagingBuffer = null;
     }
 
     private void InitializeShaders()
@@ -152,18 +172,22 @@ public class PaperRenderer : ICanvasRenderer
     private void InitializeGraphiteResources()
     {
         var device = Graphics.Graphite;
+        _framesInFlight = device.FramesInFlight;
 
-        // Create vertex buffer (will grow as needed)
-        _vertexBuffer = device.CreateBuffer(BufferDescriptor.Vertex(4096, dynamic: true));
+        // Per-frame-in-flight buffer arrays
+        _vertexBuffers = new Graphite.Buffer?[_framesInFlight];
+        _indexBuffers = new Graphite.Buffer?[_framesInFlight];
+        _uboRingBuffers = new Graphite.Buffer?[_framesInFlight];
+        _uboBindGroups = new BindGroup?[_framesInFlight];
+        _uboStagingBuffers = new byte[_framesInFlight][];
 
-        // Create index buffer (will grow as needed)
-        _indexBuffer = device.CreateBuffer(BufferDescriptor.Index(4096, dynamic: true));
-
-        // Create UBO ring buffer for per-drawcall uniforms
-        _uboRingBuffer = device.CreateBuffer(BufferDescriptor.Uniform(UboRingBufferSize));
-
-        // CPU staging buffer
-        _uboStagingBuffer = new byte[UboRingBufferSize];
+        for (int i = 0; i < _framesInFlight; i++)
+        {
+            _vertexBuffers[i] = device.CreateBuffer(BufferDescriptor.Vertex(4096, dynamic: true));
+            _indexBuffers[i] = device.CreateBuffer(BufferDescriptor.Index(4096, dynamic: true));
+            _uboRingBuffers[i] = device.CreateBuffer(BufferDescriptor.Uniform(UboRingBufferSize));
+            _uboStagingBuffers[i] = new byte[UboRingBufferSize];
+        }
 
         // Vertex layout: vec2 position, vec2 texcoord, vec4 color = 32 bytes/vertex
         _vertexLayout = new VertexLayoutDescriptor(
@@ -184,10 +208,8 @@ public class PaperRenderer : ICanvasRenderer
 
         _bindGroupLayouts = [_uboBindGroupLayout, _textureBindGroupLayout];
 
-        // Create the UBO bind group (references the ring buffer; offset is dynamic)
-        _uboBindGroup = device.CreateBindGroup(new BindGroupDescriptor(
-            _uboBindGroupLayout,
-            BindGroupEntry.ForBuffer(0, _uboRingBuffer, 0, UboStructSize)));
+        // UBO bind group is created per-frame in RenderCalls() because the
+        // Vulkan descriptor pool manager resets pools at frame boundaries.
 
         // Default sampler for UI textures (linear filtering, clamp-to-edge for UI)
         _defaultSampler = device.CreateSampler(SamplerDescriptor.LinearClamp);
@@ -235,13 +257,18 @@ public class PaperRenderer : ICanvasRenderer
         if (drawCalls.Count == 0)
             return;
 
-        if (_shaderProgram == null || !Graphics.IsGraphiteReady || _uboRingBuffer == null)
+        if (_shaderProgram == null || !Graphics.IsGraphiteReady || _uboRingBuffers == null)
             return;
 
         var device = Graphics.Graphite;
+        int frameSlot = device.CurrentFrameIndex;
         int drawCount = Math.Min(drawCalls.Count, MaxDrawsPerFrame);
 
+        // Flush retired buffers whose GPU references have expired
+        FlushRetiredBuffers();
+
         // === 1. Upload vertex data ===
+        ref var vertexBuffer = ref _vertexBuffers![frameSlot];
         if (canvas.Vertices.Count > 0)
         {
             float[] packedVertexData = new float[canvas.Vertices.Count * 8];
@@ -259,20 +286,23 @@ public class PaperRenderer : ICanvasRenderer
             }
 
             uint vertexDataSize = (uint)(packedVertexData.Length * sizeof(float));
-            EnsureBufferSize(ref _vertexBuffer, vertexDataSize, BufferUsage.Vertex | BufferUsage.CopyDestination);
-            device.UpdateBuffer<float>(_vertexBuffer!, 0, packedVertexData.AsSpan());
+            EnsureBufferSize(ref vertexBuffer, vertexDataSize, BufferUsage.Vertex | BufferUsage.CopyDestination);
+            device.UpdateBuffer<float>(vertexBuffer!, 0, packedVertexData.AsSpan());
         }
 
         // === 2. Upload index data ===
+        ref var indexBuffer = ref _indexBuffers![frameSlot];
         if (canvas.Indices.Count > 0)
         {
             uint[] indices = [.. canvas.Indices];
             uint indexDataSize = (uint)(indices.Length * sizeof(uint));
-            EnsureBufferSize(ref _indexBuffer, indexDataSize, BufferUsage.Index | BufferUsage.CopyDestination);
-            device.UpdateBuffer<uint>(_indexBuffer!, 0, indices.AsSpan());
+            EnsureBufferSize(ref indexBuffer, indexDataSize, BufferUsage.Index | BufferUsage.CopyDestination);
+            device.UpdateBuffer<uint>(indexBuffer!, 0, indices.AsSpan());
         }
 
         // === 3. Pack all drawcall UBO data into the ring buffer ===
+        var uboStagingBuffer = _uboStagingBuffers![frameSlot]!;
+        var uboRingBuffer = _uboRingBuffers[frameSlot]!;
         for (int i = 0; i < drawCount; i++)
         {
             var drawCall = drawCalls[i];
@@ -297,7 +327,7 @@ public class PaperRenderer : ICanvasRenderer
             uint offset = UboSlotSize * (uint)i;
             unsafe
             {
-                fixed (byte* dst = &_uboStagingBuffer![offset])
+                fixed (byte* dst = &uboStagingBuffer[offset])
                 {
                     *(UIUniformsData*)dst = uboData;
                 }
@@ -306,10 +336,22 @@ public class PaperRenderer : ICanvasRenderer
 
         // Upload the entire populated region to the GPU in one call
         uint totalUboBytes = UboSlotSize * (uint)drawCount;
-        device.UpdateBuffer<byte>(_uboRingBuffer, 0,
-            new ReadOnlySpan<byte>(_uboStagingBuffer, 0, (int)totalUboBytes));
+        device.UpdateBuffer<byte>(uboRingBuffer, 0,
+            new ReadOnlySpan<byte>(uboStagingBuffer, 0, (int)totalUboBytes));
 
-        // === 4. Record and submit Graphite commands ===
+        // === 4. Recreate bind groups for this frame ===
+        // The Vulkan descriptor pool manager resets all pools at frame
+        // boundaries, invalidating any previously allocated descriptor
+        // sets.  Recreate per-frame so they reference valid sets.
+        _uboBindGroups![frameSlot]?.Dispose();
+        _uboBindGroups[frameSlot] = device.CreateBindGroup(new BindGroupDescriptor(
+            _uboBindGroupLayout!,
+            BindGroupEntry.ForBuffer(0, uboRingBuffer, 0, UboStructSize)));
+
+        foreach (var bg in _textureBindGroups.Values)
+            bg?.Dispose();
+        _textureBindGroups.Clear();
+
         using var cmd = new RenderCommandBuffer("PaperRenderer");
 
         // Begin render pass
@@ -346,11 +388,6 @@ public class PaperRenderer : ICanvasRenderer
         else
         {
             swapchainTex = device.GetSwapchainTexture();
-            // Load to preserve content already rendered to the swapchain this frame
-            // (the scene pipeline clears it to the camera color on Vulkan, and the
-            // legacy GL path renders directly to the default framebuffer on OpenGL).
-            // If no prior pass touched the swapchain (e.g. no cameras in the scene),
-            // Clear to black so the Vulkan image transitions from Undefined layout.
             var colorAtt = Graphics.SwapchainClearedThisFrame || Graphics.IsOpenGL
                 ? RenderPassColorAttachment.Load(swapchainTex)
                 : RenderPassColorAttachment.Clear(swapchainTex, new Float4(0, 0, 0, 1));
@@ -383,9 +420,9 @@ public class PaperRenderer : ICanvasRenderer
         cmd.SetPipeline(pipeline);
         cmd.SetViewport(0, 0, _viewportWidth, _viewportHeight);
 
-        // Bind vertex and index buffers
-        cmd.SetVertexBuffer(0, _vertexBuffer!);
-        cmd.SetIndexBuffer(_indexBuffer!, Graphite.IndexFormat.Uint32);
+        // Bind vertex and index buffers for this frame slot
+        cmd.SetVertexBuffer(0, vertexBuffer!);
+        cmd.SetIndexBuffer(indexBuffer!, Graphite.IndexFormat.Uint32);
 
         // === 5. Per-drawcall: set bind groups and draw ===
         int indexOffset = 0;
@@ -396,7 +433,7 @@ public class PaperRenderer : ICanvasRenderer
             // UBO bind group with dynamic offset into the ring buffer
             uint uboOffset = UboSlotSize * (uint)i;
             Span<uint> offsets = stackalloc uint[] { uboOffset };
-            cmd.SetBindGroup(0, _uboBindGroup!, offsets);
+            cmd.SetBindGroup(0, _uboBindGroups[frameSlot]!, offsets);
 
             // Texture bind group
             Texture2D texture = (drawCall.Texture as Texture2D) ?? _defaultTexture!;
@@ -428,6 +465,15 @@ public class PaperRenderer : ICanvasRenderer
         }
 
         cmd.Submit();
+
+        // Dispose per-frame bind groups to suppress finalizer warnings.
+        // VKBindGroup.DisposeResources() is a no-op (descriptor sets are
+        // pool-managed), so this just calls GC.SuppressFinalize().
+        _uboBindGroups![frameSlot]?.Dispose();
+        _uboBindGroups[frameSlot] = null;
+        foreach (var bg in _textureBindGroups.Values)
+            bg?.Dispose();
+        _textureBindGroups.Clear();
     }
 
     private BindGroup? GetOrCreateTextureBindGroup(Texture2D texture)
@@ -447,15 +493,41 @@ public class PaperRenderer : ICanvasRenderer
         return bindGroup;
     }
 
-    private static void EnsureBufferSize(ref Graphite.Buffer? buffer, uint requiredSize, BufferUsage usage)
+    private void EnsureBufferSize(ref Graphite.Buffer? buffer, uint requiredSize, BufferUsage usage)
     {
         if (buffer != null && buffer.SizeInBytes >= requiredSize)
             return;
 
         uint newSize = Math.Max(requiredSize, (buffer?.SizeInBytes ?? 4096u) * 2);
-        buffer?.Dispose();
+
+        // Defer disposal — the old buffer may still be referenced by an in-flight GPU frame.
+        if (buffer != null)
+            _retiredBuffers.Add((buffer, _framesInFlight));
+
         buffer = Graphics.Graphite.CreateBuffer(new BufferDescriptor(
             newSize, usage, MemoryAccess.CpuToGpu));
+    }
+
+    private void FlushRetiredBuffers()
+    {
+        int currentFrame = Graphics.Graphite.CurrentFrameIndex;
+        if (currentFrame == _lastRetirementFrame)
+            return; // Already flushed this frame (handles multiple RenderCalls per frame)
+        _lastRetirementFrame = currentFrame;
+
+        for (int i = _retiredBuffers.Count - 1; i >= 0; i--)
+        {
+            var (buf, remaining) = _retiredBuffers[i];
+            if (remaining <= 0)
+            {
+                buf.Dispose();
+                _retiredBuffers.RemoveAt(i);
+            }
+            else
+            {
+                _retiredBuffers[i] = (buf, remaining - 1);
+            }
+        }
     }
 
     public void Dispose()

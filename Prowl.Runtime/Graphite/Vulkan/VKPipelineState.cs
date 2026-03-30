@@ -273,6 +273,9 @@ internal unsafe class VKPipelineState : PipelineState
 
                 VKGraphiteDevice.Check(device.Vk.CreateGraphicsPipelines(device.Device, default, 1, &pipelineInfo, null, out var pipeline));
                 Handle = pipeline;
+
+                // Set debug name via VK_EXT_debug_utils for GPU debugger visibility
+                device.SetDebugName(ObjectType.Pipeline, Handle.Handle, descriptor.DebugName);
             }
         }
 

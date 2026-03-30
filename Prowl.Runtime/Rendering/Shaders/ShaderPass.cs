@@ -81,14 +81,20 @@ public sealed class ShaderPass
 
     public bool TryGetVariantProgram(Dictionary<string, bool>? keywordID, out GraphicsProgram variant)
     {
+        // Build a canonicalized (sorted) keyword key to ensure the same set of
+        // keywords always produces the same cache key regardless of dictionary
+        // iteration order.
         string keywords = string.Empty;
         if (keywordID != null)
         {
-            foreach (KeyValuePair<string, bool> kvp in keywordID)
+            var sorted = new List<string>();
+            foreach (var kvp in keywordID)
             {
                 if (kvp.Value)
-                    keywords += $"{kvp.Key};";
+                    sorted.Add(kvp.Key);
             }
+            sorted.Sort(StringComparer.Ordinal);
+            keywords = string.Join(";", sorted);
         }
 
         if (_variants == null)

@@ -149,13 +149,13 @@ internal static class GraphiteMaterialBinder
                     }
                     else
                     {
-                        // Default UBO: pack property data into a temporary buffer
-                        var uboBuffer = PackDefaultUbo(binding, materialProps, instanceProps, objectToWorld, worldToObject);
+                        // Default UBO: pack property data into the per-frame ring buffer
+                        var (uboBuffer, uboOffset) = PackDefaultUbo(binding, materialProps, instanceProps, objectToWorld, worldToObject);
                         if (uboBuffer != null)
                         {
                             entries.Add(BindGroupEntry.ForBuffer(
-                                binding.Binding, uboBuffer, 0, binding.BufferSize));
-                            if (DebugBindGroups) Debug.Log($"[BindGroup]     -> UBO '{binding.Name}' bound OK, size={binding.BufferSize}");
+                                binding.Binding, uboBuffer, uboOffset, binding.BufferSize));
+                            if (DebugBindGroups) Debug.Log($"[BindGroup]     -> UBO '{binding.Name}' bound OK, size={binding.BufferSize}, offset={uboOffset}");
                         }
                         else
                         {
@@ -188,7 +188,7 @@ internal static class GraphiteMaterialBinder
 
     #region UBO Packing
 
-    private static unsafe GBuffer? PackDefaultUbo(
+    private static (GBuffer? Buffer, uint Offset) PackDefaultUbo(
         SpirvReflection.ResourceBinding binding,
         PropertyState? materialProps,
         PropertyState? instanceProps,
@@ -196,7 +196,7 @@ internal static class GraphiteMaterialBinder
         Float4x4? worldToObject)
     {
         if (binding.Members == null || binding.BufferSize == 0)
-            return null;
+            return (null, 0);
 
         var data = new byte[binding.BufferSize];
 
@@ -206,20 +206,10 @@ internal static class GraphiteMaterialBinder
             WriteMemberValue(data, member, materialProps, instanceProps, objectToWorld, worldToObject);
         }
 
-        // Create a temporary CpuToGpu buffer
-        fixed (byte* ptr = data)
-        {
-            var desc = new BufferDescriptor
-            {
-                SizeInBytes = binding.BufferSize,
-                Usage = BufferUsage.Uniform,
-                MemoryAccess = MemoryAccess.CpuToGpu,
-                InitialData = data,
-            };
-            var buffer = Graphics.Graphite.CreateBuffer(in desc);
-            Retire(buffer);
-            return buffer;
-        }
+        // Sub-allocate from the per-frame ring buffer (Vulkan) or
+        // create a temporary CpuToGpu buffer (OpenGL fallback).
+        var (buffer, offset) = Graphics.Graphite.AllocateTransientUniform(data);
+        return (buffer, offset);
     }
 
     private static unsafe void WriteMemberValue(
@@ -470,32 +460,17 @@ internal static class GraphiteMaterialBinder
         }
     }
 
-    private static void WriteMatrix(byte[] data, uint offset, Float4x4 value)
+    private static unsafe void WriteMatrix(byte[] data, uint offset, Float4x4 value)
     {
-        // Column-major: write each column as a vec4 (16 bytes per column, 4 columns)
+        // Write the entire 4×4 matrix (64 bytes) in one block copy.
+        // Float4x4 is StructLayout(Sequential) with columns c0..c3 as Float4,
+        // matching the column-major layout expected by GLSL std140.
         if (offset + 64 <= data.Length)
         {
-            var span = data.AsSpan((int)offset);
-            // Column 0
-            MemoryMarshal.Write(span, in value.c0.X);
-            MemoryMarshal.Write(span[4..], in value.c0.Y);
-            MemoryMarshal.Write(span[8..], in value.c0.Z);
-            MemoryMarshal.Write(span[12..], in value.c0.W);
-            // Column 1
-            MemoryMarshal.Write(span[16..], in value.c1.X);
-            MemoryMarshal.Write(span[20..], in value.c1.Y);
-            MemoryMarshal.Write(span[24..], in value.c1.Z);
-            MemoryMarshal.Write(span[28..], in value.c1.W);
-            // Column 2
-            MemoryMarshal.Write(span[32..], in value.c2.X);
-            MemoryMarshal.Write(span[36..], in value.c2.Y);
-            MemoryMarshal.Write(span[40..], in value.c2.Z);
-            MemoryMarshal.Write(span[44..], in value.c2.W);
-            // Column 3
-            MemoryMarshal.Write(span[48..], in value.c3.X);
-            MemoryMarshal.Write(span[52..], in value.c3.Y);
-            MemoryMarshal.Write(span[56..], in value.c3.Z);
-            MemoryMarshal.Write(span[60..], in value.c3.W);
+            fixed (byte* dst = &data[offset])
+            {
+                *(Float4x4*)dst = value;
+            }
         }
     }
 

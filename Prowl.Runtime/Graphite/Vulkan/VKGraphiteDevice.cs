@@ -10,6 +10,7 @@ using Silk.NET.Core;
 using Silk.NET.Core.Contexts;
 using Silk.NET.Core.Native;
 using Silk.NET.Vulkan;
+using Silk.NET.Vulkan.Extensions.EXT;
 using Silk.NET.Vulkan.Extensions.KHR;
 
 using VkBuffer = Silk.NET.Vulkan.Buffer;
@@ -26,6 +27,9 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
 {
     private const int MaxFramesInFlight = 2;
 
+    public override int FramesInFlight => MaxFramesInFlight;
+    public override int CurrentFrameIndex => _currentFrame;
+
     internal Vk Vk { get; private set; } = null!;
     internal Instance VkInstance { get; private set; }
     internal PhysicalDevice PhysicalDevice { get; private set; }
@@ -41,6 +45,10 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
     private KhrSurface? _khrSurface;
     private KhrSwapchain? _khrSwapchain;
     private SurfaceKHR _surface;
+
+    // Debug utils extension (available when validation layers are enabled)
+    private ExtDebugUtils? _debugUtils;
+    internal bool HasDebugUtils => _debugUtils != null;
 
     // Swapchain
     private SwapchainKHR _swapchain;
@@ -71,6 +79,24 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
     // Resources are retired into the current frame slot and destroyed in BeginFrame once the
     // corresponding fence has been signaled, guaranteeing the GPU is no longer using them.
     private List<(List<Framebuffer> Framebuffers, CommandBuffer CommandBuffer)>[] _retiredResources = [];
+
+    // Sub-allocator for GPU memory (avoids the ~4096 vkAllocateMemory limit)
+    internal VKMemoryAllocator MemoryAllocator { get; private set; } = null!;
+
+    // Per-frame descriptor pool manager (replaces per-bind-group pools)
+    internal VKDescriptorPoolManager DescriptorPoolManager { get; private set; } = null!;
+
+    // Per-frame ring buffer for per-draw uniform data (eliminates per-draw buffer creation)
+    internal VKUniformRingBuffer UniformRingBuffer { get; private set; } = null!;
+
+    // Upload batch state (replaces per-upload QueueWaitIdle with batched fence-based submission)
+    private CommandBuffer _batchCmdBuffer;
+    private bool _isBatching;
+    private readonly List<IDisposable> _batchResources = new();
+    private VkFence _uploadFence;
+
+    /// <summary>Whether upload batching is currently active.</summary>
+    internal bool IsUploadBatching => _isBatching;
 
     public override string BackendName => "Vulkan 1.3";
     public override GraphicsBackendType BackendType => GraphicsBackendType.Vulkan;
@@ -126,6 +152,22 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
         for (int i = 0; i < MaxFramesInFlight; i++)
             _retiredResources[i] = [];
 
+        // Initialize memory sub-allocator (replaces per-resource vkAllocateMemory)
+        MemoryAllocator = new VKMemoryAllocator(this);
+        Debug.Log("[Vulkan] Memory sub-allocator initialized.");
+
+        // Initialize per-frame descriptor pool manager
+        DescriptorPoolManager = new VKDescriptorPoolManager(this, MaxFramesInFlight);
+        Debug.Log("[Vulkan] Descriptor pool manager initialized.");
+
+        // Initialize per-frame uniform ring buffer for per-draw UBO data
+        UniformRingBuffer = new VKUniformRingBuffer(this, MaxFramesInFlight);
+        Debug.Log("[Vulkan] Uniform ring buffer initialized.");
+
+        // Create a reusable fence for upload operations
+        var uploadFenceInfo = new FenceCreateInfo { SType = StructureType.FenceCreateInfo };
+        Check(Vk.CreateFence(Device, &uploadFenceInfo, null, out _uploadFence));
+
         _capabilities = QueryCapabilities();
         _initialized = true;
         Debug.Log($"[Vulkan] Initialization complete — {_capabilities.DeviceName}");
@@ -156,6 +198,11 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
 
         if (enableDebug)
         {
+            // Always request VK_EXT_debug_utils when debug is enabled —
+            // it enables debug markers in GPU profilers (RenderDoc, NSight)
+            // even when validation layers are not installed.
+            extensions.Add("VK_EXT_debug_utils");
+
             // Check if validation layer is actually available before requesting it
             uint layerCount = 0;
             Vk.EnumerateInstanceLayerProperties(&layerCount, null);
@@ -179,7 +226,6 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
 
             if (hasValidation)
             {
-                extensions.Add("VK_EXT_debug_utils");
                 layers.Add("VK_LAYER_KHRONOS_validation");
                 Debug.Log("[Vulkan] Validation layers enabled.");
             }
@@ -209,6 +255,13 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
         SilkMarshal.Free(layerPtrs);
         SilkMarshal.Free((nint)appInfo.PApplicationName);
         SilkMarshal.Free((nint)appInfo.PEngineName);
+
+        // Try to acquire the debug utils extension for debug markers and object naming
+        if (enableDebug && Vk.TryGetInstanceExtension<ExtDebugUtils>(VkInstance, out var debugUtils))
+        {
+            _debugUtils = debugUtils;
+            Debug.Log("[Vulkan] VK_EXT_debug_utils acquired — debug markers and object naming enabled.");
+        }
     }
 
     private void PickPhysicalDevice()
@@ -682,13 +735,15 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
 
         var cb = vkCmd.Handle;
 
-        // When the command list renders to the swapchain, include proper
-        // synchronisation: wait for the acquired image to be available and
-        // signal the render-finished semaphore + in-flight fence.
+        // When the first command list renders to the swapchain, consume
+        // the image-available semaphore so the GPU waits for the acquired
+        // image.  The render-finished semaphore and in-flight fence are
+        // NOT attached here — they are always signalled in Present() via a
+        // lightweight sync batch that is ordered after ALL frame submissions,
+        // guaranteeing the fence covers every command buffer this frame.
         if (vkCmd.IsPresentTarget && !_frameSyncConsumed && _khrSwapchain != null)
         {
             var waitSem = _imageAvailableSemaphores[_currentFrame];
-            var signalSem = _renderFinishedSemaphores[_currentFrame];
             var waitStage = PipelineStageFlags.ColorAttachmentOutputBit;
 
             var submitInfo = new SubmitInfo
@@ -699,10 +754,8 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
                 PWaitDstStageMask = &waitStage,
                 CommandBufferCount = 1,
                 PCommandBuffers = &cb,
-                SignalSemaphoreCount = 1,
-                PSignalSemaphores = &signalSem,
             };
-            Check(Vk.QueueSubmit(GraphicsQueue, 1, &submitInfo, _inFlightFences[_currentFrame]));
+            Check(Vk.QueueSubmit(GraphicsQueue, 1, &submitInfo, default));
             _frameSyncConsumed = true;
         }
         else
@@ -796,6 +849,15 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
 
     #region Resource Updates
 
+    /// <summary>
+    /// Allocates a sub-region from the per-frame uniform ring buffer
+    /// and copies data into it, avoiding per-draw buffer creation.
+    /// </summary>
+    public override (Buffer Buffer, uint Offset) AllocateTransientUniform(ReadOnlySpan<byte> data)
+    {
+        return UniformRingBuffer.Allocate(data);
+    }
+
     public override void UpdateBuffer<T>(Buffer buffer, uint offsetInBytes, ReadOnlySpan<T> data)
     {
         ThrowIfDisposed();
@@ -806,29 +868,42 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
 
         if (vkBuffer.MemoryAccess != MemoryAccess.GpuOnly)
         {
-            // Directly map and copy for host-visible buffers
-            void* mapped;
-            Check(Vk.MapMemory(Device, vkBuffer.Memory, offsetInBytes, dataSize, 0, &mapped));
-            fixed (T* src = data)
-                System.Buffer.MemoryCopy(src, mapped, dataSize, dataSize);
-            Vk.UnmapMemory(Device, vkBuffer.Memory);
+            // Directly write to the mapped memory from the sub-allocator
+            var mappedPtr = vkBuffer.Allocation.GetMappedData();
+            if (mappedPtr != null)
+            {
+                fixed (T* src = data)
+                    System.Buffer.MemoryCopy(src, (byte*)mappedPtr + offsetInBytes, dataSize, dataSize);
+            }
+            else
+            {
+                // Fallback: map manually (shouldn't normally happen with the sub-allocator)
+                void* mapped;
+                Check(Vk.MapMemory(Device, vkBuffer.Allocation.Memory, vkBuffer.Allocation.Offset + offsetInBytes, dataSize, 0, &mapped));
+                fixed (T* src = data)
+                    System.Buffer.MemoryCopy(src, mapped, dataSize, dataSize);
+                Vk.UnmapMemory(Device, vkBuffer.Allocation.Memory);
+            }
         }
         else
         {
             // Use staging buffer for GPU-only memory
             var stagingDesc = new BufferDescriptor(dataSize, BufferUsage.CopySource, MemoryAccess.CpuToGpu);
-            using var staging = new VKBuffer(this, in stagingDesc);
+            var staging = new VKBuffer(this, in stagingDesc);
 
-            void* mapped;
-            Check(Vk.MapMemory(Device, staging.Memory, 0, dataSize, 0, &mapped));
+            var mappedPtr = staging.Allocation.GetMappedData();
             fixed (T* src = data)
-                System.Buffer.MemoryCopy(src, mapped, dataSize, dataSize);
-            Vk.UnmapMemory(Device, staging.Memory);
+                System.Buffer.MemoryCopy(src, mappedPtr, dataSize, dataSize);
 
             var cmd = BeginSingleTimeCommands();
             var region = new BufferCopy { SrcOffset = 0, DstOffset = offsetInBytes, Size = dataSize };
             Vk.CmdCopyBuffer(cmd, staging.Handle, vkBuffer.Handle, 1, &region);
             EndSingleTimeCommands(cmd);
+
+            if (_isBatching)
+                TrackBatchResource(staging);
+            else
+                staging.Dispose();
         }
     }
 
@@ -841,13 +916,11 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
         // Create staging buffer
         uint dataSize = (uint)data.Length;
         var stagingDesc = new BufferDescriptor(dataSize, BufferUsage.CopySource, MemoryAccess.CpuToGpu);
-        using var staging = new VKBuffer(this, in stagingDesc);
+        var staging = new VKBuffer(this, in stagingDesc);
 
-        void* mapped;
-        Check(Vk.MapMemory(Device, staging.Memory, 0, dataSize, 0, &mapped));
+        var mappedPtr = staging.Allocation.GetMappedData();
         fixed (byte* src = data)
-            System.Buffer.MemoryCopy(src, mapped, dataSize, dataSize);
-        Vk.UnmapMemory(Device, staging.Memory);
+            System.Buffer.MemoryCopy(src, mappedPtr, dataSize, dataSize);
 
         var cmd = BeginSingleTimeCommands();
 
@@ -875,6 +948,11 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
         vkTexture.TransitionLayout(cmd, ImageLayout.ShaderReadOnlyOptimal, descriptor.MipLevel, 1, descriptor.ArrayLayer, 1);
 
         EndSingleTimeCommands(cmd);
+
+        if (_isBatching)
+            TrackBatchResource(staging);
+        else
+            staging.Dispose();
     }
 
     public override void ReadbackTexture(Texture texture, uint mipLevel, uint arrayLayer, Span<byte> destination)
@@ -882,6 +960,10 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
         ThrowIfDisposed();
         if (texture is not VKTexture vkTexture)
             return;
+
+        // Readback requires synchronous completion — flush any pending batch first
+        if (_isBatching)
+            FlushUploadBatch();
 
         uint mipWidth = Math.Max(1, vkTexture.Width >> (int)mipLevel);
         uint mipHeight = Math.Max(1, vkTexture.Height >> (int)mipLevel);
@@ -919,10 +1001,18 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
         EndSingleTimeCommands(cmd);
 
         // Map the staging buffer and copy data to the destination span
-        void* mapped;
-        Check(Vk.MapMemory(Device, staging.Memory, 0, dataSize, 0, &mapped));
-        new ReadOnlySpan<byte>(mapped, (int)dataSize).CopyTo(destination);
-        Vk.UnmapMemory(Device, staging.Memory);
+        var mappedPtr = staging.Allocation.GetMappedData();
+        if (mappedPtr != null)
+        {
+            new ReadOnlySpan<byte>(mappedPtr, (int)dataSize).CopyTo(destination);
+        }
+        else
+        {
+            void* mapped;
+            Check(Vk.MapMemory(Device, staging.Allocation.Memory, staging.Allocation.Offset, dataSize, 0, &mapped));
+            new ReadOnlySpan<byte>(mapped, (int)dataSize).CopyTo(destination);
+            Vk.UnmapMemory(Device, staging.Allocation.Memory);
+        }
     }
 
     public override void GenerateMipmaps(Texture texture)
@@ -1011,6 +1101,10 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
         // frame slot has finished — destroy any retired framebuffers / command buffers.
         FlushRetiredResources(_currentFrame);
 
+        // Reset per-frame sub-systems for this frame slot
+        DescriptorPoolManager.BeginFrame(_currentFrame);
+        UniformRingBuffer.BeginFrame(_currentFrame);
+
         // Acquire the next swapchain image
         var result = _khrSwapchain.AcquireNextImage(
             Device, _swapchain, ulong.MaxValue,
@@ -1038,26 +1132,34 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
         if (_khrSwapchain == null)
             return true;
 
-        // If a rendering submission already consumed the frame semaphores
-        // (via SubmitCommands with a swapchain target), skip the sync-only
-        // batch — the semaphores and fence are already in-flight.
-        if (!_frameSyncConsumed)
+        // Always submit a lightweight sync batch at the end of the frame.
+        // Because Vulkan queue submissions are strictly ordered, this batch
+        // will complete only after ALL prior submissions (scene rendering,
+        // PaperUI, ImGui, etc.) have finished on the GPU.  Attaching the
+        // in-flight fence and render-finished semaphore here guarantees they
+        // cover every command buffer submitted this frame.
         {
-            var waitSem = _imageAvailableSemaphores[_currentFrame];
             var signalSem = _renderFinishedSemaphores[_currentFrame];
             var waitStage = PipelineStageFlags.ColorAttachmentOutputBit;
 
             var syncSubmit = new SubmitInfo
             {
                 SType = StructureType.SubmitInfo,
-                WaitSemaphoreCount = 1,
-                PWaitSemaphores = &waitSem,
-                PWaitDstStageMask = &waitStage,
                 CommandBufferCount = 0,
                 PCommandBuffers = null,
                 SignalSemaphoreCount = 1,
                 PSignalSemaphores = &signalSem,
             };
+
+            // If no rendering submission consumed the image-available
+            // semaphore, the sync batch must wait on it instead.
+            if (!_frameSyncConsumed)
+            {
+                var waitSem = _imageAvailableSemaphores[_currentFrame];
+                syncSubmit.WaitSemaphoreCount = 1;
+                syncSubmit.PWaitSemaphores = &waitSem;
+                syncSubmit.PWaitDstStageMask = &waitStage;
+            }
 
             Check(Vk.QueueSubmit(GraphicsQueue, 1, &syncSubmit, _inFlightFences[_currentFrame]));
         }
@@ -1126,6 +1228,10 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
 
     internal CommandBuffer BeginSingleTimeCommands()
     {
+        // If batching is active, return the shared batch command buffer
+        if (_isBatching)
+            return _batchCmdBuffer;
+
         var allocInfo = new CommandBufferAllocateInfo
         {
             SType = StructureType.CommandBufferAllocateInfo,
@@ -1147,6 +1253,10 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
 
     internal void EndSingleTimeCommands(CommandBuffer commandBuffer)
     {
+        // If batching is active, defer submission to FlushUploadBatch
+        if (_isBatching)
+            return;
+
         Vk.EndCommandBuffer(commandBuffer);
 
         var submitInfo = new SubmitInfo
@@ -1155,9 +1265,80 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
             CommandBufferCount = 1,
             PCommandBuffers = &commandBuffer,
         };
-        Vk.QueueSubmit(GraphicsQueue, 1, &submitInfo, default);
-        Vk.QueueWaitIdle(GraphicsQueue);
+        // Use a fence instead of QueueWaitIdle to avoid stalling unrelated GPU work
+        var fence = _uploadFence;
+        Check(Vk.QueueSubmit(GraphicsQueue, 1, &submitInfo, fence));
+        Check(Vk.WaitForFences(Device, 1, &fence, true, ulong.MaxValue));
+        Check(Vk.ResetFences(Device, 1, &fence));
         Vk.FreeCommandBuffers(Device, CommandPool, 1, &commandBuffer);
+    }
+
+    /// <summary>
+    /// Tracks a staging resource for deferred disposal during upload batching.
+    /// If not batching, the caller is responsible for disposal.
+    /// </summary>
+    internal void TrackBatchResource(IDisposable resource)
+    {
+        _batchResources.Add(resource);
+    }
+
+    /// <summary>
+    /// Begins batching upload operations into a single command buffer.
+    /// All subsequent <see cref="BeginSingleTimeCommands"/>/<see cref="EndSingleTimeCommands"/>
+    /// calls will record into the shared batch buffer. Call <see cref="FlushUploadBatch"/>
+    /// to submit all batched work at once, avoiding per-upload pipeline stalls.
+    /// </summary>
+    public void BeginUploadBatch()
+    {
+        if (_isBatching) return;
+        _isBatching = true;
+
+        var allocInfo = new CommandBufferAllocateInfo
+        {
+            SType = StructureType.CommandBufferAllocateInfo,
+            Level = CommandBufferLevel.Primary,
+            CommandPool = CommandPool,
+            CommandBufferCount = 1,
+        };
+
+        Vk.AllocateCommandBuffers(Device, &allocInfo, out _batchCmdBuffer);
+
+        var beginInfo = new CommandBufferBeginInfo
+        {
+            SType = StructureType.CommandBufferBeginInfo,
+            Flags = CommandBufferUsageFlags.OneTimeSubmitBit,
+        };
+        Vk.BeginCommandBuffer(_batchCmdBuffer, &beginInfo);
+    }
+
+    /// <summary>
+    /// Submits all batched upload commands and waits for completion using a fence.
+    /// Frees all staging resources that were tracked during the batch.
+    /// </summary>
+    public void FlushUploadBatch()
+    {
+        if (!_isBatching) return;
+        _isBatching = false;
+
+        Vk.EndCommandBuffer(_batchCmdBuffer);
+
+        var cb = _batchCmdBuffer;
+        var submitInfo = new SubmitInfo
+        {
+            SType = StructureType.SubmitInfo,
+            CommandBufferCount = 1,
+            PCommandBuffers = &cb,
+        };
+        var fence = _uploadFence;
+        Check(Vk.QueueSubmit(GraphicsQueue, 1, &submitInfo, fence));
+        Check(Vk.WaitForFences(Device, 1, &fence, true, ulong.MaxValue));
+        Check(Vk.ResetFences(Device, 1, &fence));
+        Vk.FreeCommandBuffers(Device, CommandPool, 1, &cb);
+
+        // Free staging resources
+        foreach (var r in _batchResources)
+            try { r.Dispose(); } catch { }
+        _batchResources.Clear();
     }
 
     internal RenderPass GetOrCreateRenderPass(in RenderPassKey key)
@@ -1316,6 +1497,97 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
         list.Clear();
     }
 
+    /// <summary>
+    /// Sets a debug name on a Vulkan object via <c>VK_EXT_debug_utils</c>.
+    /// No-op when debug utils are not available.
+    /// </summary>
+    internal void SetDebugName(ObjectType objectType, ulong handle, string name)
+    {
+        if (_debugUtils == null || string.IsNullOrEmpty(name))
+            return;
+
+        var namePtr = SilkMarshal.StringToPtr(name);
+        try
+        {
+            var nameInfo = new DebugUtilsObjectNameInfoEXT
+            {
+                SType = StructureType.DebugUtilsObjectNameInfoExt,
+                ObjectType = objectType,
+                ObjectHandle = handle,
+                PObjectName = (byte*)namePtr,
+            };
+            _debugUtils.SetDebugUtilsObjectName(Device, &nameInfo);
+        }
+        finally
+        {
+            SilkMarshal.Free(namePtr);
+        }
+    }
+
+    /// <summary>
+    /// Begins a debug label region in a command buffer via <c>VK_EXT_debug_utils</c>.
+    /// </summary>
+    internal void CmdBeginDebugLabel(CommandBuffer cb, string name, float r = 0, float g = 0.5f, float b = 1, float a = 1)
+    {
+        if (_debugUtils == null)
+            return;
+
+        var namePtr = SilkMarshal.StringToPtr(name);
+        try
+        {
+            var labelInfo = new DebugUtilsLabelEXT
+            {
+                SType = StructureType.DebugUtilsLabelExt,
+                PLabelName = (byte*)namePtr,
+            };
+            labelInfo.Color[0] = r;
+            labelInfo.Color[1] = g;
+            labelInfo.Color[2] = b;
+            labelInfo.Color[3] = a;
+            _debugUtils.CmdBeginDebugUtilsLabel(cb, &labelInfo);
+        }
+        finally
+        {
+            SilkMarshal.Free(namePtr);
+        }
+    }
+
+    /// <summary>
+    /// Ends a debug label region in a command buffer via <c>VK_EXT_debug_utils</c>.
+    /// </summary>
+    internal void CmdEndDebugLabel(CommandBuffer cb)
+    {
+        _debugUtils?.CmdEndDebugUtilsLabel(cb);
+    }
+
+    /// <summary>
+    /// Inserts a single debug label in a command buffer via <c>VK_EXT_debug_utils</c>.
+    /// </summary>
+    internal void CmdInsertDebugLabel(CommandBuffer cb, string name, float r = 1, float g = 1, float b = 0, float a = 1)
+    {
+        if (_debugUtils == null)
+            return;
+
+        var namePtr = SilkMarshal.StringToPtr(name);
+        try
+        {
+            var labelInfo = new DebugUtilsLabelEXT
+            {
+                SType = StructureType.DebugUtilsLabelExt,
+                PLabelName = (byte*)namePtr,
+            };
+            labelInfo.Color[0] = r;
+            labelInfo.Color[1] = g;
+            labelInfo.Color[2] = b;
+            labelInfo.Color[3] = a;
+            _debugUtils.CmdInsertDebugUtilsLabel(cb, &labelInfo);
+        }
+        finally
+        {
+            SilkMarshal.Free(namePtr);
+        }
+    }
+
     internal static void Check(Result result, [CallerMemberName] string? caller = null)
     {
         if (result != Result.Success)
@@ -1338,6 +1610,14 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
             for (int i = 0; i < _retiredResources.Length; i++)
                 FlushRetiredResources(i);
         }
+
+        // Dispose new sub-systems before destroying the device
+        UniformRingBuffer?.Dispose();
+        DescriptorPoolManager?.Dispose();
+        MemoryAllocator?.Dispose();
+
+        if (hasDevice && _uploadFence.Handle != 0)
+            Vk.DestroyFence(Device, _uploadFence, null);
 
         // Destroy sync objects
         if (hasDevice)
@@ -1377,6 +1657,9 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
 
         if (VkInstance.Handle != 0)
             Vk.DestroyInstance(VkInstance, null);
+
+        _debugUtils?.Dispose();
+        _debugUtils = null;
 
         Vk.Dispose();
     }

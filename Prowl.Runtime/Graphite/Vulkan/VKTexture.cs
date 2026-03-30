@@ -9,13 +9,14 @@ namespace Prowl.Runtime.Graphite.Vulkan;
 
 /// <summary>
 /// Vulkan implementation of a GPU texture.
+/// Uses the device's <see cref="VKMemoryAllocator"/> for sub-allocated memory.
 /// </summary>
 internal unsafe class VKTexture : Texture
 {
     private readonly VKGraphiteDevice _device;
     internal Image Image { get; }
     internal ImageView ImageView { get; }
-    internal DeviceMemory Memory { get; }
+    internal VKAllocation Allocation { get; }
 
     // Per-mip layout tracking (simplified: tracks first layer only)
     private readonly ImageLayout[] _mipLayouts;
@@ -68,17 +69,9 @@ internal unsafe class VKTexture : Texture
 
         device.Vk.GetImageMemoryRequirements(device.Device, Image, out var memReqs);
 
-        var allocInfo = new MemoryAllocateInfo
-        {
-            SType = StructureType.MemoryAllocateInfo,
-            AllocationSize = memReqs.Size,
-            MemoryTypeIndex = device.FindMemoryType(memReqs.MemoryTypeBits, MemoryPropertyFlags.DeviceLocalBit),
-        };
-
-        VKGraphiteDevice.Check(device.Vk.AllocateMemory(device.Device, &allocInfo, null, out var memory));
-        Memory = memory;
-
-        VKGraphiteDevice.Check(device.Vk.BindImageMemory(device.Device, Image, Memory, 0));
+        // Sub-allocate from the shared memory allocator
+        Allocation = device.MemoryAllocator.Allocate(memReqs, MemoryPropertyFlags.DeviceLocalBit);
+        VKGraphiteDevice.Check(device.Vk.BindImageMemory(device.Device, Image, Allocation.Memory, Allocation.Offset));
 
         // Create image view
         var viewType = descriptor.Dimension switch
@@ -114,6 +107,11 @@ internal unsafe class VKTexture : Texture
 
         VKGraphiteDevice.Check(device.Vk.CreateImageView(device.Device, &viewInfo, null, out var imageView));
         ImageView = imageView;
+
+        // Set debug names via VK_EXT_debug_utils for GPU debugger visibility
+        device.SetDebugName(ObjectType.Image, Image.Handle, descriptor.DebugName);
+        if (!string.IsNullOrEmpty(descriptor.DebugName))
+            device.SetDebugName(ObjectType.ImageView, ImageView.Handle, descriptor.DebugName + "_view");
     }
 
     internal void TransitionLayout(CommandBuffer cmd, ImageLayout newLayout, uint baseMip, uint mipCount, uint baseLayer, uint layerCount)
@@ -226,7 +224,8 @@ internal unsafe class VKTexture : Texture
     {
         _device.Vk.DestroyImageView(_device.Device, ImageView, null);
         _device.Vk.DestroyImage(_device.Device, Image, null);
-        _device.Vk.FreeMemory(_device.Device, Memory, null);
+        var alloc = Allocation;
+        _device.MemoryAllocator.Free(in alloc);
     }
 
     private static ImageUsageFlags ToVkImageUsage(TextureUsage usage, TextureFormat format)
