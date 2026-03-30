@@ -121,7 +121,7 @@ public class EventDelegateContainer<T, TArgs> : EventDelegateContainer<T>, IInvo
 {
     public override Type ArgsType => typeof(TArgs);
 
-    private readonly Action<TArgs> eventDelegate;
+    private readonly Action<TArgs>? eventDelegate;
 
     public EventDelegateContainer(T eventType, Action<TArgs> eventDelegate, int priority = 0)
         : base(eventType, priority)
@@ -138,9 +138,57 @@ public class EventDelegateContainer<T, TArgs> : EventDelegateContainer<T>, IInvo
     }
 #endif
 
-    public void Invoke(TArgs args)
+    /// <summary>
+    /// Protected constructor for subclasses that provide their own invocation
+    /// logic and do not use the <see cref="eventDelegate"/> field.
+    /// </summary>
+    protected EventDelegateContainer(T eventType, int priority)
+        : base(eventType, priority)
+    {
+    }
+
+#if DEBUG
+    protected EventDelegateContainer(T eventType, int priority,
+        string? sourceFile, int sourceLine, string? sourceMember)
+        : base(eventType, priority, sourceFile, sourceLine, sourceMember)
+    {
+    }
+#endif
+
+    public virtual void Invoke(TArgs args)
     {
         if (!Enabled) return;
         eventDelegate?.Invoke(args);
+    }
+}
+
+/// <summary>
+/// Specialized container for parameterless events that stores an <see cref="Action"/>
+/// directly, avoiding the closure allocation that wrapping in an
+/// <see cref="Action{Unit}"/> would incur.
+/// </summary>
+public sealed class ParameterlessEventDelegateContainer<T> : EventDelegateContainer<T, Unit> where T : struct, Enum
+{
+    private readonly Action _action;
+
+    public ParameterlessEventDelegateContainer(T eventType, Action action, int priority = 0)
+        : base(eventType, priority)
+    {
+        _action = action;
+    }
+
+#if DEBUG
+    public ParameterlessEventDelegateContainer(T eventType, Action action, int priority,
+        string? sourceFile, int sourceLine, string? sourceMember)
+        : base(eventType, priority, sourceFile, sourceLine, sourceMember)
+    {
+        _action = action;
+    }
+#endif
+
+    public override void Invoke(Unit args)
+    {
+        if (!Enabled) return;
+        _action?.Invoke();
     }
 }

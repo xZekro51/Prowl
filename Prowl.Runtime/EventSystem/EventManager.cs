@@ -200,11 +200,24 @@ public class EventManager<T> : IDisposable where T : struct, Enum
 #endif
     )
     {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+
+        if (!EventArgsContract<T>.IsValid<Unit>(eventType))
+        {
+            throw new InvalidOperationException(
+                $"[EventSystem] Type mismatch on {typeof(T).Name}.{eventType}: " +
+                $"handler registered with 'Unit' (parameterless) but the event " +
+                $"declares '{EventArgsContract<T>.GetDeclaredName(eventType)}' " +
+                $"via [EventArgs]. Fix the subscriber's type parameter.");
+        }
+
 #if DEBUG
-        return AddNewDelegate<Unit>(eventType, _ => eventDelegate(), priority, sourceFile, sourceLine, sourceMember);
+        ParameterlessEventDelegateContainer<T> container = new(eventType, eventDelegate, priority, sourceFile, sourceLine, sourceMember);
 #else
-        return AddNewDelegate<Unit>(eventType, _ => eventDelegate(), priority);
+        ParameterlessEventDelegateContainer<T> container = new(eventType, eventDelegate, priority);
 #endif
+        GetOrCreateEvent(eventType).Add(container);
+        return container;
     }
 
 
