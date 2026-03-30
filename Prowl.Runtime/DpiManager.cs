@@ -4,6 +4,8 @@
 using System;
 using System.Runtime.InteropServices;
 
+using Prowl.Runtime.EventSystem;
+
 namespace Prowl.Runtime;
 
 /// <summary>
@@ -48,12 +50,13 @@ public static class DpiManager
     public static float BaseFontScale { get; private set; } = 1.0f;
 
     /// <summary>
-    /// Fired when the DPI scale changes at runtime (e.g., window dragged to a monitor
-    /// with a different Windows scaling setting).
-    /// Parameters: (<paramref name="oldScale"/>, <paramref name="newScale"/>).
+    /// Event manager for DPI change notifications.
+    /// Subscribe to <see cref="DpiEvents.OnDpiChanged"/> with priority ordering
+    /// and thread-safe dispatch.
+    /// Parameters: <see cref="DpiChangedArgs"/> with OldScale and NewScale.
     /// Always raised on the main thread.
     /// </summary>
-    public static event Action<float, float>? DpiChanged;
+    public static EventManager<DpiEvents> DpiEventManager { get; } = new();
 
     // ── Process DPI Awareness ────────────────────────────────────────
 
@@ -193,7 +196,7 @@ public static class DpiManager
 
         float oldCombined = Scale;
         MonitorScale = newScale;
-        DpiChanged?.Invoke(oldCombined, Scale);
+        DpiEventManager.InvokeEvent(DpiEvents.OnDpiChanged, new DpiChangedArgs(oldCombined, Scale));
     }
 
     // ── Win32 P/Invoke ───────────────────────────────────────────────

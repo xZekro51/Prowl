@@ -41,6 +41,8 @@ public abstract class Game
     private Paper _paper;
     protected int frameCounter;
 
+    private IDisposable? _dpiSubscription;
+
     private readonly WindowManager _windowManager = new();
     private IOverlayManager? _overlayManager;
     private readonly StringBuilder _titleBuilder = new();
@@ -291,7 +293,9 @@ public abstract class Game
             _overlayManager?.Initialize();
 
             // Subscribe to dynamic DPI changes
-            DpiManager.DpiChanged += OnDpiChangedInternal;
+            _dpiSubscription = DpiManager.DpiEventManager.AddNewDelegate<EventSystem.DpiChangedArgs>(
+                EventSystem.DpiEvents.OnDpiChanged,
+                args => OnDpiChangedInternal(args.OldScale, args.NewScale));
 
             // Register built-in profiler section descriptions
             BuiltInProfilerSections.Register();
@@ -459,7 +463,7 @@ public abstract class Game
         Debug.Log("[SetupWindowAndStart] Registering Closing handler...");
         Window.Closing += () =>
         {
-            DpiManager.DpiChanged -= OnDpiChangedInternal;
+            _dpiSubscription?.Dispose();
             Closing();
 
             _overlayManager?.Dispose();

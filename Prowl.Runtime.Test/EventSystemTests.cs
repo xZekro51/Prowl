@@ -536,6 +536,225 @@ public class EventSystemTests : IDisposable
 
     #endregion
 
+    #region Self-Removal During Invocation
+
+    [Fact]
+    public void SelfRemoval_DuringInvoke_DoesNotThrow()
+    {
+        var manager = CreateManager();
+        EventDelegateContainer<TestEvents, Unit>? selfRef = null;
+        int callCount = 0;
+
+        selfRef = manager.AddNewDelegate(TestEvents.EventA, () =>
+        {
+            callCount++;
+            // Self-remove while invocation is in progress
+            manager.RemoveDelegate(selfRef!);
+        });
+        manager.AddNewDelegate(TestEvents.EventA, () => callCount++, priority: 1);
+
+        var ex = Record.Exception(() => manager.InvokeEvent(TestEvents.EventA));
+
+        Assert.Null(ex);
+        // Both handlers should run because Invoke uses a snapshot
+        Assert.Equal(2, callCount);
+    }
+
+    [Fact]
+    public void RemoveOtherDelegate_DuringInvoke_DoesNotThrow()
+    {
+        var manager = CreateManager();
+        var order = new List<int>();
+
+        EventDelegateContainer<TestEvents, Unit>? secondRef = null;
+        manager.AddNewDelegate(TestEvents.EventA, () =>
+        {
+            order.Add(0);
+            // Remove the next handler while invocation is in progress
+            manager.RemoveDelegate(secondRef!);
+        }, priority: 0);
+        secondRef = manager.AddNewDelegate(TestEvents.EventA, () => order.Add(1), priority: 1);
+        manager.AddNewDelegate(TestEvents.EventA, () => order.Add(2), priority: 2);
+
+        var ex = Record.Exception(() => manager.InvokeEvent(TestEvents.EventA));
+
+        Assert.Null(ex);
+        // All three run — the snapshot was taken before handler 0 removed handler 1
+        Assert.Equal([0, 1, 2], order);
+    }
+
+    [Fact]
+    public void SelfRemoval_DuringInvoke_PreventsNextInvocation()
+    {
+        var manager = CreateManager();
+        int callCount = 0;
+        EventDelegateContainer<TestEvents, Unit>? selfRef = null;
+
+        selfRef = manager.AddNewDelegate(TestEvents.EventA, () =>
+        {
+            callCount++;
+            manager.RemoveDelegate(selfRef!);
+        });
+
+        manager.InvokeEvent(TestEvents.EventA);
+        Assert.Equal(1, callCount);
+
+        // Second invoke — delegate was removed, should not fire
+        manager.InvokeEvent(TestEvents.EventA);
+        Assert.Equal(1, callCount);
+    }
+
+    #endregion
+
+    #region Disposed Manager Behavior
+
+    [Fact]
+    public void DisposedManager_InvokeEvent_SilentlyNoOps()
+    {
+        var manager = CreateManager();
+        bool called = false;
+        manager.AddNewDelegate(TestEvents.EventA, () => called = true);
+
+        manager.Dispose();
+        _disposables.Remove(manager);
+
+        // InvokeEvent on a disposed manager should not throw and not fire
+        var ex = Record.Exception(() => manager.InvokeEvent(TestEvents.EventA));
+        Assert.Null(ex);
+        Assert.False(called);
+    }
+
+    [Fact]
+    public void DisposedManager_AddNewDelegate_Throws()
+    {
+        var manager = CreateManager();
+        manager.Dispose();
+        _disposables.Remove(manager);
+
+        Assert.Throws<ObjectDisposedException>(() =>
+            manager.AddNewDelegate(TestEvents.EventA, () => { }));
+    }
+
+    [Fact]
+    public void DisposedManager_AddNewDelegateTyped_Throws()
+    {
+        var manager = CreateManager();
+        manager.Dispose();
+        _disposables.Remove(manager);
+
+        Assert.Throws<ObjectDisposedException>(() =>
+            manager.AddNewDelegate<TestParam>(TestEvents.EventA, _ => { }));
+    }
+
+    #endregion
+
+    #region Global Invoke with Typed Parameters
+
+    [Fact]
+    public void GlobalInvokeEvent_WithTypedArgs_InvokesGlobalManagers()
+    {
+        var manager = CreateManager(global: true);
+        TestParam? received = null;
+        manager.AddNewDelegate<TestParam>(TestEvents.EventA, args => received = args);
+
+        var param = new TestParam { Data = 99 };
+        EventManager<TestEvents>.GlobalInvokeEvent(TestEvents.EventA, param);
+
+        Assert.NotNull(received);
+        Assert.Equal(99, received!.Data);
+    }
+
+    [Fact]
+    public void GlobalInvokeEvent_WithTypedArgs_SkipsNonGlobalManagers()
+    {
+        var manager = CreateManager(global: false);
+        TestParam? received = null;
+        manager.AddNewDelegate<TestParam>(TestEvents.EventA, args => received = args);
+
+        var param = new TestParam { Data = 77 };
+        EventManager<TestEvents>.GlobalInvokeEvent(TestEvents.EventA, param);
+
+        Assert.Null(received);
+    }
+
+    [Fact]
+    public void GlobalInvokeEvent_WithTypedArgs_MultipleManagers_AllReceive()
+    {
+        var mgr1 = CreateManager(global: true);
+        var mgr2 = CreateManager(global: true);
+        int received1 = 0;
+        int received2 = 0;
+        mgr1.AddNewDelegate<TestParam>(TestEvents.EventA, args => received1 = args.Data);
+        mgr2.AddNewDelegate<TestParam>(TestEvents.EventA, args => received2 = args.Data);
+
+        var param = new TestParam { Data = 55 };
+        EventManager<TestEvents>.GlobalInvokeEvent(TestEvents.EventA, param);
+
+        Assert.Equal(55, received1);
+        Assert.Equal(55, received2);
+    }
+
+    #endregion
+
+    #region Type-Mismatched Invocation
+
+    [Fact]
+    public void InvokeEvent_TypeMismatch_SilentlySkipsHandlers()
+    {
+        var manager = CreateManager();
+        bool called = false;
+        // Register a handler for TestParam
+        manager.AddNewDelegate<TestParam>(TestEvents.EventA, _ => called = true);
+
+        // Invoke with a completely different type — should silently skip
+        manager.InvokeEvent(TestEvents.EventA, 42);
+
+        Assert.False(called);
+    }
+
+    [Fact]
+    public void InvokeEvent_TypeMismatch_DoesNotThrow()
+    {
+        var manager = CreateManager();
+        manager.AddNewDelegate<TestParam>(TestEvents.EventA, _ => { });
+
+        var ex = Record.Exception(() => manager.InvokeEvent(TestEvents.EventA, "wrong type"));
+
+        Assert.Null(ex);
+    }
+
+    [Fact]
+    public void InvokeEvent_MixedTypes_OnlyMatchingHandlersCalled()
+    {
+        var manager = CreateManager();
+        bool intCalled = false;
+        bool stringCalled = false;
+        manager.AddNewDelegate<int>(TestEvents.EventA, _ => intCalled = true);
+        manager.AddNewDelegate<string>(TestEvents.EventA, _ => stringCalled = true);
+
+        manager.InvokeEvent(TestEvents.EventA, 42);
+
+        Assert.True(intCalled);
+        Assert.False(stringCalled);
+    }
+
+    [Fact]
+    public void InvokeEvent_ParameterlessInvoke_DoesNotTriggerTypedHandlers()
+    {
+        var manager = CreateManager();
+        bool typedCalled = false;
+        bool parameterlessCalled = false;
+        manager.AddNewDelegate<TestParam>(TestEvents.EventA, _ => typedCalled = true);
+        manager.AddNewDelegate(TestEvents.EventA, () => parameterlessCalled = true);
+
+        manager.InvokeEvent(TestEvents.EventA);
+
+        Assert.False(typedCalled);
+        Assert.True(parameterlessCalled);
+    }
+
+    #endregion
+
     /// <summary>
     /// Test event argument class used by typed-args tests.
     /// </summary>

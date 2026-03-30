@@ -5,6 +5,7 @@ using System;
 using System.Collections.Generic;
 
 using Prowl.PaperUI;
+using Prowl.Runtime.EventSystem;
 using Prowl.Runtime.Resources;
 
 namespace Prowl.Runtime;
@@ -36,6 +37,14 @@ public static class SceneManager
     private static Scene[] s_snapshot = [];
     private static bool s_snapshotDirty = true;
 
+    /// <summary>
+    /// Event manager for scene lifecycle notifications.
+    /// Subscribe to <see cref="SceneManagerEvents.OnSceneLoaded"/> and
+    /// <see cref="SceneManagerEvents.OnSceneUnloaded"/> with priority ordering
+    /// and thread-safe dispatch.
+    /// </summary>
+    public static EventManager<SceneManagerEvents> SceneEventManager { get; } = new();
+
     private static Scene[] GetSnapshot()
     {
         if (s_snapshotDirty)
@@ -50,16 +59,6 @@ public static class SceneManager
     }
 
     private static void InvalidateSnapshot() => s_snapshotDirty = true;
-
-    /// <summary>
-    /// Raised after a scene is loaded additively via <see cref="LoadSceneAdditive"/>.
-    /// </summary>
-    public static event Action<Scene>? SceneLoaded;
-
-    /// <summary>
-    /// Raised after a scene is unloaded via <see cref="UnloadScene"/>.
-    /// </summary>
-    public static event Action<Scene>? SceneUnloaded;
 
     /// <summary>
     /// The primary active scene. New GameObjects are added to this scene by default.
@@ -121,7 +120,7 @@ public static class SceneManager
         if (Scene.Current == null)
             Scene.SetCurrentDirect(scene);
 
-        SceneLoaded?.Invoke(scene);
+        SceneEventManager.InvokeEvent(SceneManagerEvents.OnSceneLoaded, new SceneEventArgs(scene));
         Debug.Log($"[SceneManager] Additively loaded scene: {scene.Name ?? "(unnamed)"}");
     }
 
@@ -159,7 +158,7 @@ public static class SceneManager
             }
         }
 
-        SceneUnloaded?.Invoke(scene);
+        SceneEventManager.InvokeEvent(SceneManagerEvents.OnSceneUnloaded, new SceneEventArgs(scene));
         Debug.Log($"[SceneManager] Unloaded scene: {scene.Name ?? "(unnamed)"}");
         return true;
     }

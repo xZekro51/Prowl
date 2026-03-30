@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Runtime.CompilerServices;
 
 namespace Prowl.Runtime.EventSystem;
 
@@ -131,7 +132,7 @@ public class EventManager<T> : IDisposable where T : struct, Enum
     /// </summary>
     public void InvokeEvent<TArgs>(T eventType, TArgs args)
     {
-        if (!Enabled) return;
+        if (_disposed || !Enabled) return;
         if (_events.TryGetValue(eventType, out var evt))
             evt.Invoke(args);
     }
@@ -147,9 +148,21 @@ public class EventManager<T> : IDisposable where T : struct, Enum
     /// <summary>
     /// Register a typed delegate for an event.
     /// </summary>
-    public EventDelegateContainer<T, TArgs> AddNewDelegate<TArgs>(T eventType, Action<TArgs> eventDelegate, int priority = 0)
+    public EventDelegateContainer<T, TArgs> AddNewDelegate<TArgs>(
+        T eventType, Action<TArgs> eventDelegate, int priority = 0,
+#if DEBUG
+        [CallerFilePath] string? sourceFile = null,
+        [CallerLineNumber] int sourceLine = 0,
+        [CallerMemberName] string? sourceMember = null
+#endif
+    )
     {
-        EventDelegateContainer<T, TArgs> container = new EventDelegateContainer<T, TArgs>(eventType, eventDelegate, priority);
+        ObjectDisposedException.ThrowIf(_disposed, this);
+#if DEBUG
+        EventDelegateContainer<T, TArgs> container = new(eventType, eventDelegate, priority, sourceFile, sourceLine, sourceMember);
+#else
+        EventDelegateContainer<T, TArgs> container = new(eventType, eventDelegate, priority);
+#endif
         _events[eventType].Add(container);
         return container;
     }
@@ -157,9 +170,20 @@ public class EventManager<T> : IDisposable where T : struct, Enum
     /// <summary>
     /// Register a parameterless delegate for an event.
     /// </summary>
-    public EventDelegateContainer<T, Unit> AddNewDelegate(T eventType, Action eventDelegate, int priority = 0)
+    public EventDelegateContainer<T, Unit> AddNewDelegate(
+        T eventType, Action eventDelegate, int priority = 0,
+#if DEBUG
+        [CallerFilePath] string? sourceFile = null,
+        [CallerLineNumber] int sourceLine = 0,
+        [CallerMemberName] string? sourceMember = null
+#endif
+    )
     {
+#if DEBUG
+        return AddNewDelegate<Unit>(eventType, _ => eventDelegate(), priority, sourceFile, sourceLine, sourceMember);
+#else
         return AddNewDelegate<Unit>(eventType, _ => eventDelegate(), priority);
+#endif
     }
 
 
@@ -194,6 +218,10 @@ public class EventManager<T> : IDisposable where T : struct, Enum
     {
         if (_disposed) return;
         _disposed = true;
+        enabled = false;
+        foreach (var evt in _events.Values)
+            evt.Enabled = false;
+        _events.Clear();
         lock (s_instancesLock)
         {
             s_instances.Remove(this);
