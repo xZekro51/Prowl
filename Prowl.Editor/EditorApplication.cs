@@ -281,6 +281,9 @@ public sealed class EditorApplication : Game
         // Register ProjectPanel so other panels can find it for cross-panel features
         EditorServices.Register<ProjectPanel>(_projectPanel);
 
+        // Wire up OS file explorer drag-and-drop to import assets into the project
+        Window.FileDrop += OnExternalFileDrop;
+
         // Menu bar panel toggles
         _menuBar.OnToggleHierarchy = () => _hierarchyPanel.IsOpen = !_hierarchyPanel.IsOpen;
         _menuBar.OnToggleInspector = () => _inspectorPanel.IsOpen = !_inspectorPanel.IsOpen;
@@ -949,6 +952,91 @@ public sealed class EditorApplication : Game
         EditorConsoleLogger.Shutdown();
         EditorServices.Clear();
         Debug.Log("Editor shutting down.");
+    }
+
+    // ── OS File Drop Import ─────────────────────────────────────────
+
+    /// <summary>
+    /// Handles files dropped from the OS file explorer onto the editor window.
+    /// Copies them into the currently selected project folder (or the Assets root)
+    /// and refreshes the asset database.
+    /// </summary>
+    private void OnExternalFileDrop(string[] files)
+    {
+        if (files == null || files.Length == 0) return;
+        if (!EditorServices.TryGet<IAssetService>(out var assets) || !assets!.HasProject) return;
+
+        // Determine the target folder: use the project panel's selected folder, or root
+        string targetRelDir = ".";
+        if (_projectPanel != null)
+            targetRelDir = _projectPanel.SelectedFolder;
+
+        string targetAbsDir = assets.GetAbsolutePath(targetRelDir);
+        if (!Directory.Exists(targetAbsDir))
+            Directory.CreateDirectory(targetAbsDir);
+
+        var importedPaths = new List<string>();
+        foreach (string srcPath in files)
+        {
+            try
+            {
+                if (File.Exists(srcPath))
+                {
+                    string destPath = Path.Combine(targetAbsDir, Path.GetFileName(srcPath));
+                    destPath = GetUniqueImportPath(destPath);
+                    File.Copy(srcPath, destPath);
+                    importedPaths.Add(Path.GetRelativePath(assets.AssetRootPath, destPath).Replace('\\', '/'));
+                    Debug.Log($"[Import] Imported file: {Path.GetFileName(srcPath)}");
+                }
+                else if (Directory.Exists(srcPath))
+                {
+                    string destDir = Path.Combine(targetAbsDir, Path.GetFileName(srcPath));
+                    destDir = GetUniqueImportPath(destDir);
+                    CopyDirectoryRecursiveForImport(srcPath, destDir);
+                    importedPaths.Add(Path.GetRelativePath(assets.AssetRootPath, destDir).Replace('\\', '/'));
+                    Debug.Log($"[Import] Imported folder: {Path.GetFileName(srcPath)}");
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"[Import] Failed to import '{Path.GetFileName(srcPath)}': {ex.Message}");
+            }
+        }
+
+        if (importedPaths.Count > 0)
+        {
+            assets.Refresh();
+            Game.AssetEventManager.InvokeEvent(
+                Runtime.EventSystem.AssetEvents.OnAssetsImported,
+                new Runtime.EventSystem.AssetImportedArgs([.. importedPaths]));
+            Debug.LogSuccess($"[Import] Successfully imported {importedPaths.Count} item(s) into {(targetRelDir == "." ? "Assets/" : $"Assets/{targetRelDir}/")}");
+        }
+    }
+
+    private static string GetUniqueImportPath(string path)
+    {
+        if (!File.Exists(path) && !Directory.Exists(path))
+            return path;
+
+        string dir = Path.GetDirectoryName(path) ?? ".";
+        string nameNoExt = Path.GetFileNameWithoutExtension(path);
+        string ext = Path.GetExtension(path);
+
+        for (int i = 1; ; i++)
+        {
+            string candidate = Path.Combine(dir, $"{nameNoExt} ({i}){ext}");
+            if (!File.Exists(candidate) && !Directory.Exists(candidate))
+                return candidate;
+        }
+    }
+
+    private static void CopyDirectoryRecursiveForImport(string sourceDir, string destDir)
+    {
+        Directory.CreateDirectory(destDir);
+        foreach (string file in Directory.GetFiles(sourceDir))
+            File.Copy(file, Path.Combine(destDir, Path.GetFileName(file)));
+        foreach (string subDir in Directory.GetDirectories(sourceDir))
+            CopyDirectoryRecursiveForImport(subDir, Path.Combine(destDir, Path.GetFileName(subDir)));
     }
 
     /// <summary>

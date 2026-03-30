@@ -93,6 +93,26 @@ public abstract class Game
 
     public static EventSystem.EventManager<EventSystem.BaseEvents> BaseEventManager { get; } = new();
 
+    /// <summary>
+    /// Event manager for game loop lifecycle events (initialize, frame begin/end, closing).
+    /// </summary>
+    public static EventSystem.EventManager<EventSystem.GameLoopEvents> GameLoopEventManager { get; } = new(global: true);
+
+    /// <summary>
+    /// Event manager for rendering pipeline events.
+    /// </summary>
+    public static EventSystem.EventManager<EventSystem.RenderingEvents> RenderingEventManager { get; } = new(global: true);
+
+    /// <summary>
+    /// Event manager for physics simulation events.
+    /// </summary>
+    public static EventSystem.EventManager<EventSystem.PhysicsEvents> PhysicsEventManager { get; } = new(global: true);
+
+    /// <summary>
+    /// Event manager for asset system events (import, delete, refresh).
+    /// </summary>
+    public static EventSystem.EventManager<EventSystem.AssetEvents> AssetEventManager { get; } = new(global: true);
+
     public string WindowTitle => _title;
 
     private string _title; 
@@ -124,6 +144,8 @@ public abstract class Game
         try
         {
             Profiler.BeginFrame();
+
+            GameLoopEventManager.InvokeEvent(EventSystem.GameLoopEvents.OnFrameBegin);
 
             using (Profiler.Section("Input"))
             {
@@ -184,6 +206,8 @@ public abstract class Game
 
             using (Profiler.Section("EndUpdate"))
                 EndUpdate();
+
+            GameLoopEventManager.InvokeEvent(EventSystem.GameLoopEvents.OnFrameEnd);
 
             if (frameCounter++ % 60 == 0)
             {
@@ -301,6 +325,8 @@ public abstract class Game
             BuiltInProfilerSections.Register();
 
             Initialize();
+
+            GameLoopEventManager.InvokeEvent(EventSystem.GameLoopEvents.OnInitialized);
         };
 
         Debug.Log("[SetupWindowAndStart] Registering Update handler...");
@@ -345,14 +371,20 @@ public abstract class Game
                         Rendering.ShadowAtlas.Clear();
                     }
 
+                    RenderingEventManager.InvokeEvent(EventSystem.RenderingEvents.OnShadowsReady);
+
                     using (Profiler.Section("BeginRender"))
                         BeginRender();
+
+                    RenderingEventManager.InvokeEvent(EventSystem.RenderingEvents.OnBeginRender);
 
                     using (Profiler.Section("RenderScenes"))
                         RenderScenes();
 
                     using (Profiler.Section("EndRender"))
                         EndRender();
+
+                    RenderingEventManager.InvokeEvent(EventSystem.RenderingEvents.OnEndRender);
                 }
                 catch (Exception e)
                 {
@@ -435,6 +467,8 @@ public abstract class Game
                 Debug.ClearGizmos();
 
                 Profiler.EndFrame();
+
+                GameLoopEventManager.InvokeEvent(EventSystem.GameLoopEvents.OnRenderComplete);
             }
             catch (Exception e)
             {
@@ -463,6 +497,8 @@ public abstract class Game
         Debug.Log("[SetupWindowAndStart] Registering Closing handler...");
         Window.Closing += () =>
         {
+            GameLoopEventManager.InvokeEvent(EventSystem.GameLoopEvents.OnClosing);
+
             _dpiSubscription?.Dispose();
             Closing();
 

@@ -9,6 +9,7 @@ using Jitter2.Collision;
 using Jitter2.Collision.Shapes;
 using Jitter2.LinearMath;
 
+using Prowl.Runtime.EventSystem;
 using Prowl.Vector;
 
 namespace Prowl.Runtime;
@@ -96,11 +97,13 @@ public class PhysicsWorld
     private void OnPreStep(float deltaTime)
     {
         PreStep?.Invoke(deltaTime);
+        Game.PhysicsEventManager.InvokeEvent(PhysicsEvents.OnPrePhysicsStep, new PhysicsStepArgs(deltaTime));
     }
 
     private void OnPostStep(float deltaTime)
     {
         PostStep?.Invoke(deltaTime);
+        Game.PhysicsEventManager.InvokeEvent(PhysicsEvents.OnPostPhysicsStep, new PhysicsStepArgs(deltaTime));
     }
 
     public void Clear()

@@ -89,5 +89,49 @@ public static class BuiltInProfilerSections
             "UI",
             "Dear ImGui overlay frame: editor panels, docking, menus, " +
             "and the full editor chrome.");
+
+        // ── Physics detail ───────────────────────────────────
+        Profiler.RegisterSection("PhysicsStep",
+            "Physics",
+            "A single physics world step including constraint solving, " +
+            "broadphase/narrowphase collision detection, and integration.");
+
+        Profiler.RegisterSection("PhysicsSyncTransforms",
+            "Physics",
+            "Synchronizes Jitter2 rigid body transforms back to " +
+            "the engine's Transform components after the physics step.");
+
+        // ── Scene management ─────────────────────────────────
+        Profiler.RegisterSection("SceneLoad",
+            "Core",
+            "Deserializes and initializes a scene from disk, including " +
+            "asset reference resolution and component instantiation.");
+
+        Profiler.RegisterSection("SceneUnload",
+            "Core",
+            "Tears down a scene: disposes GameObjects and components, " +
+            "releases held resources.");
+
+        // ── Asset pipeline ───────────────────────────────────
+        Profiler.RegisterSection("AssetImport",
+            "Core",
+            "Imports external files into the project asset database: " +
+            "copies files, generates .meta entries, and triggers refresh.");
+
+        Profiler.RegisterSection("AssetRefresh",
+            "Core",
+            "Re-scans the asset folder to detect new, modified, or " +
+            "deleted files and updates the in-memory asset database.");
+
+        // ── Script compilation ───────────────────────────────
+        Profiler.RegisterSection("ScriptCompile",
+            "Scripts",
+            "Compiles user C# scripts into a hot-reloadable assembly " +
+            "using the Roslyn compiler.");
+
+        Profiler.RegisterSection("ScriptReload",
+            "Scripts",
+            "Loads the freshly compiled script assembly and resolves " +
+            "previously-missing MonoBehaviour components.");
     }
 }

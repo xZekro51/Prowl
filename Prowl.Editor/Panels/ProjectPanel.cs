@@ -32,6 +32,12 @@ public sealed class ProjectPanel : EditorPanel
     private string? _renamingPath;
     private bool _renameNeedsFocus;
 
+    /// <summary>
+    /// The currently selected folder in the project tree (relative path).
+    /// Used by external systems (e.g. OS file drop import) to determine the target folder.
+    /// </summary>
+    public string SelectedFolder => _selectedFolder ?? ".";
+
     // Deferred selection: wait for mouse release so drags don't trigger inspector switch
     private string? _pendingSelectPath;
     private bool _dragOccurred;
