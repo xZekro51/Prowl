@@ -145,7 +145,8 @@ public abstract class Game
         {
             Profiler.BeginFrame();
 
-            GameLoopEventManager.InvokeEvent(EventSystem.GameLoopEvents.OnFrameBegin);
+            GameLoopEventManager.InvokeEvent(EventSystem.GameLoopEvents.OnFrameBegin,
+                new EventSystem.FrameBeginArgs(frameCounter, delta));
 
             using (Profiler.Section("Input"))
             {
@@ -207,7 +208,12 @@ public abstract class Game
             using (Profiler.Section("EndUpdate"))
                 EndUpdate();
 
-            GameLoopEventManager.InvokeEvent(EventSystem.GameLoopEvents.OnFrameEnd);
+            GameLoopEventManager.InvokeEvent(EventSystem.GameLoopEvents.OnFrameEnd,
+                new EventSystem.FrameEndArgs(
+                    frameCounter,
+                    time.DeltaTime,
+                    time.UnscaledDeltaTime,
+                    time.Time));
 
             if (frameCounter++ % 60 == 0)
             {
@@ -326,7 +332,12 @@ public abstract class Game
 
             Initialize();
 
-            GameLoopEventManager.InvokeEvent(EventSystem.GameLoopEvents.OnInitialized);
+            GameLoopEventManager.InvokeEvent(EventSystem.GameLoopEvents.OnInitialized,
+                new EventSystem.InitializedArgs(
+                    backend,
+                    Graphics.IsGraphiteReady ? Graphics.Graphite.BackendName : backend.ToString(),
+                    scaledW,
+                    scaledH));
         };
 
         Debug.Log("[SetupWindowAndStart] Registering Update handler...");
@@ -468,7 +479,8 @@ public abstract class Game
 
                 Profiler.EndFrame();
 
-                GameLoopEventManager.InvokeEvent(EventSystem.GameLoopEvents.OnRenderComplete);
+                GameLoopEventManager.InvokeEvent(EventSystem.GameLoopEvents.OnRenderComplete,
+                    new EventSystem.RenderCompleteArgs(frameCounter, delta));
             }
             catch (Exception e)
             {
@@ -497,7 +509,8 @@ public abstract class Game
         Debug.Log("[SetupWindowAndStart] Registering Closing handler...");
         Window.Closing += () =>
         {
-            GameLoopEventManager.InvokeEvent(EventSystem.GameLoopEvents.OnClosing);
+            GameLoopEventManager.InvokeEvent(EventSystem.GameLoopEvents.OnClosing,
+                new EventSystem.ClosingArgs(Time.TimeSinceStartup, Time.FrameCount));
 
             _dpiSubscription?.Dispose();
             Closing();
