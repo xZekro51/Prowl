@@ -1,0 +1,76 @@
+// This file is part of the Prowl Game Engine
+// Licensed under the MIT License. See the LICENSE file in the project root for details.
+
+using System;
+
+namespace Prowl.Runtime.EventSystem;
+
+/// <summary>
+/// Lightweight accessor for a parameterless event slot.
+/// Supports <c>+=</c> / <c>-=</c> for subscribe/unsubscribe and
+/// <see cref="Invoke"/> for firing the event.
+/// </summary>
+/// <remarks>
+/// This is a <see langword="readonly struct"/> returned by generated event
+/// properties. The no-op setter on the property allows
+/// <c>Domain.OnFoo += handler</c> to compile (expands to
+/// <c>Domain.OnFoo = Domain.OnFoo + handler</c>).
+/// </remarks>
+public readonly struct EventAccessor<TEnum> where TEnum : struct, Enum
+{
+    private readonly EventManager<TEnum> _manager;
+    private readonly TEnum _eventType;
+
+    public EventAccessor(EventManager<TEnum> manager, TEnum eventType)
+    {
+        _manager = manager;
+        _eventType = eventType;
+    }
+
+    /// <summary>Fire the parameterless event.</summary>
+    public void Invoke() => _manager.InvokeEvent(_eventType);
+
+    public static EventAccessor<TEnum> operator +(EventAccessor<TEnum> accessor, Action handler)
+    {
+        accessor._manager.AddNewDelegate(accessor._eventType, handler, 0);
+        return accessor;
+    }
+
+    public static EventAccessor<TEnum> operator -(EventAccessor<TEnum> accessor, Action handler)
+    {
+        accessor._manager.RemoveDelegate(accessor._eventType, handler);
+        return accessor;
+    }
+}
+
+/// <summary>
+/// Lightweight accessor for a typed event slot.
+/// Supports <c>+=</c> / <c>-=</c> for subscribe/unsubscribe and
+/// <see cref="Invoke"/> for firing the event with arguments.
+/// </summary>
+public readonly struct EventAccessor<TEnum, TArgs> where TEnum : struct, Enum
+{
+    private readonly EventManager<TEnum> _manager;
+    private readonly TEnum _eventType;
+
+    public EventAccessor(EventManager<TEnum> manager, TEnum eventType)
+    {
+        _manager = manager;
+        _eventType = eventType;
+    }
+
+    /// <summary>Fire the event with the given arguments.</summary>
+    public void Invoke(TArgs args) => _manager.InvokeEvent<TArgs>(_eventType, args);
+
+    public static EventAccessor<TEnum, TArgs> operator +(EventAccessor<TEnum, TArgs> accessor, Action<TArgs> handler)
+    {
+        accessor._manager.AddNewDelegate<TArgs>(accessor._eventType, handler, 0);
+        return accessor;
+    }
+
+    public static EventAccessor<TEnum, TArgs> operator -(EventAccessor<TEnum, TArgs> accessor, Action<TArgs> handler)
+    {
+        accessor._manager.RemoveDelegate(accessor._eventType, handler);
+        return accessor;
+    }
+}

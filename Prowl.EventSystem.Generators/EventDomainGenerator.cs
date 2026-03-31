@@ -302,27 +302,27 @@ public class EventDomainGenerator : IIncrementalGenerator
         sb.AppendLine($"{ci}public{memberStatic} global::Prowl.Runtime.EventSystem.EventManager<EventTypes> Manager => {managerField};");
         sb.AppendLine();
 
-        // --- Generate event declarations for += / -= subscription syntax ---
+        // --- Generate event accessor properties for += / -= subscription and .Invoke() ---
         foreach (var evt in domain.Events)
         {
             string argsType = evt.ArgsTypeFqn;
 
             if (evt.IsUnit)
             {
-                sb.AppendLine($"{ci}/// <summary>Subscribe to <see cref=\"EventTypes.{evt.Name}\"/> using += / -=. For priority control or IDisposable, use <see cref=\"Subscribe{evt.Name}\"/>.</summary>");
-                sb.AppendLine($"{ci}public{memberStatic} event global::System.Action {evt.Name}");
+                sb.AppendLine($"{ci}/// <summary>Access <see cref=\"EventTypes.{evt.Name}\"/> using += / -= to subscribe, or .Invoke() to fire. For priority control or IDisposable, use <see cref=\"Subscribe{evt.Name}\"/>.</summary>");
+                sb.AppendLine($"{ci}public{memberStatic} global::Prowl.Runtime.EventSystem.EventAccessor<EventTypes> {evt.Name}");
                 sb.AppendLine($"{ci}{{");
-                sb.AppendLine($"{ci}    add => {managerField}.AddNewDelegate(EventTypes.{evt.Name}, value, 0);");
-                sb.AppendLine($"{ci}    remove => {managerField}.RemoveDelegate(EventTypes.{evt.Name}, value);");
+                sb.AppendLine($"{ci}    get => new({managerField}, EventTypes.{evt.Name});");
+                sb.AppendLine($"{ci}    set {{ }}");
                 sb.AppendLine($"{ci}}}");
             }
             else
             {
-                sb.AppendLine($"{ci}/// <summary>Subscribe to <see cref=\"EventTypes.{evt.Name}\"/> using += / -=. For priority control or IDisposable, use <see cref=\"Subscribe{evt.Name}\"/>.</summary>");
-                sb.AppendLine($"{ci}public{memberStatic} event global::System.Action<{argsType}> {evt.Name}");
+                sb.AppendLine($"{ci}/// <summary>Access <see cref=\"EventTypes.{evt.Name}\"/> using += / -= to subscribe, or .Invoke({argsType}) to fire. For priority control or IDisposable, use <see cref=\"Subscribe{evt.Name}\"/>.</summary>");
+                sb.AppendLine($"{ci}public{memberStatic} global::Prowl.Runtime.EventSystem.EventAccessor<EventTypes, {argsType}> {evt.Name}");
                 sb.AppendLine($"{ci}{{");
-                sb.AppendLine($"{ci}    add => {managerField}.AddNewDelegate<{argsType}>(EventTypes.{evt.Name}, value, 0);");
-                sb.AppendLine($"{ci}    remove => {managerField}.RemoveDelegate(EventTypes.{evt.Name}, value);");
+                sb.AppendLine($"{ci}    get => new({managerField}, EventTypes.{evt.Name});");
+                sb.AppendLine($"{ci}    set {{ }}");
                 sb.AppendLine($"{ci}}}");
             }
         }

@@ -363,6 +363,66 @@ public class EventDomainGeneratorTests : IDisposable
 
     #endregion
 
+    #region .Invoke() syntax via EventAccessor
+
+    [Fact]
+    public void Invoke_Parameterless_FiresSubscribers()
+    {
+        bool called = false;
+        Action handler = () => called = true;
+        SimpleTestDomain.OnFoo += handler;
+
+        SimpleTestDomain.OnFoo.Invoke();
+        Assert.True(called);
+
+        SimpleTestDomain.OnFoo -= handler;
+    }
+
+    [Fact]
+    public void Invoke_Typed_FiresSubscribersWithArgs()
+    {
+        TypedTestDomain.PointArgs? received = null;
+        Action<TypedTestDomain.PointArgs> handler = args => received = args;
+        TypedTestDomain.OnPointMoved += handler;
+
+        TypedTestDomain.OnPointMoved.Invoke(new TypedTestDomain.PointArgs(42, 99));
+        Assert.NotNull(received);
+        Assert.Equal(42, received!.Value.X);
+        Assert.Equal(99, received!.Value.Y);
+
+        TypedTestDomain.OnPointMoved -= handler;
+    }
+
+    [Fact]
+    public void Invoke_InstanceDomain_FiresOnCorrectInstance()
+    {
+        using var a = new InstanceTestDomain();
+        using var b = new InstanceTestDomain();
+        bool aCalled = false;
+        bool bCalled = false;
+        a.OnPing += () => aCalled = true;
+        b.OnPing += () => bCalled = true;
+
+        a.OnPing.Invoke();
+
+        Assert.True(aCalled);
+        Assert.False(bCalled);
+    }
+
+    [Fact]
+    public void Invoke_InstanceDomain_Typed_FiresWithArgs()
+    {
+        using var domain = new InstanceTestDomain();
+        InstanceTestDomain.HitArgs? received = null;
+        domain.OnHit += (args) => received = args;
+
+        domain.OnHit.Invoke(new InstanceTestDomain.HitArgs(50));
+        Assert.NotNull(received);
+        Assert.Equal(50, received!.Value.Damage);
+    }
+
+    #endregion
+
     #region Instance domain — basic subscribe & invoke
 
     [Fact]
