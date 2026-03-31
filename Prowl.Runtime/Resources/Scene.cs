@@ -613,7 +613,15 @@ public class Scene : EngineObject, ISerializationCallbackReceiver
 
     public void OnBeforeSerialize()
     {
-        serializeObj = [.. AllObjects];
+        // Only persist saveable root objects. Children are already serialized
+        // recursively inside each root's GameObject.Serialize() (the "Children"
+        // list), so including them here would duplicate every child in the file.
+        // SaveableObjects filters out DontSave / HideAndDontSave objects;
+        // RootObjects filters to objects with no parent.
+        serializeObj = [.. _allObj.Where(o => !o.IsDisposed
+            && o.Transform.Parent == null
+            && !o.HideFlags.HasFlag(HideFlags.DontSave)
+            && !o.HideFlags.HasFlag(HideFlags.HideAndDontSave))];
     }
 
     public void OnAfterDeserialize()
