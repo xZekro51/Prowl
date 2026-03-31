@@ -639,28 +639,32 @@ public class LifecycleTests : IDisposable
     }
 
     /// <summary>
-    /// Additional test: Scene not double-enabled
-    /// Expected: Throws exception when enabling already enabled scene
+    /// Additional test: Scene double-enable is idempotent
+    /// Expected: No exception, Enable is a no-op on already enabled scene
     /// </summary>
     [Fact]
-    public void EnablingAlreadyEnabledScene_ThrowsException()
+    public void EnablingAlreadyEnabledScene_IsIdempotent()
     {
         var scene = CreateScene();
         scene.Enable();
 
-        Assert.Throws<Exception>(() => scene.Enable());
+        // Should not throw — idempotent
+        scene.Enable();
+        Assert.True(scene.IsActive);
     }
 
     /// <summary>
-    /// Additional test: Scene not double-disabled
-    /// Expected: Throws exception when disabling already disabled scene
+    /// Additional test: Scene double-disable is idempotent
+    /// Expected: No exception, Disable is a no-op on already disabled scene
     /// </summary>
     [Fact]
-    public void DisablingAlreadyDisabledScene_ThrowsException()
+    public void DisablingAlreadyDisabledScene_IsIdempotent()
     {
         var scene = CreateScene();
 
-        Assert.Throws<Exception>(() => scene.Disable());
+        // Should not throw — idempotent
+        scene.Disable();
+        Assert.False(scene.IsActive);
     }
 
     /// <summary>

@@ -10,6 +10,7 @@ using Prowl.Runtime.Rendering;
 using Prowl.Runtime.Rendering.Shaders;
 using Prowl.Runtime.Resources;
 using Prowl.Editor.Icons;
+using Prowl.Editor.Importing;
 using Prowl.Editor.Services;
 
 namespace Prowl.Editor.Inspector;
@@ -589,11 +590,9 @@ public static class MaterialInspector
     {
         try
         {
-            if (File.Exists(filePath))
+            var newTex = Importing.TextureImporter.Import(filePath);
+            if (newTex != null)
             {
-                var newTex = Texture2D.LoadFromFile(filePath, generateMipmaps: true);
-                newTex.Name = Path.GetFileNameWithoutExtension(filePath);
-                newTex.AssetPath = filePath;
                 material.SetTexture(propName, newTex);
             }
         }

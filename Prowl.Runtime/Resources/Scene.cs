@@ -58,13 +58,37 @@ public class Scene : EngineObject, ISerializationCallbackReceiver
         // Disable and dispose the current scene if one exists
         if (oldScene != null)
         {
-            if (oldScene.IsActive)
-                oldScene.Disable();
-            oldScene.Dispose();
+            try
+            {
+                if (oldScene.IsActive)
+                    oldScene.Disable();
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"[Scene] Error disabling previous scene: {ex.Message}");
+            }
+
+            try
+            {
+                oldScene.Dispose();
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"[Scene] Error disposing previous scene: {ex.Message}");
+            }
         }
 
         Current = scene;
-        Current.Enable();
+
+        try
+        {
+            if (!scene.IsActive)
+                Current.Enable();
+        }
+        catch (Exception ex)
+        {
+            Debug.LogError($"[Scene] Error enabling new scene: {ex.Message}");
+        }
 
         // Keep SceneManager in sync
         SceneManager.OnPrimarySceneLoaded(oldScene, scene);
@@ -231,7 +255,11 @@ public class Scene : EngineObject, ISerializationCallbackReceiver
     /// </summary>
     public void Enable()
     {
-        if (_isActive) throw new Exception("Scene is already enabled!");
+        if (_isActive)
+        {
+            Debug.LogWarning("[Scene] Enable() called on an already-enabled scene — skipping.");
+            return;
+        }
 
         _isActive = true;
 
@@ -271,7 +299,11 @@ public class Scene : EngineObject, ISerializationCallbackReceiver
     /// </summary>
     public void Disable()
     {
-        if (!_isActive) throw new Exception("Scene is not enabled!");
+        if (!_isActive)
+        {
+            Debug.LogWarning("[Scene] Disable() called on an already-disabled scene — skipping.");
+            return;
+        }
 
         // Create a copy to avoid collection modification during enumeration
         List<GameObject> allObjectsCopy = [.. AllObjects];

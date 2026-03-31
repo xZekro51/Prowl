@@ -123,7 +123,7 @@ public sealed class InspectorPanel : EditorPanel
             var cursorPos = ImGui.GetCursorScreenPos();
             float iconSz = ImGui.GetTextLineHeight();
             ImGui.Dummy(new Vector2(iconSz * 2, iconSz*2));
-            icon.Draw(cursorPos, iconSz * 2);
+            icon.Draw(cursorPos - new Vector2(0,10), iconSz * 2);
             ImGui.SameLine();
         }
         DrawFieldRow("Name", () =>
@@ -1116,6 +1116,15 @@ public sealed class InspectorPanel : EditorPanel
             string path = entry.FullPath;
             string ext = entry.Extension.ToLowerInvariant();
 
+            // Texture2D field: load via TextureImporter with import settings
+            if (fieldType == typeof(Texture2D))
+            {
+                if (Importing.TextureImporter.IsTextureFile(ext) && File.Exists(path))
+                {
+                    return Importing.TextureImporter.Import(path);
+                }
+            }
+
             // Mesh field: load via ModelImporter, return the first mesh
             if (fieldType == typeof(Prowl.Runtime.Resources.Mesh))
             {
@@ -1319,7 +1328,7 @@ public sealed class InspectorPanel : EditorPanel
         // Reserve space for the icon and draw it
         var cursorPos = ImGui.GetCursorScreenPos();
         ImGui.Dummy(new Vector2(40, 32));
-        icon.Draw(cursorPos, 40f);
+        icon.Draw(cursorPos - new Vector2(0, 10), 40f);
         ImGui.SameLine();
 
         ImGui.BeginGroup();
@@ -1500,6 +1509,10 @@ public sealed class InspectorPanel : EditorPanel
         }
     }
 
+    // ── Texture import settings editing state ────────────────
+    private static Importing.TextureImportSettings? _texImportSettings;
+    private static string? _texImportSettingsPath;
+
     private static void DrawTextureAssetInfo(AssetEntry asset)
     {
         if (!ImGui.CollapsingHeader("Texture", ImGuiTreeNodeFlags.DefaultOpen))
@@ -1518,6 +1531,119 @@ public sealed class InspectorPanel : EditorPanel
             {
                 ImGui.TextDisabled("(unable to read image metadata)");
             }
+        }
+
+        // ── Import Settings ──
+        if (!ImGui.CollapsingHeader("Import Settings", ImGuiTreeNodeFlags.DefaultOpen))
+            return;
+
+        // Load settings lazily or when the asset path changes
+        if (_texImportSettings == null || _texImportSettingsPath != asset.FullPath)
+        {
+            _texImportSettings = Importing.TextureImporter.LoadSettings(asset.FullPath);
+            _texImportSettingsPath = asset.FullPath;
+        }
+
+        bool changed = false;
+
+        // Wrap Mode
+        if (ImGui.BeginTable("##texWrap", 2, ImGuiTableFlags.None))
+        {
+            float totalW = ImGui.GetContentRegionAvail().X;
+            ImGui.TableSetupColumn("lbl", ImGuiTableColumnFlags.WidthFixed, totalW * LabelRatio);
+            ImGui.TableSetupColumn("val", ImGuiTableColumnFlags.WidthStretch);
+            ImGui.TableNextRow();
+            ImGui.TableSetColumnIndex(0);
+            ImGui.AlignTextToFramePadding();
+            ImGui.TextUnformatted("Wrap Mode");
+            ImGui.TableSetColumnIndex(1);
+            ImGui.SetNextItemWidth(-1);
+            int wrapIdx = (int)_texImportSettings.WrapMode;
+            if (ImGui.Combo("##wrapMode", ref wrapIdx,
+                ["Repeat", "ClampToBorder", "ClampToEdge", "MirroredRepeat"], 4))
+            {
+                _texImportSettings.WrapMode = (TextureWrap)wrapIdx;
+                changed = true;
+            }
+            ImGui.EndTable();
+        }
+
+        // Min Filter
+        if (ImGui.BeginTable("##texMin", 2, ImGuiTableFlags.None))
+        {
+            float totalW = ImGui.GetContentRegionAvail().X;
+            ImGui.TableSetupColumn("lbl", ImGuiTableColumnFlags.WidthFixed, totalW * LabelRatio);
+            ImGui.TableSetupColumn("val", ImGuiTableColumnFlags.WidthStretch);
+            ImGui.TableNextRow();
+            ImGui.TableSetColumnIndex(0);
+            ImGui.AlignTextToFramePadding();
+            ImGui.TextUnformatted("Min Filter");
+            ImGui.TableSetColumnIndex(1);
+            ImGui.SetNextItemWidth(-1);
+            var minNames = Enum.GetNames<TextureMin>();
+            int minIdx = (int)_texImportSettings.MinFilter;
+            if (ImGui.Combo("##minFilter", ref minIdx, minNames, minNames.Length))
+            {
+                _texImportSettings.MinFilter = (TextureMin)minIdx;
+                changed = true;
+            }
+            ImGui.EndTable();
+        }
+
+        // Mag Filter
+        if (ImGui.BeginTable("##texMag", 2, ImGuiTableFlags.None))
+        {
+            float totalW = ImGui.GetContentRegionAvail().X;
+            ImGui.TableSetupColumn("lbl", ImGuiTableColumnFlags.WidthFixed, totalW * LabelRatio);
+            ImGui.TableSetupColumn("val", ImGuiTableColumnFlags.WidthStretch);
+            ImGui.TableNextRow();
+            ImGui.TableSetColumnIndex(0);
+            ImGui.AlignTextToFramePadding();
+            ImGui.TextUnformatted("Mag Filter");
+            ImGui.TableSetColumnIndex(1);
+            ImGui.SetNextItemWidth(-1);
+            var magNames = Enum.GetNames<TextureMag>();
+            int magIdx = (int)_texImportSettings.MagFilter;
+            if (ImGui.Combo("##magFilter", ref magIdx, magNames, magNames.Length))
+            {
+                _texImportSettings.MagFilter = (TextureMag)magIdx;
+                changed = true;
+            }
+            ImGui.EndTable();
+        }
+
+        // Generate Mipmaps
+        if (ImGui.BeginTable("##texMip", 2, ImGuiTableFlags.None))
+        {
+            float totalW = ImGui.GetContentRegionAvail().X;
+            ImGui.TableSetupColumn("lbl", ImGuiTableColumnFlags.WidthFixed, totalW * LabelRatio);
+            ImGui.TableSetupColumn("val", ImGuiTableColumnFlags.WidthStretch);
+            ImGui.TableNextRow();
+            ImGui.TableSetColumnIndex(0);
+            ImGui.AlignTextToFramePadding();
+            ImGui.TextUnformatted("Generate Mipmaps");
+            ImGui.TableSetColumnIndex(1);
+            bool mip = _texImportSettings.GenerateMipmaps;
+            if (ImGui.Checkbox("##genMipmaps", ref mip))
+            {
+                _texImportSettings.GenerateMipmaps = mip;
+                changed = true;
+            }
+            ImGui.EndTable();
+        }
+
+        // Apply button
+        ImGui.Spacing();
+        bool canApply = changed || _texImportSettings != null;
+        if (ImGui.Button("Apply Import Settings"))
+        {
+            Importing.TextureImporter.SaveSettings(asset.FullPath, _texImportSettings!);
+            Runtime.Debug.Log($"[Inspector] Saved import settings for: {asset.Name}");
+        }
+        ImGui.SameLine();
+        if (ImGui.Button("Revert"))
+        {
+            _texImportSettings = Importing.TextureImporter.LoadSettings(asset.FullPath);
         }
     }
 

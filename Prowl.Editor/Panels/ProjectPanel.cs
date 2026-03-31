@@ -189,15 +189,14 @@ public sealed class ProjectPanel : EditorPanel
                 string name = $"NewScene_{DateTime.Now:HHmmss}.scene";
                 if (EditorServices.TryGet<ISceneSerializer>(out var serializer))
                 {
-                    var scene = EditorServices.Get<ISceneService>().CurrentScene;
-                    if (scene != null)
-                    {
-                        string relPath = Path.Combine(contextDir == "." ? "" : contextDir, name);
-                        string absPath = assets.GetAbsolutePath(relPath);
-                        serializer!.Save(scene, absPath);
-                        assets.Refresh();
-                        BeginRename(relPath, Path.GetFileNameWithoutExtension(name));
-                    }
+                    // Create a blank empty scene file (not the current scene)
+                    var blankScene = new Prowl.Runtime.Resources.Scene { Name = Path.GetFileNameWithoutExtension(name) };
+                    string relPath = Path.Combine(contextDir == "." ? "" : contextDir, name);
+                    string absPath = assets.GetAbsolutePath(relPath);
+                    serializer!.Save(blankScene, absPath);
+                    assets.MetaManager.EnsureMeta(absPath);
+                    assets.Refresh();
+                    BeginRename(relPath, Path.GetFileNameWithoutExtension(name));
                 }
             }
 
@@ -763,15 +762,14 @@ public sealed class ProjectPanel : EditorPanel
             string name = $"NewScene_{DateTime.Now:HHmmss}.scene";
             if (EditorServices.TryGet<ISceneSerializer>(out var serializer))
             {
-                var scene = EditorServices.Get<ISceneService>().CurrentScene;
-                if (scene != null)
-                {
-                    string relPath = Path.Combine(contextDir == "." ? "" : contextDir, name);
-                    string absPath = assets.GetAbsolutePath(relPath);
-                    serializer!.Save(scene, absPath);
-                    assets.Refresh();
-                    BeginRename(relPath, Path.GetFileNameWithoutExtension(name));
-                }
+                // Create a blank empty scene file (not the current scene)
+                var blankScene = new Prowl.Runtime.Resources.Scene { Name = Path.GetFileNameWithoutExtension(name) };
+                string relPath = Path.Combine(contextDir == "." ? "" : contextDir, name);
+                string absPath = assets.GetAbsolutePath(relPath);
+                serializer!.Save(blankScene, absPath);
+                assets.MetaManager.EnsureMeta(absPath);
+                assets.Refresh();
+                BeginRename(relPath, Path.GetFileNameWithoutExtension(name));
             }
         }
 
@@ -882,6 +880,17 @@ public sealed class ProjectPanel : EditorPanel
                             string metaNew = newFullPath + ".meta";
                             if (File.Exists(metaOld))
                                 File.Move(metaOld, metaNew);
+
+                            // Update SceneFilePath if the renamed file is the current scene
+                            if (ext == ".scene" && EditorServices.TryGet<ISceneService>(out var sceneSvc))
+                            {
+                                string? currentPath = sceneSvc!.SceneFilePath;
+                                if (!string.IsNullOrEmpty(currentPath) &&
+                                    string.Equals(Path.GetFullPath(currentPath), Path.GetFullPath(entry.FullPath), StringComparison.OrdinalIgnoreCase))
+                                {
+                                    sceneSvc.SceneFilePath = newFullPath;
+                                }
+                            }
                         }
                         assets.Refresh();
                     }

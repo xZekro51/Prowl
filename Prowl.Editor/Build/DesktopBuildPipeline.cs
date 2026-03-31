@@ -27,7 +27,7 @@ public sealed class DesktopBuildPipeline : IBuildPipeline
     internal static readonly (string PackageName, string Version)[] RuntimePackageReferences =
     [
         ("Jitter2",                         "2.7.3"),
-        ("Magick.NET-Q16-AnyCPU",           "14.11.0"),
+        ("Magick.NET-Q16-AnyCPU",           "14.11.1"),
         ("Prowl.Echo",                      "2.0.0"),
         ("Prowl.Paper",                     "0.7.0"),
         ("Silk.NET",                        "2.23.0"),
