@@ -44,6 +44,35 @@ public static partial class CancellableTestDomain
     }
 }
 
+/// <summary>
+/// Instance (non-static) event domain — each instance gets its own EventManager.
+/// </summary>
+[EventDomain]
+public partial class InstanceTestDomain : IDisposable
+{
+    [EventArgs(typeof(Unit))]
+    private static readonly EventKey _OnPing = new();
+
+    [EventArgs(typeof(HitArgs))]
+    private static readonly EventKey _OnHit = new();
+
+    public readonly record struct HitArgs(int Damage);
+
+    public void Dispose() => Manager.Dispose();
+}
+
+/// <summary>
+/// Instance domain marked Global — each instance's EventManager participates in GlobalInvoke.
+/// </summary>
+[EventDomain(Global = true)]
+public partial class GlobalInstanceTestDomain : IDisposable
+{
+    [EventArgs(typeof(Unit))]
+    private static readonly EventKey _OnAlert = new();
+
+    public void Dispose() => Manager.Dispose();
+}
+
 #endregion
 
 /// <summary>
@@ -330,6 +359,154 @@ public class EventDomainGeneratorTests : IDisposable
 
         // Clean up
         SimpleTestDomain.OnBar -= handler;
+    }
+
+    #endregion
+
+    #region Instance domain — basic subscribe & invoke
+
+    [Fact]
+    public void InstanceDomain_EachInstanceHasOwnManager()
+    {
+        using var a = new InstanceTestDomain();
+        using var b = new InstanceTestDomain();
+
+        Assert.NotSame(a.Manager, b.Manager);
+    }
+
+    [Fact]
+    public void InstanceDomain_SubscribeAndInvoke_Parameterless()
+    {
+        using var domain = new InstanceTestDomain();
+        bool called = false;
+        var sub = domain.SubscribeOnPing(() => called = true);
+        Track(sub);
+
+        domain.InvokeOnPing();
+
+        Assert.True(called);
+    }
+
+    [Fact]
+    public void InstanceDomain_SubscribeAndInvoke_Typed()
+    {
+        using var domain = new InstanceTestDomain();
+        InstanceTestDomain.HitArgs? received = null;
+        var sub = domain.SubscribeOnHit(args => received = args);
+        Track(sub);
+
+        domain.InvokeOnHit(new InstanceTestDomain.HitArgs(25));
+
+        Assert.NotNull(received);
+        Assert.Equal(25, received!.Value.Damage);
+    }
+
+    [Fact]
+    public void InstanceDomain_Isolation_OneInstanceDoesNotFireAnother()
+    {
+        using var a = new InstanceTestDomain();
+        using var b = new InstanceTestDomain();
+        bool aCalled = false;
+        bool bCalled = false;
+        Track(a.SubscribeOnPing(() => aCalled = true));
+        Track(b.SubscribeOnPing(() => bCalled = true));
+
+        a.InvokeOnPing();
+
+        Assert.True(aCalled);
+        Assert.False(bCalled);
+    }
+
+    [Fact]
+    public void InstanceDomain_Dispose_UnsubscribesAll()
+    {
+        var domain = new InstanceTestDomain();
+        bool called = false;
+        domain.SubscribeOnPing(() => called = true);
+
+        domain.Dispose();
+        // After disposal, invoke on the disposed manager should not fire.
+        var ex = Record.Exception(() => domain.InvokeOnPing());
+        Assert.Null(ex);
+        Assert.False(called);
+    }
+
+    [Fact]
+    public void InstanceDomain_PlusEquals_SubscribesAndFires()
+    {
+        using var domain = new InstanceTestDomain();
+        bool called = false;
+        Action handler = () => called = true;
+        domain.OnPing += handler;
+
+        domain.InvokeOnPing();
+        Assert.True(called);
+
+        domain.OnPing -= handler;
+    }
+
+    [Fact]
+    public void InstanceDomain_MinusEquals_Unsubscribes()
+    {
+        using var domain = new InstanceTestDomain();
+        bool called = false;
+        Action handler = () => called = true;
+        domain.OnPing += handler;
+        domain.OnPing -= handler;
+
+        domain.InvokeOnPing();
+        Assert.False(called);
+    }
+
+    [Fact]
+    public void InstanceDomain_Priority_OrdersCorrectly()
+    {
+        using var domain = new InstanceTestDomain();
+        var order = new List<int>();
+        Track(domain.SubscribeOnPing(() => order.Add(2), priority: 2));
+        Track(domain.SubscribeOnPing(() => order.Add(0), priority: 0));
+        Track(domain.SubscribeOnPing(() => order.Add(1), priority: 1));
+
+        domain.InvokeOnPing();
+
+        Assert.Equal([0, 1, 2], order);
+    }
+
+    #endregion
+
+    #region Instance domain — global broadcast
+
+    [Fact]
+    public void InstanceDomain_GlobalInvoke_ReachesGlobalInstances()
+    {
+        using var a = new GlobalInstanceTestDomain();
+        using var b = new GlobalInstanceTestDomain();
+        bool aCalled = false;
+        bool bCalled = false;
+        Track(a.SubscribeOnAlert(() => aCalled = true));
+        Track(b.SubscribeOnAlert(() => bCalled = true));
+
+        GlobalInstanceTestDomain.GlobalInvokeOnAlert();
+
+        Assert.True(aCalled);
+        Assert.True(bCalled);
+    }
+
+    [Fact]
+    public void InstanceDomain_GlobalInvoke_SkipsDisposed()
+    {
+        using var alive = new GlobalInstanceTestDomain();
+        var dead = new GlobalInstanceTestDomain();
+        bool aliveCalled = false;
+        bool deadCalled = false;
+        Track(alive.SubscribeOnAlert(() => aliveCalled = true));
+        dead.SubscribeOnAlert(() => deadCalled = true);
+        dead.Dispose();
+
+        GlobalInstanceTestDomain.GlobalInvokeOnAlert();
+
+        Assert.True(aliveCalled);
+        Assert.False(deadCalled);
     }
 
     #endregion

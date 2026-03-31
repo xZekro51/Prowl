@@ -293,10 +293,13 @@ public class EventDomainGenerator : IIncrementalGenerator
 
         // --- Generate manager ---
         string globalArg = domain.IsGlobal ? "global: true" : "";
-        sb.AppendLine($"{ci}private static readonly global::Prowl.Runtime.EventSystem.EventManager<EventTypes> s_eventManager = new({globalArg});");
+        string memberStatic = domain.IsStatic ? " static" : "";
+        string managerField = domain.IsStatic ? "s_eventManager" : "_eventManager";
+        string fieldDecl = domain.IsStatic ? "private static readonly" : "private readonly";
+        sb.AppendLine($"{ci}{fieldDecl} global::Prowl.Runtime.EventSystem.EventManager<EventTypes> {managerField} = new({globalArg});");
         sb.AppendLine();
-        sb.AppendLine($"{ci}/// <summary>Gets the <see cref=\"global::Prowl.Runtime.EventSystem.EventManager{{T}}\"/> for this event domain.</summary>");
-        sb.AppendLine($"{ci}public static global::Prowl.Runtime.EventSystem.EventManager<EventTypes> Manager => s_eventManager;");
+        sb.AppendLine($"{ci}/// <summary>Gets the <see cref=\"global::Prowl.Runtime.EventSystem.EventManager{{T}}\"/> for this event domain. For instance domains, dispose this when the owner is no longer needed.</summary>");
+        sb.AppendLine($"{ci}public{memberStatic} global::Prowl.Runtime.EventSystem.EventManager<EventTypes> Manager => {managerField};");
         sb.AppendLine();
 
         // --- Generate event declarations for += / -= subscription syntax ---
@@ -307,19 +310,19 @@ public class EventDomainGenerator : IIncrementalGenerator
             if (evt.IsUnit)
             {
                 sb.AppendLine($"{ci}/// <summary>Subscribe to <see cref=\"EventTypes.{evt.Name}\"/> using += / -=. For priority control or IDisposable, use <see cref=\"Subscribe{evt.Name}\"/>.</summary>");
-                sb.AppendLine($"{ci}public static event global::System.Action {evt.Name}");
+                sb.AppendLine($"{ci}public{memberStatic} event global::System.Action {evt.Name}");
                 sb.AppendLine($"{ci}{{");
-                sb.AppendLine($"{ci}    add => s_eventManager.AddNewDelegate(EventTypes.{evt.Name}, value, 0);");
-                sb.AppendLine($"{ci}    remove => s_eventManager.RemoveDelegate(EventTypes.{evt.Name}, value);");
+                sb.AppendLine($"{ci}    add => {managerField}.AddNewDelegate(EventTypes.{evt.Name}, value, 0);");
+                sb.AppendLine($"{ci}    remove => {managerField}.RemoveDelegate(EventTypes.{evt.Name}, value);");
                 sb.AppendLine($"{ci}}}");
             }
             else
             {
                 sb.AppendLine($"{ci}/// <summary>Subscribe to <see cref=\"EventTypes.{evt.Name}\"/> using += / -=. For priority control or IDisposable, use <see cref=\"Subscribe{evt.Name}\"/>.</summary>");
-                sb.AppendLine($"{ci}public static event global::System.Action<{argsType}> {evt.Name}");
+                sb.AppendLine($"{ci}public{memberStatic} event global::System.Action<{argsType}> {evt.Name}");
                 sb.AppendLine($"{ci}{{");
-                sb.AppendLine($"{ci}    add => s_eventManager.AddNewDelegate<{argsType}>(EventTypes.{evt.Name}, value, 0);");
-                sb.AppendLine($"{ci}    remove => s_eventManager.RemoveDelegate(EventTypes.{evt.Name}, value);");
+                sb.AppendLine($"{ci}    add => {managerField}.AddNewDelegate<{argsType}>(EventTypes.{evt.Name}, value, 0);");
+                sb.AppendLine($"{ci}    remove => {managerField}.RemoveDelegate(EventTypes.{evt.Name}, value);");
                 sb.AppendLine($"{ci}}}");
             }
         }
@@ -336,11 +339,11 @@ public class EventDomainGenerator : IIncrementalGenerator
 
             if (evt.IsUnit)
             {
-                EmitUnitMethods(sb, ci, evt.Name, containerType);
+                EmitUnitMethods(sb, ci, evt.Name, containerType, memberStatic, managerField);
             }
             else
             {
-                EmitTypedMethods(sb, ci, evt.Name, argsType, containerType);
+                EmitTypedMethods(sb, ci, evt.Name, argsType, containerType, memberStatic, managerField);
             }
         }
 
@@ -365,16 +368,16 @@ public class EventDomainGenerator : IIncrementalGenerator
         spc.AddSource(hintName, sb.ToString());
     }
 
-    private static void EmitUnitMethods(StringBuilder sb, string ci, string name, string containerType)
+    private static void EmitUnitMethods(StringBuilder sb, string ci, string name, string containerType, string memberStatic, string managerField)
     {
         // Invoke (parameterless)
         sb.AppendLine($"{ci}/// <summary>Invokes <see cref=\"EventTypes.{name}\"/> on this domain's manager.</summary>");
         sb.AppendLine($"{ci}[global::System.Runtime.CompilerServices.MethodImpl(global::System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]");
-        sb.AppendLine($"{ci}public static void Invoke{name}()");
-        sb.AppendLine($"{ci}    => s_eventManager.InvokeEvent(EventTypes.{name});");
+        sb.AppendLine($"{ci}public{memberStatic} void Invoke{name}()");
+        sb.AppendLine($"{ci}    => {managerField}.InvokeEvent(EventTypes.{name});");
         sb.AppendLine();
 
-        // GlobalInvoke (parameterless)
+        // GlobalInvoke (parameterless) — always static
         sb.AppendLine($"{ci}/// <summary>Invokes <see cref=\"EventTypes.{name}\"/> across all global managers of this domain.</summary>");
         sb.AppendLine($"{ci}[global::System.Runtime.CompilerServices.MethodImpl(global::System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]");
         sb.AppendLine($"{ci}public static void GlobalInvoke{name}()");
@@ -384,30 +387,30 @@ public class EventDomainGenerator : IIncrementalGenerator
         // Subscribe (parameterless)
         sb.AppendLine($"{ci}/// <summary>Subscribes a parameterless handler to <see cref=\"EventTypes.{name}\"/>. Dispose the returned container to unsubscribe.</summary>");
         sb.AppendLine($"#if DEBUG");
-        sb.AppendLine($"{ci}public static {containerType} Subscribe{name}(");
+        sb.AppendLine($"{ci}public{memberStatic} {containerType} Subscribe{name}(");
         sb.AppendLine($"{ci}    global::System.Action handler, int priority = 0,");
         sb.AppendLine($"{ci}    [global::System.Runtime.CompilerServices.CallerFilePath] string? sourceFile = null,");
         sb.AppendLine($"{ci}    [global::System.Runtime.CompilerServices.CallerLineNumber] int sourceLine = 0,");
         sb.AppendLine($"{ci}    [global::System.Runtime.CompilerServices.CallerMemberName] string? sourceMember = null)");
-        sb.AppendLine($"{ci}    => s_eventManager.AddNewDelegate(EventTypes.{name}, handler, priority, sourceFile, sourceLine, sourceMember);");
+        sb.AppendLine($"{ci}    => {managerField}.AddNewDelegate(EventTypes.{name}, handler, priority, sourceFile, sourceLine, sourceMember);");
         sb.AppendLine($"#else");
-        sb.AppendLine($"{ci}public static {containerType} Subscribe{name}(");
+        sb.AppendLine($"{ci}public{memberStatic} {containerType} Subscribe{name}(");
         sb.AppendLine($"{ci}    global::System.Action handler, int priority = 0)");
-        sb.AppendLine($"{ci}    => s_eventManager.AddNewDelegate(EventTypes.{name}, handler, priority);");
+        sb.AppendLine($"{ci}    => {managerField}.AddNewDelegate(EventTypes.{name}, handler, priority);");
         sb.AppendLine($"#endif");
         sb.AppendLine();
     }
 
-    private static void EmitTypedMethods(StringBuilder sb, string ci, string name, string argsType, string containerType)
+    private static void EmitTypedMethods(StringBuilder sb, string ci, string name, string argsType, string containerType, string memberStatic, string managerField)
     {
         // Invoke (typed)
         sb.AppendLine($"{ci}/// <summary>Invokes <see cref=\"EventTypes.{name}\"/> on this domain's manager.</summary>");
         sb.AppendLine($"{ci}[global::System.Runtime.CompilerServices.MethodImpl(global::System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]");
-        sb.AppendLine($"{ci}public static void Invoke{name}({argsType} args)");
-        sb.AppendLine($"{ci}    => s_eventManager.InvokeEvent(EventTypes.{name}, args);");
+        sb.AppendLine($"{ci}public{memberStatic} void Invoke{name}({argsType} args)");
+        sb.AppendLine($"{ci}    => {managerField}.InvokeEvent(EventTypes.{name}, args);");
         sb.AppendLine();
 
-        // GlobalInvoke (typed)
+        // GlobalInvoke (typed) — always static
         sb.AppendLine($"{ci}/// <summary>Invokes <see cref=\"EventTypes.{name}\"/> across all global managers of this domain.</summary>");
         sb.AppendLine($"{ci}[global::System.Runtime.CompilerServices.MethodImpl(global::System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]");
         sb.AppendLine($"{ci}public static void GlobalInvoke{name}({argsType} args)");
@@ -417,16 +420,16 @@ public class EventDomainGenerator : IIncrementalGenerator
         // Subscribe (typed)
         sb.AppendLine($"{ci}/// <summary>Subscribes a typed handler to <see cref=\"EventTypes.{name}\"/>. Dispose the returned container to unsubscribe.</summary>");
         sb.AppendLine($"#if DEBUG");
-        sb.AppendLine($"{ci}public static {containerType} Subscribe{name}(");
+        sb.AppendLine($"{ci}public{memberStatic} {containerType} Subscribe{name}(");
         sb.AppendLine($"{ci}    global::System.Action<{argsType}> handler, int priority = 0,");
         sb.AppendLine($"{ci}    [global::System.Runtime.CompilerServices.CallerFilePath] string? sourceFile = null,");
         sb.AppendLine($"{ci}    [global::System.Runtime.CompilerServices.CallerLineNumber] int sourceLine = 0,");
         sb.AppendLine($"{ci}    [global::System.Runtime.CompilerServices.CallerMemberName] string? sourceMember = null)");
-        sb.AppendLine($"{ci}    => s_eventManager.AddNewDelegate<{argsType}>(EventTypes.{name}, handler, priority, sourceFile, sourceLine, sourceMember);");
+        sb.AppendLine($"{ci}    => {managerField}.AddNewDelegate<{argsType}>(EventTypes.{name}, handler, priority, sourceFile, sourceLine, sourceMember);");
         sb.AppendLine($"#else");
-        sb.AppendLine($"{ci}public static {containerType} Subscribe{name}(");
+        sb.AppendLine($"{ci}public{memberStatic} {containerType} Subscribe{name}(");
         sb.AppendLine($"{ci}    global::System.Action<{argsType}> handler, int priority = 0)");
-        sb.AppendLine($"{ci}    => s_eventManager.AddNewDelegate<{argsType}>(EventTypes.{name}, handler, priority);");
+        sb.AppendLine($"{ci}    => {managerField}.AddNewDelegate<{argsType}>(EventTypes.{name}, handler, priority);");
         sb.AppendLine($"#endif");
         sb.AppendLine();
     }
