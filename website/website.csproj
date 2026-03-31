@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.Build.NoTargets/3.7.134">
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="docs\**\*" Exclude="node_modules\**;build\**" />
+    <None Include="src\**\*" />
+    <None Include="static\**\*" />
+    <None Include="docusaurus.config.js" />
+    <None Include="package.json" />
+    <None Include="sidebars.js" />
+    <None Include="babel.config.js" />
+    <None Include="start-docs.cmd" />
+    <None Include=".gitignore" />
+  </ItemGroup>
+
+  <!-- Launches the docs dev server when the website project is built from Visual Studio.
+       The server runs in a separate minimized window; if port 3000 is already taken, Docusaurus will prompt. -->
+  <Target Name="StartDocsServer" AfterTargets="Build" Condition="'$(BuildingInsideVisualStudio)' == 'true'">
+    <Exec Command="cmd /c start /min start-docs.cmd"
+          WorkingDirectory="$(MSBuildProjectDirectory)"
+          ContinueOnError="true" />
+  </Target>
+</Project>

@@ -16,20 +16,38 @@ public class EventManager<T> : IDisposable where T : struct, Enum
     /// </summary>
     private static EventManager<T>[] s_instancesSnapshot = [];
 
+    /// <summary>
+    /// Copy-on-write snapshot containing only global managers.
+    /// Rebuilt when instances or their <see cref="Global"/> flag change.
+    /// </summary>
+    private static EventManager<T>[] s_globalSnapshot = [];
+
+    /// <summary>
+    /// Rebuilds the global-only snapshot from the current instances list.
+    /// Must be called under <see cref="s_instancesLock"/>.
+    /// </summary>
+    private static void RebuildGlobalSnapshot()
+    {
+        var globals = new List<EventManager<T>>();
+        for (int i = 0; i < s_instances.Count; i++)
+        {
+            if (s_instances[i].Global)
+                globals.Add(s_instances[i]);
+        }
+        s_globalSnapshot = globals.Count > 0 ? [.. globals] : [];
+    }
+
     public static EventManager<T> LastGlobalInstance
     {
         get
         {
-            lock (s_instancesLock)
+            var snapshot = s_globalSnapshot;
+            for (int i = snapshot.Length - 1; i >= 0; i--)
             {
-                for (int i = s_instances.Count - 1; i >= 0; i--)
-                {
-                    var instance = s_instances[i];
-                    if (instance.Enabled && instance.Global)
-                        return instance;
-                }
-                return null;
+                if (snapshot[i].Enabled)
+                    return snapshot[i];
             }
+            return null;
         }
     }
 
@@ -41,7 +59,12 @@ public class EventManager<T> : IDisposable where T : struct, Enum
         get => global;
         set
         {
+            if (global == value) return;
             global = value;
+            lock (s_instancesLock)
+            {
+                RebuildGlobalSnapshot();
+            }
         }
     }
 
@@ -66,23 +89,23 @@ public class EventManager<T> : IDisposable where T : struct, Enum
         {
             s_instances.Add(this);
             s_instancesSnapshot = [.. s_instances];
+            RebuildGlobalSnapshot();
         }
     }
 
     /// <summary>
     /// Returns the <see cref="Event{T}"/> for the given enum value,
-    /// creating it lazily on first access.
+    /// creating it atomically on first access via <see cref="ConcurrentDictionary{TKey,TValue}.GetOrAdd"/>.
     /// </summary>
     private Event<T> GetOrCreateEvent(T eventType)
     {
-        if (!_events.TryGetValue(eventType, out Event<T>? evt))
+        return _events.GetOrAdd(eventType, key =>
         {
-            evt = new Event<T>(this, eventType);
+            var evt = new Event<T>(this, key);
             if (!enabled)
                 evt.Enabled = false;
-            _events[eventType] = evt;
-        }
-        return evt;
+            return evt;
+        });
     }
 
     public void AddDelegate(EventDelegateContainer<T> eventDelegate)
@@ -107,6 +130,28 @@ public class EventManager<T> : IDisposable where T : struct, Enum
         if (_events.TryGetValue(eventType, out var evt))
             return evt.RemoveByDelegate(handler);
         return false;
+    }
+
+    /// <summary>
+    /// Begins a batch operation on all existing events. While batched,
+    /// <see cref="Event{T}.Add"/> and <see cref="Event{T}.Remove"/> will not
+    /// rebuild COW snapshots. Call <see cref="EndBatch"/> when finished.
+    /// Calls may be nested.
+    /// </summary>
+    public void BeginBatch()
+    {
+        foreach (var evt in _events.Values)
+            evt.BeginBatch();
+    }
+
+    /// <summary>
+    /// Ends a batch operation. If this is the outermost batch and mutations
+    /// occurred, COW snapshots are rebuilt once per event.
+    /// </summary>
+    public void EndBatch()
+    {
+        foreach (var evt in _events.Values)
+            evt.EndBatch();
     }
 
 
@@ -231,18 +276,83 @@ public class EventManager<T> : IDisposable where T : struct, Enum
 
 
     /// <summary>
+    /// Register a typed delegate bound to an <see cref="EngineObject"/> owner.
+    /// The subscription is automatically removed when the owner is disposed.
+    /// </summary>
+    public LifecycleEventDelegateContainer<T, TArgs> AddNewDelegate<TArgs>(
+        EngineObject owner, T eventType, Action<TArgs> eventDelegate, int priority = 0
+#if DEBUG
+        , [CallerFilePath] string? sourceFile = null,
+        [CallerLineNumber] int sourceLine = 0,
+        [CallerMemberName] string? sourceMember = null
+#endif
+    )
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+
+        if (!EventArgsContract<T>.IsValid<TArgs>(eventType))
+        {
+            throw new InvalidOperationException(
+                $"[EventSystem] Type mismatch on {typeof(T).Name}.{eventType}: " +
+                $"handler registered with '{typeof(TArgs).Name}' but the event " +
+                $"declares '{EventArgsContract<T>.GetDeclaredName(eventType)}' " +
+                $"via [EventArgs]. Fix the subscriber's type parameter.");
+        }
+
+#if DEBUG
+        var container = new LifecycleEventDelegateContainer<T, TArgs>(owner, eventType, eventDelegate, priority, sourceFile, sourceLine, sourceMember);
+#else
+        var container = new LifecycleEventDelegateContainer<T, TArgs>(owner, eventType, eventDelegate, priority);
+#endif
+        GetOrCreateEvent(eventType).Add(container);
+        return container;
+    }
+
+    /// <summary>
+    /// Register a parameterless delegate bound to an <see cref="EngineObject"/> owner.
+    /// The subscription is automatically removed when the owner is disposed.
+    /// </summary>
+    public LifecycleParameterlessEventDelegateContainer<T> AddNewDelegate(
+        EngineObject owner, T eventType, Action eventDelegate, int priority = 0
+#if DEBUG
+        , [CallerFilePath] string? sourceFile = null,
+        [CallerLineNumber] int sourceLine = 0,
+        [CallerMemberName] string? sourceMember = null
+#endif
+    )
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+
+        if (!EventArgsContract<T>.IsValid<Unit>(eventType))
+        {
+            throw new InvalidOperationException(
+                $"[EventSystem] Type mismatch on {typeof(T).Name}.{eventType}: " +
+                $"handler registered with 'Unit' (parameterless) but the event " +
+                $"declares '{EventArgsContract<T>.GetDeclaredName(eventType)}' " +
+                $"via [EventArgs]. Fix the subscriber's type parameter.");
+        }
+
+#if DEBUG
+        var container = new LifecycleParameterlessEventDelegateContainer<T>(owner, eventType, eventDelegate, priority, sourceFile, sourceLine, sourceMember);
+#else
+        var container = new LifecycleParameterlessEventDelegateContainer<T>(owner, eventType, eventDelegate, priority);
+#endif
+        GetOrCreateEvent(eventType).Add(container);
+        return container;
+    }
+
+
+    /// <summary>
     /// Invoke an event with typed arguments across all global managers.
     /// </summary>
     public static void GlobalInvokeEvent<TArgs>(T eventType, TArgs args)
     {
-        EventManager<T>[] snapshot;
-        lock (s_instancesLock)
-            snapshot = s_instancesSnapshot;
+        var snapshot = s_globalSnapshot;
 
         for (int i = 0; i < snapshot.Length; i++)
         {
             var instance = snapshot[i];
-            if (instance.Enabled && instance.Global)
+            if (instance.Enabled)
             {
                 instance.InvokeEvent(eventType, args);
             }
@@ -269,6 +379,7 @@ public class EventManager<T> : IDisposable where T : struct, Enum
         {
             s_instances.Remove(this);
             s_instancesSnapshot = [.. s_instances];
+            RebuildGlobalSnapshot();
         }
         GC.SuppressFinalize(this);
     }

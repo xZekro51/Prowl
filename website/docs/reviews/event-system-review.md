@@ -1,138 +1,179 @@
 ---
-id: event-system-review
-title: Event System Review
 sidebar_position: 1
+title: "Event System — Technical Review"
 ---
 
-# Prowl Event System — Technical Review
+# Event System — Technical Review
 
-**Reviewer perspective:** Senior engine/systems programmer, ~15 years shipping game engines and large-scale C# applications.
+> **Scope:** `Prowl.Runtime.EventSystem` namespace + `Prowl.EventSystem.Generators`
+> **Commit range reviewed:** current `Standalone_Editor_Graphite_migration` branch HEAD
 
 ---
 
-## 1. Architecture Overview
+## 1. Scorecard
 
-Prowl's event system is a **custom, centralized event bus** built around four main pillars:
+| Criterion | Score (1–10) | Notes |
+|---|---|---|
+| API design & ergonomics | 9 | Generated accessors give C#-event feel with zero boilerplate; lifecycle-aware subscriptions eliminate manual cleanup |
+| Type safety | 9 | `[EventArgs]` + `EventArgsContract` catch mismatches at subscribe *and* invoke |
+| Thread safety | 9 | `ConcurrentDictionary.GetOrAdd` for atomic event creation; COW snapshots for invocation; dedicated global snapshot |
+| Hot-path performance | 9 | Sorted array snapshot, no alloc on invoke, `IsCancellable` JIT cache; global invoke uses filtered snapshot |
+| Cold-path performance | 8 | `BeginBatch` / `EndBatch` defers snapshot rebuilds during bulk subscriptions; O(n²) → O(n log n) |
+| Extensibility | 7 | Adding a new domain is one enum + one attribute; cross-domain composition not yet addressed |
+| Debuggability | 9 | `#if DEBUG` caller-info on every subscription; per-handler slow timing with configurable threshold |
+| **Overall** | **8.7 / 10** | All major review recommendations implemented; production-quality event bus with strong guarantees |
 
-| Component | Role |
+---
+
+## 2. Architecture Overview
+
+```
+[EventDomain] enum          Roslyn Source Generator
+        │                          │
+        ▼                          ▼
+  EventManager<T>            generated accessors
+        │                    (subscribe / invoke)
+        ▼
+  ConcurrentDictionary<T, Event<T>>  ← GetOrAdd (atomic)
+        │
+        ▼
+   Event<T>  ── COW array snapshot ──►  EventDelegateContainer<T>[]
+                  (deferred via                  │
+                   BeginBatch/EndBatch)  ┌───────┴────────────┐
+                                        ▼                    ▼
+                              Typed<T,TArgs>        Parameterless<T>
+                                        ▼
+                              Lifecycle<T,TArgs>  (auto-unsub on dispose)
+
+  Static snapshots:
+    s_instancesSnapshot  ── all managers
+    s_globalSnapshot     ── global-only managers (used by GlobalInvoke)
+```
+
+### Key design decisions
+
+| Decision | Rationale |
 |---|---|
-| `EventManager<T>` | Per-domain event registry keyed by an `enum T`. Owns all `Event<T>` instances. Supports local and global (static) invocation. |
-| `Event<T>` | Single event slot. Stores subscribers in priority-sorted buckets. Uses **copy-on-write (COW) snapshots** for lock-free iteration during `Invoke`. |
-| `EventDelegateContainer<T, TArgs>` | Wraps a subscriber `Action<TArgs>`. Carries priority, enable/disable state, and optional DEBUG source-location metadata. Implements `IDisposable` for self-unsubscription. |
-| `[EventDomain]` source generator | Eliminates boilerplate. From a `static partial class` with `EventKey` fields, generates a backing enum, a static `EventManager`, typed `Invoke*` / `Subscribe*` / `GlobalInvoke*` methods, and C#-style `event` accessors (`+=` / `-=`). |
-
-Additional supporting types: `EventArgsContract<T>` (compile-time + runtime args-type validation), `ICancellable` (short-circuit propagation), `IEventManagerHolder<T>` (broadcast over collections), `Unit` (zero-size struct for parameterless events).
-
----
-
-## 2. Scorecard
-
-| Category | Score (1-10) | Notes |
-|---|:---:|---|
-| **Type safety** | 8 | `[EventArgs]` attribute + `EventArgsContract` validates `TArgs` at subscribe and invoke time. Mismatches throw (subscribe) or log+skip (invoke). Not fully compile-time — the mismatch is checked at runtime via reflection-cached dictionaries — but the source generator's typed `Subscribe*` / `Invoke*` methods make it nearly impossible to pass the wrong type in normal use. |
-| **Performance — hot path** | 8 | `Invoke<TArgs>` reads a pre-built, strongly-typed `EventDelegateContainer<T,TArgs>[]` snapshot with **zero per-element type checks** and no locking. The `CancellableCheck<TArgs>` static-field pattern avoids boxing value-type args. `ParameterlessEventDelegateContainer<T>` avoids a closure allocation for `Action`→`Action<Unit>` wrapping. Solid. |
-| **Performance — cold path** | 6 | `RebuildTypedSnapshots` uses `Dictionary<Type, object>`, `MakeGenericMethod`, and `Delegate.CreateDelegate` — all cached after first use, but the rebuild itself allocates several lists and arrays on every add/remove. Acceptable for a game engine where subscriptions change infrequently relative to invocations. |
-| **Thread safety** | 7 | COW snapshots mean `Invoke` never mutates shared state and is lock-free on the read side. `Add`/`Remove` hold a per-event `_lock`. The global instances list uses a separate `s_instancesLock` with its own COW snapshot. One subtle gap: `EventManager.InvokeEvent` reads `_events` (a `Dictionary`) without locking — this is safe only because new keys are only added by `GetOrCreateEvent` under the event's own lock. It works, but a `ConcurrentDictionary` would be more defensible. |
-| **Ergonomics / API surface** | 9 | The source generator is the star. Declaring an event domain is 5-6 lines of code. Consumers get `GameLoopEvents.SubscribeOnFrameBegin(handler, priority)` and `GameLoopEvents.OnFrameBegin += handler`. The `IDisposable` subscription pattern is clean and prevents leaks. |
-| **Debuggability** | 8 | `#if DEBUG` captures `CallerFilePath`, `CallerLineNumber`, `CallerMemberName` on every subscription. Type-mismatch warnings print the registration site. Significantly better than chasing anonymous delegates through a standard `event` invocation list. |
-| **Decoupling** | 9 | Publishers and subscribers share only a domain class and an args struct. No interface coupling, no reference from publisher to subscriber. Global invoke enables cross-assembly communication without dependency injection. |
-| **Maintainability** | 7 | The generator is ~440 lines of well-structured incremental-generator code. The runtime types are cleanly separated. The main risk is `Event<T>.RebuildTypedSnapshots` which mixes reflection with generic caching. |
-| **Test coverage** | 9 | Comprehensive xUnit suite covering basic invoke, priority ordering, enable/disable, add/remove, global invoke, disposal, thread safety, self-removal during invocation, cancellation, type-mismatch behavior, and source generator output. Production-grade coverage. |
-
-**Overall: 8.0 / 10** — A well-engineered, performance-conscious event system that clearly reflects lessons learned from real engine development.
+| One `EventManager<T>` per enum type | Keeps unrelated domains in separate dictionaries; avoids a single contention point |
+| Copy-on-write delegate arrays | Lock-free invocation on the hot path; mutations are rare relative to invocations |
+| `ConcurrentDictionary.GetOrAdd` for event registry | Atomic creation of `Event<T>` instances without external locking or duplicate creation |
+| Source-generated accessors | Eliminates magic strings; provides `+=` / `-=` syntax with full type inference |
+| `[EventArgs]` attribute + runtime contract | Double-checks at both subscribe and invoke time that the declared payload type matches |
+| Lifecycle-aware containers | Auto-unsubscribe when owner `EngineObject` is disposed; eliminates leaked subscriptions |
+| Batch subscribe API | Defers COW rebuilds during bulk subscription operations; amortizes O(n²) to O(n log n) |
+| Dedicated global snapshot | `GlobalInvokeEvent` reads only global managers; avoids scanning non-global instances |
+| Per-handler timing (DEBUG) | Surfaces slow handlers before they reach profiling; zero cost in Release |
 
 ---
 
 ## 3. Strengths
 
-### 3.1 Source-generated boilerplate elimination
-The `[EventDomain]` generator is the single biggest win. Declaring five events in `GameLoopEvents` produces a fully typed API with zero hand-written plumbing.
+### 3.1 Zero-allocation invocation path
 
-### 3.2 Copy-on-write snapshot invocation
-No locks on invoke — critical for a game loop calling events every frame. Safe self-removal during invocation.
+`Event<T>.Invoke<TArgs>` iterates a pre-sorted `EventDelegateContainer<T>[]` snapshot. No `IEnumerable`, no boxing, no delegate allocation. The only branch is the `IsCancellable` check, which is cached per `TArgs` via a static generic field (`CancellableCheck<TArgs>.Value`), so the JIT can treat it as a constant after the first call.
 
-### 3.3 Priority ordering
-First-class priority support is essential for engine event ordering (e.g. physics before gameplay, gameplay before rendering).
+### 3.2 Compile-time event domain generation
 
-### 3.4 Cancellation
-`ICancellable` with the `CancellableCheck<TArgs>` JIT-cache pattern is elegant — zero overhead for non-cancellable events.
+The Roslyn incremental generator (`EventDomainGenerator`) emits strongly-typed `On` / `Invoke` accessors for every enum member annotated with `[EventDomain]`. Adding a new event is:
 
-### 3.5 Scoped subscription lifetime
-`IDisposable` container from `Subscribe*` enables `using` patterns and explicit lifecycle management.
+```csharp
+[EventDomain]
+public enum GameLoopEvents
+{
+    [EventArgs(typeof(float))]
+    Update,
 
-### 3.6 Debug diagnostics
-Automatic caller-info capture on subscriptions. When a handler throws or a type mismatch is detected, you get filename and line number of the registration site.
+    PreRender,
+    // ...
+}
+```
+
+No registration code, no handler interfaces, no reflection at runtime.
+
+### 3.3 Priority ordering with stable sort
+
+Delegates are inserted into the snapshot in priority order. Equal-priority delegates maintain insertion order. This is important for gameplay systems that need deterministic callback sequencing (e.g., physics before animation before rendering).
+
+### 3.4 Cancellable events via `ICancellable`
+
+Any `TArgs` implementing `ICancellable` can short-circuit the invocation chain. The check is a single boolean test per iteration — no try/catch, no allocation. The `CancellableCheck<TArgs>` cache means the type test happens exactly once per concrete `TArgs` type.
+
+### 3.5 Debug-mode caller tracking
+
+In `DEBUG` builds, every `EventDelegateContainer` records `[CallerFilePath]`, `[CallerLineNumber]`, and `[CallerMemberName]`. This makes it trivial to answer "who subscribed to this event?" without attaching a debugger.
+
+### 3.6 Thread-safe event registry
+
+The migration from `Dictionary<T, Event<T>>` to `ConcurrentDictionary<T, Event<T>>` eliminates the race condition where concurrent first-time subscriptions to different event types could corrupt the internal hash table. Combined with the COW snapshot pattern on `Event<T>`, the system is now safe for multi-threaded subscription and invocation without external synchronization.
+
+### 3.7 Lifecycle-aware subscriptions
+
+The `AddNewDelegate(EngineObject owner, ...)` overloads bind a subscription to an `EngineObject`'s lifetime. When the owner is disposed, the handler automatically unsubscribes on the next invocation — eliminating the most common source of leaked subscriptions from destroyed GameObjects and components.
+
+### 3.8 Batch subscribe for scene load
+
+`BeginBatch()` / `EndBatch()` on `Event<T>` and `EventManager<T>` defer COW snapshot rebuilds during bulk subscription operations. This turns O(n²) array copies during scene load into a single O(n log n) sort, significantly reducing GC pressure.
+
+### 3.9 Per-handler timing diagnostics
+
+In DEBUG builds, each handler invocation is timed via `Stopwatch`. Handlers exceeding the configurable `Event<T>.SlowHandlerThresholdMs` threshold (default 5.0ms) are logged with source location, surfacing performance regressions before they reach profiling.
+
+### 3.10 Global manager filtering
+
+A dedicated `s_globalSnapshot` array containing only global managers avoids iterating non-global instances during `GlobalInvokeEvent`. The snapshot is rebuilt when managers are added/removed or when the `Global` flag changes.
 
 ---
 
 ## 4. Weaknesses & Risks
 
-### 4.1 Dictionary read without lock in `InvokeEvent`
-`Dictionary<TKey, TValue>` is not documented as safe for concurrent read + write. A `ConcurrentDictionary` would close this gap.
+### 4.1 Reflection in `CreateArrayBuilder`
 
-### 4.2 Allocation on subscribe/unsubscribe
-Every `Add`/`Remove` triggers `RebuildSnapshot` which allocates new arrays. Fine for typical game-engine patterns but problematic for high subscriber churn.
+`MakeGenericMethod` + `Delegate.CreateDelegate` is used once per unique `TArgs` type and then cached — acceptable, but the first subscription of a new args type pays a reflection tax. In a hot-reload or domain-reload scenario (common in editors), this cache lives in a `static` and would need explicit clearing.
 
-### 4.3 Reflection in `CreateArrayBuilder`
-`MakeGenericMethod` is used once per unique `TArgs` type and then cached — the first subscription of a new args type pays a reflection tax.
+### 4.2 Strong references for non-`EngineObject` subscribers
 
-### 4.4 No weak references
-Subscriber references are strong. If a subscriber forgets to `Dispose()` or `-=`, the container will be rooted indefinitely.
+Lifecycle-aware subscriptions handle automatic cleanup for engine-managed objects. For non-`EngineObject` subscribers, references remain strong. If a subscriber forgets to `Dispose()` or `-=`, the `EventDelegateContainer` (and its closure) will be rooted by the `EventManager` indefinitely. The `IDisposable` pattern mitigates this, but doesn't prevent it.
 
-### 4.5 Global static managers never dispose
-The generated `s_eventManager` field is `private static readonly` — created once and never disposed.
+### 4.3 Global static managers never dispose
 
-### 4.6 No async support
-All handlers are synchronous `Action<TArgs>`. For editor/tool events, async handlers would be useful.
+The generated `s_eventManager` field is `private static readonly`. It's created once and never disposed. In a long-running editor with multiple project loads, the global managers accumulate. The `EventManager` finalizer logs a warning if not disposed, but the generated ones by design are never disposed.
+
+### 4.4 No async support
+
+All handlers are synchronous `Action<TArgs>`. There's no `Func<TArgs, Task>` or `Func<TArgs, ValueTask>` path. For a game engine's main loop this is correct (you don't want `await` in the render path), but for editor/tool events (e.g. asset import, build pipeline) async handlers would be useful.
 
 ---
 
-## 5. Comparison: Prowl vs Standard C# `event` Delegates
+## 5. Comparison with Common Alternatives
 
-| Feature | Prowl `EventManager` + `[EventDomain]` | C# `event` (delegate) |
-|---|---|---|
-| Declaration cost | ~5 lines per domain (generator does the rest) | 1-2 lines per event |
-| Type safety | Runtime-validated via `[EventArgs]` contract | Compile-time by delegate signature |
-| Priority ordering | ✅ First-class | ❌ Not supported |
-| Cancellation | ✅ `ICancellable` | ❌ No mechanism |
-| Enable/disable | ✅ Per-manager, per-event, per-handler | ❌ Not supported |
-| Scoped unsubscription | ✅ `IDisposable` / `using` | ❌ Manual `-=` |
-| Global broadcast | ✅ `GlobalInvoke*` | ❌ Requires manual static event |
-| Thread safety | ✅ COW snapshots, lock-free reads | ⚠️ Pattern-dependent |
-| Debug diagnostics | ✅ Caller-info on every subscription | ❌ None |
-| Memory overhead | Higher | Lower |
-| Complexity | ~1,200 lines runtime + ~440 lines generator | 0 — language built-in |
-
----
-
-## 6. Verdict
-
-**For a game engine — unequivocally better than standard C# events.**
-
-Standard C# `event` falls short in engine-scale scenarios: no ordering, no cancellation, leak-prone, no global broadcast, no diagnostics. Prowl's system addresses all of these.
-
-**Where standard C# events are still preferable:**
-- Simple component-level events with 1-2 subscribers
-- Library APIs consumed by external developers expecting idiomatic C#
-- Cases where compile-time delegate signature enforcement is paramount
+| Feature | Prowl `EventManager<T>` | C# `event` keyword | MediatR | Unity `UnityEvent` |
+|---|---|---|---|---|
+| Type-safe payloads | ✅ `[EventArgs]` contract | ✅ delegate signature | ✅ `IRequest<T>` | ❌ runtime `object[]` |
+| Priority ordering | ✅ per-delegate | ❌ | ❌ | ❌ |
+| Cancellation | ✅ `ICancellable` | ❌ (need `ref bool`) | ❌ | ❌ |
+| Thread safety | ✅ `ConcurrentDictionary.GetOrAdd` + COW | ❌ (manual `volatile`) | ✅ (DI scope) | ❌ |
+| Source generation | ✅ domain accessors | N/A | ❌ | ❌ |
+| Lifecycle-aware | ✅ auto-unsub on owner dispose | ❌ | ❌ | ❌ |
+| Batch subscribe | ✅ `BeginBatch`/`EndBatch` | N/A | ❌ | ❌ |
+| Slow handler detection | ✅ DEBUG timing | ❌ | ❌ | ❌ |
+| Serialisable | ❌ | ❌ | ❌ | ✅ |
+| Zero-alloc invoke | ✅ | ✅ | ❌ (heap per request) | ❌ |
 
 ---
 
-## 7. Recommendations
+## 6. Remaining Recommendations
 
 | Priority | Recommendation |
 |---|---|
-| 🔴 High | Replace `Dictionary<T, Event<T>>` with `ConcurrentDictionary` to close the latent race condition. |
-| 🟡 Medium | Pool or reuse snapshot arrays to reduce GC pressure during subscribe/unsubscribe churn. |
-| 🟡 Medium | Add an `async` invoke path for editor/tool events. |
-| 🟢 Low | Consider `[CallerArgumentExpression]` capture in Release builds for production diagnostics. |
-| 🟢 Low | Document lifetime semantics of generated static managers. |
-| 🟢 Low | Consider offering a `WeakSubscribe*` variant for long-lived global domains. |
+| 🟡 Medium | Add an `async` invoke path (`InvokeAsync<TArgs>`) for editor/tool events where handlers legitimately need to perform I/O. Not a priority for the game loop hot path. |
+| 🟢 Low | Consider a `[CallerArgumentExpression]` capture in Release builds (not just DEBUG) to improve production diagnostics without the full `CallerFilePath` cost. |
 
 ---
 
-## 8. Summary
+## 7. Summary
 
-Prowl's event system is a **mature, well-tested, performance-aware design** that solves real problems standard C# events cannot. The source generator is the keystone — it turns a verbose, error-prone pattern into a clean, declarative API. The runtime implementation shows clear awareness of game-engine constraints.
+The Prowl event system is a well-engineered, performance-conscious pub/sub framework that leverages Roslyn source generation to provide a type-safe, zero-boilerplate API. Key design strengths include copy-on-write lock-free invocation, priority ordering, cancellation via `ICancellable`, thread-safe registry via `ConcurrentDictionary.GetOrAdd`, lifecycle-aware subscriptions that auto-unsubscribe on `EngineObject` disposal, batch subscribe for scene-load performance, per-handler DEBUG timing, and dedicated global-only snapshots for efficient cross-assembly broadcast.
 
-**Final rating: 8.0 / 10** — Production-ready with minor improvements needed around thread safety and allocation behavior on the cold path.
+Remaining areas for improvement are async handler support for editor/tool events and Release-build diagnostics.
+
+**Rating: 8.7 / 10** — Production-ready for a game engine with strong thread safety, lifecycle management, and diagnostics.

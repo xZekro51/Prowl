@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Reflection;
 
 namespace Prowl.Runtime.EventSystem;
@@ -17,6 +18,14 @@ public class Event<T> where T : struct, Enum
     {
         public static readonly bool IsCancellable = typeof(ICancellable).IsAssignableFrom(typeof(TArgs));
     }
+
+#if DEBUG
+    /// <summary>
+    /// Configurable threshold in milliseconds. Handlers exceeding this duration
+    /// will be logged as warnings in DEBUG builds. Set to 0 to disable.
+    /// </summary>
+    public static double SlowHandlerThresholdMs { get; set; } = 5.0;
+#endif
 
     private readonly T _eventType;
     public T EventType => _eventType;
@@ -63,10 +72,55 @@ public class Event<T> where T : struct, Enum
         set => _enabled = value;
     }
 
+    /// <summary>
+    /// When greater than zero, snapshot rebuilds are deferred until the batch
+    /// count returns to zero. Incremented by <see cref="BeginBatch"/> and
+    /// decremented by <see cref="EndBatch"/>. Must only be accessed under <see cref="_lock"/>.
+    /// </summary>
+    private int _batchDepth;
+
+    /// <summary>
+    /// Tracks whether any Add/Remove occurred while batching was active,
+    /// so that <see cref="EndBatch"/> knows whether a rebuild is needed.
+    /// </summary>
+    private bool _batchDirty;
+
     public Event(EventManager<T> eventManager, T eventType)
     {
         this._eventType = eventType;
         this._eventManager = eventManager;
+    }
+
+    /// <summary>
+    /// Begins a batch operation. While batched, <see cref="Add"/> and <see cref="Remove"/>
+    /// will not rebuild snapshots. Call <see cref="EndBatch"/> when finished to rebuild once.
+    /// Calls may be nested; only the outermost <see cref="EndBatch"/> triggers the rebuild.
+    /// </summary>
+    public void BeginBatch()
+    {
+        lock (_lock)
+        {
+            _batchDepth++;
+        }
+    }
+
+    /// <summary>
+    /// Ends a batch operation. If this is the outermost batch and any mutations
+    /// occurred, the COW snapshot is rebuilt exactly once.
+    /// </summary>
+    public void EndBatch()
+    {
+        lock (_lock)
+        {
+            if (_batchDepth > 0)
+                _batchDepth--;
+
+            if (_batchDepth == 0 && _batchDirty)
+            {
+                _batchDirty = false;
+                RebuildSnapshot();
+            }
+        }
     }
 
 
@@ -98,11 +152,32 @@ public class Event<T> where T : struct, Enum
                     WarnTypeMismatch<TArgs>(fullSnapshot[j]);
             }
         }
+
+        double threshold = SlowHandlerThresholdMs;
+        Stopwatch? sw = threshold > 0 ? Stopwatch.StartNew() : null;
 #endif
 
         for (int j = 0; j < typedSnapshot.Length; j++)
         {
+#if DEBUG
+            sw?.Restart();
+#endif
             typedSnapshot[j].Invoke(args);
+
+#if DEBUG
+            if (sw is not null)
+            {
+                sw.Stop();
+                double elapsed = sw.Elapsed.TotalMilliseconds;
+                if (elapsed > threshold)
+                {
+                    Debug.LogWarning(
+                        $"[EventSystem] Slow handler on {typeof(T).Name}.{_eventType}: " +
+                        $"{elapsed:F2}ms (threshold {threshold:F1}ms). " +
+                        $"Handler: {typedSnapshot[j].SourceDescription}");
+                }
+            }
+#endif
 
             if (CancellableCheck<TArgs>.IsCancellable && args is ICancellable { Cancelled: true })
                 break;
@@ -160,7 +235,10 @@ public class Event<T> where T : struct, Enum
                 _eventDelegates[eventDelegate.Priority].Add(eventDelegate);
                 eventDelegate.Link(this);
             }
-            RebuildSnapshot();
+            if (_batchDepth > 0)
+                _batchDirty = true;
+            else
+                RebuildSnapshot();
         }
     }
 
@@ -176,7 +254,10 @@ public class Event<T> where T : struct, Enum
             if (result)
             {
                 eventDelegate.Unlink();
-                RebuildSnapshot();
+                if (_batchDepth > 0)
+                    _batchDirty = true;
+                else
+                    RebuildSnapshot();
             }
             return result;
         }
@@ -200,7 +281,10 @@ public class Event<T> where T : struct, Enum
                         var container = bucket[j];
                         bucket.RemoveAt(j);
                         container.Unlink();
-                        RebuildSnapshot();
+                        if (_batchDepth > 0)
+                            _batchDirty = true;
+                        else
+                            RebuildSnapshot();
                         return true;
                     }
                 }

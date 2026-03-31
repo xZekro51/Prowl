@@ -14,9 +14,11 @@ The Prowl Event System is a strongly-typed, source-generated publish/subscribe s
 - **Priority-ordered dispatch** — handlers execute in ascending priority order (lower values first), with deterministic ordering within the same priority bucket.
 - **Event cancellation** — argument types that implement `ICancellable` can stop propagation mid-chain.
 - **Copy-on-write snapshots** — invocation iterates over immutable array snapshots, making it safe to add or remove handlers during dispatch.
-- **Global broadcast** — managers marked as `Global` participate in static `GlobalInvoke` calls, enabling engine-wide event broadcast without requiring direct references.
+- **Global broadcast** — managers marked as `Global` participate in static `GlobalInvoke` calls via a dedicated global-only snapshot, enabling engine-wide event broadcast without requiring direct references.
 - **Automatic lifetime management** — delegate containers implement `IDisposable` for deterministic unsubscription via `using` blocks.
-- **DEBUG diagnostics** — in debug builds, every subscription captures its source file, line number, and member name, and type-mismatch warnings are logged with full provenance.
+- **Lifecycle-aware subscriptions** — handlers bound to an `EngineObject` owner auto-unsubscribe when the owner is disposed.
+- **Batch subscribe** — `BeginBatch()` / `EndBatch()` defers COW snapshot rebuilds during bulk subscriptions.
+- **DEBUG diagnostics** — in debug builds, every subscription captures its source file, line number, and member name. Type-mismatch warnings and per-handler slow timing are logged with full provenance.
 
 ---
 
@@ -47,18 +49,20 @@ The Prowl Event System is a strongly-typed, source-generated publish/subscribe s
 │                     EventManager<T>                                   │
 │                                                                      │
 │  ┌────────────────────────────────────────────────────────────────┐  │
-│  │ Dictionary<T, Event<T>>  _events                               │  │
+│  │ ConcurrentDictionary<T, Event<T>>  _events  (GetOrAdd)        │  │
 │  │                                                                │  │
 │  │  Event<T>  (per enum value)                                    │  │
 │  │  ├─ Dictionary<int, List<EventDelegateContainer<T>>>           │  │
 │  │  │    (priority buckets)                                       │  │
+│  │  ├─ BeginBatch() / EndBatch()  (deferred snapshot rebuilds)    │  │
 │  │  ├─ EventDelegateContainer<T>[]  _cachedSnapshot               │  │
 │  │  │    (flat, priority-sorted COW array — all types)            │  │
 │  │  └─ Dictionary<Type, object>  _typedSnapshots                  │  │
 │  │       (per-TArgs COW arrays for zero-cast invocation)          │  │
 │  └────────────────────────────────────────────────────────────────┘  │
 │                                                                      │
-│  Static: List<EventManager<T>> s_instances  (global broadcast pool)  │
+│  Static: s_instancesSnapshot  (all managers)                         │
+│  Static: s_globalSnapshot     (global-only, used by GlobalInvoke)    │
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -70,21 +74,24 @@ The Prowl Event System is a strongly-typed, source-generated publish/subscribe s
 
 **File:** `Prowl.Runtime/EventSystem/EventManager.cs`
 
-The central hub for a set of events defined by an enum `T`. Each enum value maps to a lazily-created `Event<T>` instance.
+The central hub for a set of events defined by an enum `T`. Each enum value maps to an atomically-created `Event<T>` instance (via `ConcurrentDictionary.GetOrAdd`).
 
 | Member | Description |
 |--------|-------------|
 | `EventManager(bool global = false)` | Constructor. Pass `true` to include this manager in `GlobalInvokeEvent` broadcasts. |
-| `Global` | Gets/sets whether this manager participates in global broadcasts. |
+| `Global` | Gets/sets whether this manager participates in global broadcasts. Changing this rebuilds the global snapshot. |
 | `Enabled` | Gets/sets the enabled state. Disabled managers silently skip all invocations. |
 | `AddNewDelegate<TArgs>(T, Action<TArgs>, int priority)` | Registers a typed handler. Returns a disposable `EventDelegateContainer<T, TArgs>`. |
 | `AddNewDelegate(T, Action, int priority)` | Registers a parameterless handler (uses `Unit` internally). |
+| `AddNewDelegate<TArgs>(EngineObject, T, Action<TArgs>, int priority)` | Registers a **lifecycle-aware** typed handler that auto-unsubscribes when the owner is disposed. |
+| `AddNewDelegate(EngineObject, T, Action, int priority)` | Registers a **lifecycle-aware** parameterless handler. |
 | `RemoveDelegate(EventDelegateContainer<T>)` | Removes a specific delegate container. |
 | `RemoveDelegate(T, Delegate)` | Removes the first delegate matching the given handler. |
 | `InvokeEvent<TArgs>(T, TArgs)` | Invokes all handlers for the given event with typed arguments. |
 | `InvokeEvent(T)` | Invokes all parameterless handlers for the given event. |
 | `EnableEvent(T)` / `DisableEvent(T)` | Enables/disables a specific event type. |
-| `static GlobalInvokeEvent<TArgs>(T, TArgs)` | Broadcasts to all enabled global managers. |
+| `BeginBatch()` / `EndBatch()` | Defers COW snapshot rebuilds during bulk subscriptions. Nestable. |
+| `static GlobalInvokeEvent<TArgs>(T, TArgs)` | Broadcasts to all enabled global managers (via dedicated global snapshot). |
 | `static GlobalInvokeEvent(T)` | Parameterless global broadcast. |
 | `Dispose()` | Removes the manager from the global pool and disables all events. |
 
@@ -98,10 +105,12 @@ Represents a single event type within a manager. Maintains priority-bucketed del
 |--------|-------------|
 | `EventType` | The enum value this event represents. |
 | `Enabled` | Volatile flag; disabled events skip invocation. |
-| `Invoke<TArgs>(TArgs)` | Iterates the typed COW snapshot. Supports `ICancellable` short-circuiting. |
+| `Invoke<TArgs>(TArgs)` | Iterates the typed COW snapshot. Supports `ICancellable` short-circuiting. In DEBUG builds, per-handler timing logs slow handlers. |
 | `GetHandlers<TArgs>()` | Returns a `ReadOnlySpan` of currently registered typed handlers. |
-| `Add(EventDelegateContainer<T>)` | Adds a handler and rebuilds snapshots. |
-| `Remove(EventDelegateContainer<T>)` | Removes a handler and rebuilds snapshots. |
+| `Add(EventDelegateContainer<T>)` | Adds a handler and rebuilds snapshots (deferred if batching). |
+| `Remove(EventDelegateContainer<T>)` | Removes a handler and rebuilds snapshots (deferred if batching). |
+| `BeginBatch()` / `EndBatch()` | Defers snapshot rebuilds during bulk operations. Nestable. |
+| `static SlowHandlerThresholdMs` | DEBUG-only: configurable threshold (default 5.0ms). Handlers exceeding this are logged. |
 
 **Snapshot architecture:** When handlers are added or removed, `RebuildSnapshot()` constructs:
 1. A flat `EventDelegateContainer<T>[]` sorted by priority.
@@ -217,6 +226,25 @@ sub.Dispose(); // unsubscribes
 using var sub = MyEvents.SubscribeOnGameOver(() => ShowGameOverScreen());
 ```
 
+**Pattern 3: Lifecycle-aware subscriptions (auto-cleanup)**
+
+```csharp
+// Bound to an EngineObject — auto-removed when owner is disposed
+manager.AddNewDelegate(this, eventType, (args) => HandleEvent(args));
+manager.AddNewDelegate<MyArgs>(this, eventType, (args) => Process(args));
+```
+
+### Batch Subscribing
+
+When many handlers are added in a tight loop (e.g., scene load), use `BeginBatch()` / `EndBatch()` to defer snapshot rebuilds:
+
+```csharp
+manager.BeginBatch();
+for (int i = 0; i < components.Length; i++)
+    manager.AddNewDelegate(eventType, components[i].OnUpdate);
+manager.EndBatch(); // single O(n log n) rebuild
+```
+
 ### Invoking Events
 
 ```csharp
@@ -323,7 +351,9 @@ ValidationEvents.SubscribeOnValidate(args =>
 
 ## Thread Safety
 
+- **Atomic event creation** — `GetOrCreateEvent` uses `ConcurrentDictionary.GetOrAdd` for race-free `Event<T>` creation
 - **Copy-on-write snapshots** — `Invoke` reads immutable snapshot arrays without locking
+- **Global snapshot** — dedicated `s_globalSnapshot` for global-only managers; rebuilt on flag changes
 - **Safe self-removal** — handlers can unsubscribe during dispatch
 - **Volatile enabled flags** — visibility across threads without full locking
 - **Locks only during mutations** — add/remove/rebuild, never during invocation
@@ -338,6 +368,8 @@ ValidationEvents.SubscribeOnValidate(args =>
 4. **Use `class` for cancellable arguments** — value types are passed by value, so `Cancelled = true` won't propagate back
 5. **Keep priorities simple** — 0 for normal, negative for "before", positive for "after"
 6. **Prefer domain-specific events** — separate `EventKey` fields over generic catch-all events
+7. **Use lifecycle-aware subscriptions for EngineObject-owned handlers** — `AddNewDelegate(owner, ...)` auto-unsubscribes on dispose
+8. **Use `BeginBatch()` / `EndBatch()` during scene load** — defers snapshot rebuilds to avoid O(n²) copies
 
 ---
 
@@ -348,6 +380,7 @@ ValidationEvents.SubscribeOnValidate(args =>
 | `Prowl.Runtime/EventSystem/EventManager.cs` | Central event hub |
 | `Prowl.Runtime/EventSystem/Event.cs` | Single event type with COW snapshots |
 | `Prowl.Runtime/EventSystem/EventDelegateContainer.cs` | Handler wrappers |
+| `Prowl.Runtime/EventSystem/LifecycleEventDelegateContainer.cs` | Lifecycle-aware handler wrappers (auto-unsub on owner dispose) |
 | `Prowl.Runtime/EventSystem/EventAccessor.cs` | `+=` / `-=` / `.Invoke()` syntax |
 | `Prowl.Runtime/EventSystem/EventKey.cs` | Marker struct for event declarations |
 | `Prowl.Runtime/EventSystem/EventDomainAttribute.cs` | Domain attribute |

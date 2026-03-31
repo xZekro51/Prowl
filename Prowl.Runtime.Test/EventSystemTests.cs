@@ -834,6 +834,203 @@ public class EventSystemTests : IDisposable
 
     #endregion
 
+    #region Lifecycle-Aware Subscriptions
+
+    private class TestEngineObject : EngineObject
+    {
+        public TestEngineObject() : base("TestObj") { }
+    }
+
+    [Fact]
+    public void LifecycleSubscription_InvokesWhileOwnerAlive()
+    {
+        var manager = CreateManager();
+        var owner = new TestEngineObject();
+        bool called = false;
+        manager.AddNewDelegate(owner, TestEvents.EventA, () => called = true);
+
+        manager.InvokeEvent(TestEvents.EventA);
+
+        Assert.True(called);
+    }
+
+    [Fact]
+    public void LifecycleSubscription_AutoUnsubscribesWhenOwnerDisposed()
+    {
+        var manager = CreateManager();
+        var owner = new TestEngineObject();
+        int callCount = 0;
+        manager.AddNewDelegate(owner, TestEvents.EventA, () => callCount++);
+
+        manager.InvokeEvent(TestEvents.EventA);
+        Assert.Equal(1, callCount);
+
+        owner.Dispose();
+        manager.InvokeEvent(TestEvents.EventA);
+        // Should not have incremented because the lifecycle container auto-removed itself
+        Assert.Equal(1, callCount);
+    }
+
+    [Fact]
+    public void LifecycleSubscription_Typed_AutoUnsubscribesWhenOwnerDisposed()
+    {
+        var manager = CreateManager();
+        var owner = new TestEngineObject();
+        int received = 0;
+        manager.AddNewDelegate<TestParam>(owner, TestEvents.EventA, args => received = args.Data);
+
+        manager.InvokeEvent(TestEvents.EventA, new TestParam { Data = 42 });
+        Assert.Equal(42, received);
+
+        owner.Dispose();
+        manager.InvokeEvent(TestEvents.EventA, new TestParam { Data = 99 });
+        // Should still be 42 — handler was auto-removed
+        Assert.Equal(42, received);
+    }
+
+    [Fact]
+    public void LifecycleSubscription_ManualDispose_Works()
+    {
+        var manager = CreateManager();
+        var owner = new TestEngineObject();
+        bool called = false;
+        var container = manager.AddNewDelegate(owner, TestEvents.EventA, () => called = true);
+
+        container.Dispose();
+        manager.InvokeEvent(TestEvents.EventA);
+
+        Assert.False(called);
+    }
+
+    #endregion
+
+    #region Batch Subscribe
+
+    [Fact]
+    public void BatchSubscribe_DefersSnapshotRebuild()
+    {
+        var manager = CreateManager();
+        int callCount = 0;
+
+        // Subscribe one delegate normally first
+        manager.AddNewDelegate(TestEvents.EventA, () => callCount++);
+
+        // Get the event and begin batch
+        var evt = manager.GetEvent(TestEvents.EventA)!;
+        evt.BeginBatch();
+
+        // Add delegates while batched — they won't be in the snapshot yet
+        manager.AddNewDelegate(TestEvents.EventA, () => callCount++);
+        manager.AddNewDelegate(TestEvents.EventA, () => callCount++);
+
+        // Invoke — should only see the first delegate (snapshot not yet rebuilt)
+        manager.InvokeEvent(TestEvents.EventA);
+        Assert.Equal(1, callCount);
+
+        // End batch — snapshot rebuilds
+        evt.EndBatch();
+
+        // Now invoke should see all 3
+        callCount = 0;
+        manager.InvokeEvent(TestEvents.EventA);
+        Assert.Equal(3, callCount);
+    }
+
+    [Fact]
+    public void BatchSubscribe_ManagerLevel_Works()
+    {
+        var manager = CreateManager();
+
+        // Pre-create event so BeginBatch covers it
+        manager.AddNewDelegate(TestEvents.EventA, () => { });
+
+        manager.BeginBatch();
+
+        int callCount = 0;
+        manager.AddNewDelegate(TestEvents.EventA, () => callCount++);
+        manager.AddNewDelegate(TestEvents.EventA, () => callCount++);
+
+        manager.EndBatch();
+
+        manager.InvokeEvent(TestEvents.EventA);
+        Assert.Equal(2, callCount);
+    }
+
+    [Fact]
+    public void BatchSubscribe_NestedBatch_OnlyOutermostRebuilds()
+    {
+        var manager = CreateManager();
+        int callCount = 0;
+        manager.AddNewDelegate(TestEvents.EventA, () => callCount++);
+
+        var evt = manager.GetEvent(TestEvents.EventA)!;
+        evt.BeginBatch();
+        evt.BeginBatch();  // nested
+
+        manager.AddNewDelegate(TestEvents.EventA, () => callCount++);
+
+        evt.EndBatch();  // still batched (depth=1)
+
+        // Snapshot not yet rebuilt
+        manager.InvokeEvent(TestEvents.EventA);
+        Assert.Equal(1, callCount);
+
+        evt.EndBatch();  // outermost — rebuild
+
+        callCount = 0;
+        manager.InvokeEvent(TestEvents.EventA);
+        Assert.Equal(2, callCount);
+    }
+
+    #endregion
+
+    #region Global Manager Filtering
+
+    [Fact]
+    public void GlobalInvoke_OnlyIteratesGlobalManagers()
+    {
+        // Create several non-global managers and one global
+        var nonGlobal1 = CreateManager(global: false);
+        var nonGlobal2 = CreateManager(global: false);
+        var globalMgr = CreateManager(global: true);
+
+        bool globalCalled = false;
+        bool nonGlobalCalled = false;
+        globalMgr.AddNewDelegate(TestEvents.EventA, () => globalCalled = true);
+        nonGlobal1.AddNewDelegate(TestEvents.EventA, () => nonGlobalCalled = true);
+        nonGlobal2.AddNewDelegate(TestEvents.EventA, () => nonGlobalCalled = true);
+
+        EventManager<TestEvents>.GlobalInvokeEvent(TestEvents.EventA);
+
+        Assert.True(globalCalled);
+        Assert.False(nonGlobalCalled);
+    }
+
+    [Fact]
+    public void GlobalSnapshot_UpdatesWhenGlobalFlagChanges()
+    {
+        var manager = CreateManager(global: false);
+        bool called = false;
+        manager.AddNewDelegate(TestEvents.EventA, () => called = true);
+
+        // Not global — should not fire
+        EventManager<TestEvents>.GlobalInvokeEvent(TestEvents.EventA);
+        Assert.False(called);
+
+        // Set to global — should now fire
+        manager.Global = true;
+        EventManager<TestEvents>.GlobalInvokeEvent(TestEvents.EventA);
+        Assert.True(called);
+
+        // Set back to non-global — should stop firing
+        called = false;
+        manager.Global = false;
+        EventManager<TestEvents>.GlobalInvokeEvent(TestEvents.EventA);
+        Assert.False(called);
+    }
+
+    #endregion
+
     /// <summary>
     /// Test event argument class used by typed-args tests.
     /// </summary>
