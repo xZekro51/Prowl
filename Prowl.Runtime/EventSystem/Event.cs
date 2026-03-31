@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Reflection;
 
@@ -23,7 +24,7 @@ public class Event<T> where T : struct, Enum
     private readonly EventManager<T> _eventManager;
     public EventManager<T> EventManager => _eventManager;
 
-    private readonly Dictionary<int, List<EventDelegateContainer<T>>> _eventDelegates = new();
+    private readonly ConcurrentDictionary<int, List<EventDelegateContainer<T>>> _eventDelegates = new();
 
     private readonly List<int> _sortedKeys = [];
 
@@ -45,7 +46,7 @@ public class Event<T> where T : struct, Enum
     /// dictionary lookup and one array-reference cast — <b>no per-element type check</b>.
     /// </para>
     /// </summary>
-    private readonly Dictionary<Type, object> _typedSnapshots = new();
+    private readonly ConcurrentDictionary<Type, object> _typedSnapshots = new();
 
     /// <summary>
     /// Per-<c>TArgs</c> cached factory delegates that build strongly typed
@@ -53,7 +54,7 @@ public class Event<T> where T : struct, Enum
     /// Avoids repeated <see cref="Array.CreateInstance"/> and per-element
     /// <see cref="Array.SetValue"/> overhead.
     /// </summary>
-    private static readonly Dictionary<Type, Func<List<EventDelegateContainer<T>>, object>> s_arrayBuilders = new();
+    private static readonly ConcurrentDictionary<Type, Func<List<EventDelegateContainer<T>>, object>> s_arrayBuilders = new();
 
     private volatile bool _enabled = true;
     public bool Enabled

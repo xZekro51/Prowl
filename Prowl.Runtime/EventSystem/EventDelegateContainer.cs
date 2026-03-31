@@ -23,6 +23,8 @@ public abstract class EventDelegateContainer<T> : IDisposable where T : struct, 
         }
     }
 
+    private bool _disposed;
+
     private readonly T eventType;
     public T EventType => eventType;
 
@@ -116,6 +118,9 @@ public abstract class EventDelegateContainer<T> : IDisposable where T : struct, 
     /// </summary>
     public void Dispose()
     {
+        if (_disposed) return;
+
+        _disposed = true;
         Event?.Remove(this);
     }
 }
