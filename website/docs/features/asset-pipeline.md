@@ -73,20 +73,11 @@ Prowl includes a complete build system for creating standalone applications — 
 
 ### Build Pipeline
 
-```
-┌──────────────────────────────────────────────────┐
-│ 1. Analyze scene references                       │
-│    └─ Determine which assets are needed           │
-├──────────────────────────────────────────────────┤
-│ 2. Serialize & pack                               │
-│    └─ Referenced assets + dependencies → pack     │
-├──────────────────────────────────────────────────┤
-│ 3. Compile runtime project                        │
-│    └─ With packed assets embedded                 │
-├──────────────────────────────────────────────────┤
-│ 4. Produce standalone executable                  │
-│    └─ For target platform                         │
-└──────────────────────────────────────────────────┘
+```mermaid
+flowchart TD
+    A["1. Analyze scene references\nDetermine which assets are needed"] --> B["2. Serialize & pack\nReferenced assets + dependencies → pack"]
+    B --> C["3. Compile runtime project\nWith packed assets embedded"]
+    C --> D["4. Produce standalone executable\nFor target platform"]
 ```
 
 :::tip

@@ -59,33 +59,16 @@ The default render pipeline uses a **deferred rendering** approach for opaque ob
 
 ### Rendering Phases
 
-```
-Scene Objects ──→ Culling ──→ Shadow Atlas
-                                   │
-                    ┌─── GBuffer Pass (Deferred) ───┐
-                    │  Albedo │ Normals │ PBR │ Depth │
-                    └──────────────┬─────────────────┘
-                                   │
-                    ┌──── Lighting Pass ─────┐
-                    │  Accumulate per-light   │
-                    └──────────┬─────────────┘
-                               │
-                    ┌── Composition Pass ──┐
-                    │ Albedo × Lighting    │
-                    │ + Fog + Ambient      │
-                    └──────────┬───────────┘
-                               │
-                    ┌── Transparent Pass ──┐
-                    │  Forward-rendered    │
-                    └──────────┬───────────┘
-                               │
-                    ┌── Post-Processing ───┐
-                    │ Bloom, Tonemap, etc. │
-                    └──────────┬───────────┘
-                               │
-                    ┌── Blit to Screen ────┐
-                    │  Swapchain Present   │
-                    └──────────────────────┘
+```mermaid
+flowchart TD
+    Scene["Scene Objects"] --> Culling
+    Culling --> Shadow["Shadow Atlas"]
+    Shadow --> GBuffer["GBuffer Pass (Deferred)\nAlbedo | Normals | PBR | Depth"]
+    GBuffer --> Lighting["Lighting Pass\nAccumulate per-light"]
+    Lighting --> Composition["Composition Pass\nAlbedo × Lighting + Fog + Ambient"]
+    Composition --> Transparent["Transparent Pass\nForward-rendered"]
+    Transparent --> PostProcess["Post-Processing\nBloom, Tonemap, etc."]
+    PostProcess --> Blit["Blit to Screen\nSwapchain Present"]
 ```
 
 | Phase | Description |
@@ -129,8 +112,9 @@ Scene Objects ──→ Culling ──→ Shadow Atlas
 
 Shaders are written in **GLSL** and automatically cross-compiled to **SPIR-V** for Vulkan:
 
-```
-GLSL Source → ShaderCrossCompiler → SPIR-V Binary → GPU
+```mermaid
+flowchart LR
+    A["GLSL Source"] --> B["ShaderCrossCompiler"] --> C["SPIR-V Binary"] --> D["GPU"]
 ```
 
 :::note Shader Features

@@ -34,27 +34,21 @@ All major review recommendations implemented; production-quality event bus with 
 
 ## 2. Architecture Overview
 
-```
-[EventDomain] enum          Roslyn Source Generator
-        │                          │
-        ▼                          ▼
-  EventManager<T>            generated accessors
-        │                    (subscribe / invoke)
-        ▼
-  ConcurrentDictionary<T, Event<T>>  ← GetOrAdd (atomic)
-        │
-        ▼
-   Event<T>  ── COW array snapshot ──►  EventDelegateContainer<T>[]
-                  (deferred via                  │
-                   BeginBatch/EndBatch)  ┌───────┴────────────┐
-                                        ▼                    ▼
-                              Typed<T,TArgs>        Parameterless<T>
-                                        ▼
-                              Lifecycle<T,TArgs>  (auto-unsub on dispose)
+```mermaid
+flowchart TD
+    Enum["[EventDomain] enum"] --> EM["EventManager&lt;T&gt;"]
+    Generator["Roslyn Source Generator"] --> Accessors["Generated accessors\n(subscribe / invoke)"]
 
-  Static snapshots:
-    s_instancesSnapshot  ── all managers
-    s_globalSnapshot     ── global-only managers (used by GlobalInvoke)
+    EM --> CD["ConcurrentDictionary&lt;T, Event&lt;T&gt;&gt;\n← GetOrAdd (atomic)"]
+    CD --> EventT["Event&lt;T&gt;"]
+    EventT -->|"COW array snapshot\n(deferred via BeginBatch/EndBatch)"| Containers["EventDelegateContainer&lt;T&gt;[]"]
+
+    Containers --> Typed["Typed&lt;T,TArgs&gt;"]
+    Containers --> Parameterless["Parameterless&lt;T&gt;"]
+    Typed --> Lifecycle["Lifecycle&lt;T,TArgs&gt;\n(auto-unsub on dispose)"]
+
+    StaticAll["s_instancesSnapshot\n(all managers)"]
+    StaticGlobal["s_globalSnapshot\n(global-only, used by GlobalInvoke)"]
 ```
 
 ### Key design decisions

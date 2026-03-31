@@ -35,46 +35,39 @@ The Prowl Event System is a strongly-typed, source-generated publish/subscribe s
 
 ## Architecture
 
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                    User Code / Engine Subsystem                     │
-│                                                                     │
-│   GameLoopEvents.OnFrameBegin += MyHandler;                        │
-│   GameLoopEvents.InvokeOnFrameBegin(args);                         │
-└──────────────┬──────────────────────────────┬───────────────────────┘
-               │ Subscribe                    │ Invoke
-               ▼                              ▼
-┌──────────────────────────────────────────────────────────────────────┐
-│               [EventDomain] Generated Partial Class                  │
-│                                                                      │
-│  ┌──────────────┐  ┌──────────────────────┐  ┌───────────────────┐  │
-│  │  EventTypes   │  │  EventAccessor<T>    │  │  InvokeOnXxx()    │  │
-│  │  (enum)       │  │  (+= / -= / Invoke)  │  │  SubscribeOnXxx() │  │
-│  └──────┬───────┘  └──────────┬───────────┘  │  GlobalInvokeXxx()│  │
-│         │                     │               └────────┬──────────┘  │
-│         │                     │                        │             │
-└─────────┼─────────────────────┼────────────────────────┼─────────────┘
-          │                     │                        │
-          ▼                     ▼                        ▼
-┌──────────────────────────────────────────────────────────────────────┐
-│                     EventManager<T>                                   │
-│                                                                      │
-│  ┌────────────────────────────────────────────────────────────────┐  │
-│  │ ConcurrentDictionary<T, Event<T>>  _events  (GetOrAdd)        │  │
-│  │                                                                │  │
-│  │  Event<T>  (per enum value)                                    │  │
-│  │  ├─ Dictionary<int, List<EventDelegateContainer<T>>>           │  │
-│  │  │    (priority buckets)                                       │  │
-│  │  ├─ BeginBatch() / EndBatch()  (deferred snapshot rebuilds)    │  │
-│  │  ├─ EventDelegateContainer<T>[]  _cachedSnapshot               │  │
-│  │  │    (flat, priority-sorted COW array — all types)            │  │
-│  │  └─ Dictionary<Type, object>  _typedSnapshots                  │  │
-│  │       (per-TArgs COW arrays for zero-cast invocation)          │  │
-│  └────────────────────────────────────────────────────────────────┘  │
-│                                                                      │
-│  Static: s_instancesSnapshot  (all managers)                         │
-│  Static: s_globalSnapshot     (global-only, used by GlobalInvoke)    │
-└──────────────────────────────────────────────────────────────────────┘
+```mermaid
+graph TD
+    subgraph UserCode["User Code / Engine Subsystem"]
+        Subscribe["GameLoopEvents.OnFrameBegin += MyHandler"]
+        Invoke["GameLoopEvents.InvokeOnFrameBegin(args)"]
+    end
+
+    subgraph Generated["[EventDomain] Generated Partial Class"]
+        EventTypes["EventTypes\n(enum)"]
+        Accessor["EventAccessor&lt;T&gt;\n(+= / -= / Invoke)"]
+        Methods["InvokeOnXxx()\nSubscribeOnXxx()\nGlobalInvokeXxx()"]
+    end
+
+    subgraph Manager["EventManager&lt;T&gt;"]
+        Events["ConcurrentDictionary&lt;T, Event&lt;T&gt;&gt;\n_events (GetOrAdd)"]
+
+        subgraph EventT["Event&lt;T&gt; (per enum value)"]
+            PriorityBuckets["Dictionary&lt;int, List&lt;Container&gt;&gt;\n(priority buckets)"]
+            Batch["BeginBatch() / EndBatch()\n(deferred snapshot rebuilds)"]
+            CachedSnapshot["EventDelegateContainer&lt;T&gt;[]\n_cachedSnapshot\n(flat, priority-sorted COW array)"]
+            TypedSnapshots["Dictionary&lt;Type, object&gt;\n_typedSnapshots\n(per-TArgs COW arrays)"]
+        end
+
+        StaticAll["Static: s_instancesSnapshot\n(all managers)"]
+        StaticGlobal["Static: s_globalSnapshot\n(global-only, used by GlobalInvoke)"]
+    end
+
+    Subscribe --> Generated
+    Invoke --> Generated
+    EventTypes --> Events
+    Accessor --> Events
+    Methods --> Events
+    Events --> EventT
 ```
 
 ---

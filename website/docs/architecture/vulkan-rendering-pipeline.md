@@ -36,23 +36,27 @@ A **rendering pipeline** is exactly this, but performed by your GPU millions of 
 
 Prowl's rendering stack is organized in layers:
 
-```
-┌─────────────────────────────────────────────┐
-│          Game Code / Components              │  ← Your scripts, Camera, Lights, MeshRenderers
-├─────────────────────────────────────────────┤
-│      DefaultRenderPipeline                   │  ← Orchestrates the full rendering process
-│      (Deferred + Forward hybrid)             │
-├─────────────────────────────────────────────┤
-│      RenderCommandBuffer                     │  ← High-level command recorder
-├─────────────────────────────────────────────┤
-│      Graphite Abstraction Layer              │  ← Backend-agnostic GPU interface
-│  ┌───────────────┬──────────────────────┐   │
-│  │  GL Backend   │  Vulkan Backend      │   │
-│  │  (OpenGL)     │  (VK* classes)       │   │
-│  └───────────────┴──────────────────────┘   │
-├─────────────────────────────────────────────┤
-│          GPU Hardware                        │  ← Your graphics card
-└─────────────────────────────────────────────┘
+```mermaid
+block-beta
+    columns 1
+    block:GameCode["Game Code / Components"]
+        A["Your scripts, Camera, Lights, MeshRenderers"]
+    end
+    block:Pipeline["DefaultRenderPipeline"]
+        B["Deferred + Forward hybrid"]
+    end
+    block:CmdBuf["RenderCommandBuffer"]
+        C["High-level command recorder"]
+    end
+    block:Graphite["Graphite Abstraction Layer"]
+        D["GL Backend\n(OpenGL)"]
+        E["Vulkan Backend\n(VK* classes)"]
+    end
+    block:GPU["GPU Hardware"]
+        F["Your graphics card"]
+    end
+
+    GameCode --> Pipeline --> CmdBuf --> Graphite --> GPU
 ```
 
 Prowl supports both OpenGL and Vulkan through a shared abstraction called **Graphite**.
@@ -92,26 +96,16 @@ The Vulkan implementation is `VKGraphiteDevice`, which translates every Graphite
 
 ## 4. Vulkan Device Initialization
 
-```
-1. Load Vulkan API    → Get access to the Vulkan library on the system
-        ↓
-2. Create Instance    → Register the application with the Vulkan driver
-        ↓
-3. Create Surface     → Connect Vulkan to the application window
-        ↓
-4. Pick Physical      → Choose which GPU to use
-   Device               (prefers discrete GPUs over integrated)
-        ↓
-5. Create Logical     → Establish a communication channel with the GPU
-   Device
-        ↓
-6. Create Command     → Allocate a pool for command buffers
-   Pool
-        ↓
-7. Create Swapchain   → Set up image cycling (double/triple buffering)
-        ↓
-8. Create Sync        → Create semaphores and fences
-   Objects
+```mermaid
+flowchart TD
+    A["1. Load Vulkan API"] -->|"Get access to Vulkan library"| B["2. Create Instance"]
+    B -->|"Register app with driver"| C["3. Create Surface"]
+    C -->|"Connect to window"| D["4. Pick Physical Device"]
+    D -->|"Prefer discrete GPU"| E["5. Create Logical Device"]
+    E -->|"Communication channel"| F["6. Create Command Pool"]
+    F -->|"Allocate command buffers"| G["7. Create Swapchain"]
+    G -->|"Double/triple buffering"| H["8. Create Sync Objects"]
+    H -->|"Semaphores & fences"| I(("✓ Ready"))
 ```
 
 ### Swapchain
@@ -159,9 +153,11 @@ Synchronization primitives — the GPU raises a flag when it finishes work, and 
 
 Prowl's shaders are written in **GLSL** but Vulkan requires **SPIR-V**. The `ShaderCrossCompiler` handles this:
 
-```text title="Shader cross-compilation pipeline"
-GLSL Source Code  →  ShaderCrossCompiler  →  SPIR-V Binary  →  VKShaderModule
-  (human-readable)     (uses shaderc)        (GPU-ready)       (Vulkan object)
+```mermaid
+flowchart LR
+    A["GLSL Source Code\n(human-readable)"] --> B["ShaderCrossCompiler\n(uses shaderc)"]
+    B --> C["SPIR-V Binary\n(GPU-ready)"]
+    C --> D["VKShaderModule\n(Vulkan object)"]
 ```
 
 After compilation, `SpirvReflection` parses the binary to discover uniform buffers, textures, and binding slots.
@@ -172,43 +168,48 @@ After compilation, `SpirvReflection` parses the binary to discover uniform buffe
 
 In Vulkan, you **record** commands into a **command buffer**, then **submit** the whole list at once:
 
-```text title="Command list recording pattern"
-CommandList.Begin()
-    ├── BeginRenderPass()    ← "I'm going to draw to these textures"
-    │   ├── SetPipeline()    ← "Use this shader + settings"
-    │   ├── SetBindGroup()   ← "Here are the uniforms and textures"
-    │   ├── SetVertexBuffer() / SetIndexBuffer()
-    │   ├── DrawIndexed()    ← "GO! Draw the triangles!"
-    │   └── ... more draws
-    ├── EndRenderPass()
-    ├── ResourceBarrier()    ← "Wait for textures to finish"
-    ├── BeginRenderPass()    ← Another pass
-    │   └── ...
-    └── EndRenderPass()
-CommandList.End()
-Device.SubmitCommands()      ← Send to GPU
+```mermaid
+flowchart TD
+    Begin["CommandList.Begin()"] --> RP1["BeginRenderPass()"]
+    RP1 --> SP["SetPipeline()"]
+    SP --> SBG["SetBindGroup()"]
+    SBG --> SVB["SetVertexBuffer() / SetIndexBuffer()"]
+    SVB --> DI["DrawIndexed() ← GO!"]
+    DI --> ERP1["EndRenderPass()"]
+    ERP1 --> RB["ResourceBarrier()"]
+    RB --> RP2["BeginRenderPass() ← Another pass"]
+    RP2 --> ERP2["EndRenderPass()"]
+    ERP2 --> End["CommandList.End()"]
+    End --> Submit["Device.SubmitCommands() ← Send to GPU"]
 ```
 
 ---
 
 ## 8. The Frame Lifecycle
 
-```
-┌──────────────────────────────────────────────────────┐
-│ BeginFrame()                                          │
-│  ├── Wait for GPU to finish frame N-2 (fence)        │
-│  ├── Acquire next swapchain image                     │
-│  └── Clean up retired resources from 2 frames ago     │
-├──────────────────────────────────────────────────────┤
-│ Render (per camera)                                   │
-│  ├── Create RenderCommandBuffer                       │
-│  ├── Record all draw commands                         │
-│  └── Submit command buffer to GPU                     │
-├──────────────────────────────────────────────────────┤
-│ EndFrame()                                            │
-│  ├── Present the swapchain image to the screen        │
-│  └── Advance frame index (0 → 1 → 0 → 1 → ...)      │
-└──────────────────────────────────────────────────────┘
+```mermaid
+flowchart TD
+    subgraph BeginFrame["BeginFrame()"]
+        BF1["Wait for GPU to finish frame N-2 (fence)"]
+        BF2["Acquire next swapchain image"]
+        BF3["Clean up retired resources from 2 frames ago"]
+        BF1 --> BF2 --> BF3
+    end
+
+    subgraph Render["Render (per camera)"]
+        R1["Create RenderCommandBuffer"]
+        R2["Record all draw commands"]
+        R3["Submit command buffer to GPU"]
+        R1 --> R2 --> R3
+    end
+
+    subgraph EndFrame["EndFrame()"]
+        EF1["Present the swapchain image to the screen"]
+        EF2["Advance frame index (0 → 1 → 0 → 1 → ...)"]
+        EF1 --> EF2
+    end
+
+    BeginFrame --> Render --> EndFrame
 ```
 
 ---
@@ -219,49 +220,18 @@ The `DefaultRenderPipeline` uses **deferred rendering** with a **forward pass** 
 
 ### Visual Summary
 
-```
-Scene Objects ──→ Culling ──→ Shadow Atlas
-                                   │
-                                   ▼
-                    ┌─── GBuffer Pass (Deferred) ───┐
-                    │  Albedo │ Normals │ PBR │ Depth │
-                    └──────────────┬─────────────────┘
-                                   │
-                                   ▼
-                    ┌──── Lighting Pass ─────┐
-                    │  Light A + Light B + … │
-                    └──────────┬─────────────┘
-                               │
-                               ▼
-                    ┌── Composition Pass ──┐
-                    │ Albedo × Lighting    │
-                    │ + Fog + Ambient      │
-                    └──────────┬───────────┘
-                               │
-                    ┌── After-Lighting FX ──┐
-                    │ SSR, SSAO, etc.       │
-                    └──────────┬────────────┘
-                               │
-                               ▼
-                    ┌── Transparent Pass ──┐
-                    │  Forward-rendered    │
-                    │  (back-to-front)     │
-                    └──────────┬───────────┘
-                               │
-                               ▼
-                    ┌── Post-Processing ───┐
-                    │ Bloom, Tonemap, DOF  │
-                    │ FXAA, Color Grading  │
-                    └──────────┬───────────┘
-                               │
-                               ▼
-                        ┌── Gizmos ──┐
-                        └──────┬─────┘
-                               │
-                               ▼
-                    ┌── Blit to Screen ────┐
-                    │  Swapchain Present   │
-                    └──────────────────────┘
+```mermaid
+flowchart TD
+    Scene["Scene Objects"] --> Culling
+    Culling --> Shadow["Shadow Atlas"]
+    Shadow --> GBuffer["GBuffer Pass (Deferred)\nAlbedo | Normals | PBR | Depth"]
+    GBuffer --> Lighting["Lighting Pass\nLight A + Light B + …"]
+    Lighting --> Composition["Composition Pass\nAlbedo × Lighting + Fog + Ambient"]
+    Composition --> AfterFX["After-Lighting FX\nSSR, SSAO, etc."]
+    AfterFX --> Transparent["Transparent Pass\nForward-rendered (back-to-front)"]
+    Transparent --> PostProcess["Post-Processing\nBloom, Tonemap, DOF, FXAA"]
+    PostProcess --> Gizmos["Gizmos"]
+    Gizmos --> Blit["Blit to Screen\nSwapchain Present"]
 ```
 
 ### Phase-by-Phase
