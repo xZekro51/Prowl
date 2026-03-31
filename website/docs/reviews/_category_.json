@@ -1,0 +1,8 @@
+{
+  "label": "Reviews",
+  "position": 5,
+  "link": {
+    "type": "generated-index",
+    "description": "Technical reviews and analysis of Prowl engine subsystems."
+  }
+}
