@@ -9,6 +9,9 @@ using Prowl.Editor.Project;
 using Prowl.Editor.Services;
 using Prowl.Editor.Undo;
 
+using SysProcess = System.Diagnostics.Process;
+using SysProcessStartInfo = System.Diagnostics.ProcessStartInfo;
+
 namespace Prowl.Editor;
 
 /// <summary>
@@ -98,6 +101,8 @@ public sealed class EditorMenuBar
 
         if (ImGui.BeginMenu("Help"))
         {
+            if (ImGui.MenuItem("Documentation")) OnOpenDocumentation();
+            ImGui.Separator();
             if (ImGui.MenuItem("About Prowl")) OnAbout();
             ImGui.EndMenu();
         }
@@ -234,6 +239,81 @@ public sealed class EditorMenuBar
     private static void OnAbout()
     {
         Debug.Log("[Menu] Prowl Editor v0.1 — Built on Prowl Engine (Standalone).");
+    }
+
+    /// <summary>
+    /// Launches the Docusaurus documentation dev-server from the engine's
+    /// <c>website/</c> folder and opens the browser at http://localhost:3000.
+    /// </summary>
+    private static void OnOpenDocumentation()
+    {
+        // Walk up from the editor binary directory to find the repo root
+        // that contains the "website" folder.
+        string? websiteDir = FindWebsiteDirectory();
+        if (websiteDir != null)
+        {
+            string script = Path.Combine(websiteDir, "start-docs.cmd");
+            if (File.Exists(script))
+            {
+                try
+                {
+                    SysProcess.Start(new SysProcessStartInfo
+                    {
+                        FileName = "cmd.exe",
+                        Arguments = "/c start /min start-docs.cmd",
+                        WorkingDirectory = websiteDir,
+                        UseShellExecute = false,
+                        CreateNoWindow = true,
+                    });
+                    Debug.Log("[Docs] Documentation server starting at http://localhost:3000");
+                }
+                catch (Exception ex)
+                {
+                    Debug.LogWarning($"[Docs] Failed to start docs server: {ex.Message}");
+                }
+            }
+            else
+            {
+                Debug.LogWarning("[Docs] start-docs.cmd not found in the website folder.");
+            }
+        }
+        else
+        {
+            Debug.LogWarning("[Docs] Could not locate the website folder.");
+        }
+
+        // Open the browser regardless — if the server is already running
+        // this navigates straight to the docs.
+        try
+        {
+            SysProcess.Start(new SysProcessStartInfo
+            {
+                FileName = "http://localhost:3000",
+                UseShellExecute = true,
+            });
+        }
+        catch (Exception ex)
+        {
+            Debug.LogWarning($"[Docs] Failed to open browser: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Walks up from the editor binary directory looking for a parent that
+    /// contains a <c>website</c> sub-folder with a <c>start-docs.cmd</c> file.
+    /// </summary>
+    private static string? FindWebsiteDirectory()
+    {
+        string? dir = AppDomain.CurrentDomain.BaseDirectory;
+        for (int i = 0; i < 8 && dir != null; i++)
+        {
+            string candidate = Path.Combine(dir, "website");
+            if (Directory.Exists(candidate) &&
+                File.Exists(Path.Combine(candidate, "start-docs.cmd")))
+                return candidate;
+            dir = Directory.GetParent(dir)?.FullName;
+        }
+        return null;
     }
 
     private static void OnCompileScripts()
