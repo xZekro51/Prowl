@@ -16,6 +16,7 @@ using Prowl.Editor.Undo.Commands;
 using Prowl.Runtime;
 using Prowl.Runtime.Prefabs;
 using Prowl.Runtime.Resources;
+using Prowl.Vector;
 
 namespace Prowl.Editor.Panels;
 
@@ -499,12 +500,24 @@ public sealed class HierarchyPanel : EditorPanel
             }
             else
             {
-                string goName = Path.GetFileNameWithoutExtension(entry.Name);
+                /*string goName = Path.GetFileNameWithoutExtension(entry.Name);
                 if (EditorServices.TryGet<UndoRedoService>(out var undo))
                     undo!.Execute(new CreateGameObjectCommand(goName));
                 else
                     sceneService.CreateGameObject(goName);
-                Debug.Log($"[DragDrop] Instantiated '{goName}' from asset: {entry.RelativePath}");
+                Debug.Log($"[DragDrop] Instantiated '{goName}' from asset: {entry.RelativePath}");*/
+
+                string absPath = entry.FullPath;
+                string name = Path.GetFileNameWithoutExtension(absPath);
+
+                Float3 dropPos = Vector3.Zero;
+
+                if (EditorServices.TryGet<UndoRedoService>(out var undo))
+                    undo!.Execute(new InstantiateAssetCommand(absPath, name, dropPos));
+                else
+                    new InstantiateAssetCommand(absPath, name, dropPos).Execute();
+
+                Debug.Log($"[Scene] Dropped asset: {name}");
             }
         }
     }

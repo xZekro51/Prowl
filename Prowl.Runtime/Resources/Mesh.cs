@@ -18,6 +18,30 @@ public enum IndexFormat : byte
     UInt32 = 1
 }
 
+/// <summary>
+/// Describes a sub-section of a mesh's index buffer, allowing a single mesh
+/// to be drawn in multiple passes with different materials.
+/// </summary>
+public struct SubMeshDescriptor
+{
+    /// <summary> Offset into the index buffer (in number of indices). </summary>
+    public int IndexStart;
+    /// <summary> Number of indices in this sub-mesh. </summary>
+    public int IndexCount;
+    /// <summary> Primitive topology for this sub-mesh. </summary>
+    public Topology Topology;
+    /// <summary> Local-space bounding box of the vertices referenced by this sub-mesh. </summary>
+    public AABB Bounds;
+
+    public SubMeshDescriptor(int indexStart, int indexCount, Topology topology = Topology.Triangles)
+    {
+        IndexStart = indexStart;
+        IndexCount = indexCount;
+        Topology = topology;
+        Bounds = default;
+    }
+}
+
 public class Mesh : EngineObject, ISerializable
 {
     /// <summary> Whether this mesh is readable by the CPU </summary>
@@ -176,6 +200,26 @@ public class Mesh : EngineObject, ISerializable
     public bool HasBoneIndices => (boneIndices?.Length ?? 0) > 0;
     public bool HasBoneWeights => (boneWeights?.Length ?? 0) > 0;
 
+    /// <summary> Number of sub-meshes defined on this mesh. </summary>
+    public int SubMeshCount => subMeshes.Count;
+
+    /// <summary> Sets the total number of sub-meshes. Existing descriptors beyond <paramref name="count"/> are removed. </summary>
+    public void SetSubMeshCount(int count)
+    {
+        while (subMeshes.Count < count) subMeshes.Add(default);
+        if (subMeshes.Count > count) subMeshes.RemoveRange(count, subMeshes.Count - count);
+    }
+
+    /// <summary> Gets the sub-mesh descriptor at the given index. </summary>
+    public SubMeshDescriptor GetSubMesh(int index) => subMeshes[index];
+
+    /// <summary> Sets (or adds) the sub-mesh descriptor at the given index. </summary>
+    public void SetSubMesh(int index, SubMeshDescriptor desc)
+    {
+        while (subMeshes.Count <= index) subMeshes.Add(default);
+        subMeshes[index] = desc;
+    }
+
     public Float4x4[]? bindPoses;
     public string[]? boneNames;
 
@@ -190,8 +234,9 @@ public class Mesh : EngineObject, ISerializable
     uint[]? indices;
     Float4[]? boneIndices;
     Float4[]? boneWeights;
+    List<SubMeshDescriptor> subMeshes = [];
 
-    IndexFormat indexFormat = IndexFormat.UInt16;
+    IndexFormat indexFormat = IndexFormat.UInt32;
     Topology meshTopology = Topology.Triangles;
 
     GraphicsVertexArray? vertexArrayObject;
@@ -222,6 +267,7 @@ public class Mesh : EngineObject, ISerializable
         tangents = null;
         boneIndices = null;
         boneWeights = null;
+        subMeshes.Clear();
 
         changed = true;
 

@@ -258,13 +258,21 @@ public sealed class InspectorPanel : EditorPanel
                 DrawObjectFields(comp);
 
                 // Material sub-inspector for renderers with materials
-                if (comp is MeshRenderer meshRenderer && meshRenderer.Material != null)
+                if (comp is MeshRenderer meshRenderer && meshRenderer.Materials is { Length: > 0 })
                 {
                     ImGui.Spacing();
-                    if (ImGui.TreeNodeEx("Material", ImGuiTreeNodeFlags.DefaultOpen))
+                    for (int mi = 0; mi < meshRenderer.Materials.Length; mi++)
                     {
-                        MaterialInspector.DrawMaterial(meshRenderer.Material);
-                        ImGui.TreePop();
+                        var mat = meshRenderer.Materials[mi];
+                        if (mat == null) continue;
+                        string matLabel = meshRenderer.Materials.Length == 1
+                            ? "Material"
+                            : $"Material [{mi}]";
+                        if (ImGui.TreeNodeEx(matLabel, ImGuiTreeNodeFlags.DefaultOpen))
+                        {
+                            MaterialInspector.DrawMaterial(mat);
+                            ImGui.TreePop();
+                        }
                     }
                 }
             }
@@ -384,7 +392,7 @@ public sealed class InspectorPanel : EditorPanel
 
 
     // Per-component drag state for the letter-label drag interaction
-    private static string? _dragLetter;
+    private static uint _dragId;
     private static float _dragStartValue;
     private static Vector2 _dragStartPos;
     private static bool _isDraggingLabel;
@@ -401,7 +409,9 @@ public sealed class InspectorPanel : EditorPanel
     {
         bool changed = false;
         var style = ImGui.GetStyle();
-        string id = "##lbl_" + letter;
+        // Use ImGui.GetID to incorporate the full ID stack (including parent PushID),
+        // so each property+component pair gets a truly unique tracking ID.
+        uint id = ImGui.GetID("##lbl_" + letter);
 
         // ── Colored label (draggable, click-to-reset) ──────────
         ImGui.PushStyleColor(ImGuiCol.Button, btnColor);
@@ -416,20 +426,20 @@ public sealed class InspectorPanel : EditorPanel
         bool labelActive = ImGui.IsItemActive();
 
         // Show a horizontal-resize cursor when hovering the label
-        if (labelHovered || (_isDraggingLabel && _dragLetter == id))
+        if (labelHovered || (_isDraggingLabel && _dragId == id))
             ImGui.SetMouseCursor(ImGuiMouseCursor.ResizeEW);
 
         // Begin drag: record starting value and mouse position
         if (labelHovered && ImGui.IsMouseClicked(ImGuiMouseButton.Left))
         {
-            _dragLetter = id;
+            _dragId = id;
             _dragStartValue = value;
             _dragStartPos = ImGui.GetMousePos();
             _isDraggingLabel = false; // not dragging yet — could be a click
         }
 
         // Continue drag
-        if (_dragLetter == id && ImGui.IsMouseDown(ImGuiMouseButton.Left))
+        if (_dragId == id && ImGui.IsMouseDown(ImGuiMouseButton.Left))
         {
             Vector2 delta = ImGui.GetMousePos() - _dragStartPos;
             if (!_isDraggingLabel && MathF.Abs(delta.X) > 2f)
@@ -443,7 +453,7 @@ public sealed class InspectorPanel : EditorPanel
         }
 
         // End drag / click
-        if (_dragLetter == id && ImGui.IsMouseReleased(ImGuiMouseButton.Left))
+        if (_dragId == id && ImGui.IsMouseReleased(ImGuiMouseButton.Left))
         {
             if (!_isDraggingLabel)
             {
@@ -451,7 +461,7 @@ public sealed class InspectorPanel : EditorPanel
                 value = 0;
                 changed = true;
             }
-            _dragLetter = null;
+            _dragId = 0;
             _isDraggingLabel = false;
         }
 
@@ -772,6 +782,11 @@ public sealed class InspectorPanel : EditorPanel
                         SetFieldWithUndo(target, field, value, values.GetValue(current));
                 });
             }
+            else if (ft.IsArray || (ft.IsGenericType && ft.GetGenericTypeDefinition() == typeof(List<>)))
+            {
+                // Array or List<T> editor
+                DrawListField(label, target, field, value, ft);
+            }
             else if (ft.IsSubclassOf(typeof(EngineObject)) || ft == typeof(EngineObject) || ft == typeof(GameObject))
             {
                 // Asset / object reference field with drag-drop support
@@ -792,6 +807,289 @@ public sealed class InspectorPanel : EditorPanel
 
             ImGui.PopID();
         }
+    }
+
+    // ────────────────────────────────────────────────────────────
+    // Array / List editor
+    // ────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Draws an inline editor for arrays and <see cref="List{T}"/> fields.
+    /// Supports add/remove and delegates per-element drawing to the
+    /// appropriate editor (primitives, enums, EngineObject references, etc.).
+    /// </summary>
+    private void DrawListField(string label, object target, FieldInfo field, object? value, Type fieldType)
+    {
+        Type elementType = fieldType.IsArray
+            ? fieldType.GetElementType()!
+            : fieldType.GetGenericArguments()[0];
+
+        // Convert current value to a working List<object?> so we can mutate it uniformly
+        var items = new List<object?>();
+        int count = 0;
+
+        if (value is Array arr)
+        {
+            count = arr.Length;
+            for (int i = 0; i < count; i++)
+                items.Add(arr.GetValue(i));
+        }
+        else if (value is System.Collections.IList list)
+        {
+            count = list.Count;
+            for (int i = 0; i < count; i++)
+                items.Add(list[i]);
+        }
+
+        bool changed = false;
+
+        // Header with element count and +/- buttons
+        bool open = ImGui.TreeNodeEx($"{label}  [{count}]", ImGuiTreeNodeFlags.DefaultOpen | ImGuiTreeNodeFlags.AllowOverlap);
+
+        // "+" button on the same line
+        {
+            float btnSz = ImGui.GetFrameHeight();
+            ImGui.SameLine(ImGui.GetContentRegionAvail().X - btnSz * 2 - ImGui.GetStyle().ItemSpacing.X + ImGui.GetCursorPosX());
+            if (ImGui.SmallButton($"+##{label}"))
+            {
+                items.Add(CreateDefault(elementType));
+                changed = true;
+            }
+            ImGui.SameLine();
+            bool canRemove = items.Count > 0;
+            if (!canRemove) ImGui.BeginDisabled();
+            if (ImGui.SmallButton($"-##{label}"))
+            {
+                items.RemoveAt(items.Count - 1);
+                changed = true;
+            }
+            if (!canRemove) ImGui.EndDisabled();
+        }
+
+        if (open)
+        {
+            int removeIdx = -1;
+
+            for (int i = 0; i < items.Count; i++)
+            {
+                ImGui.PushID(i);
+                string elemLabel = $"Element {i}";
+                object? elem = items[i];
+
+                if (elementType == typeof(float))
+                {
+                    float v = (float)(elem ?? 0f);
+                    DrawFieldRow(elemLabel, () =>
+                    {
+                        if (ImGui.DragFloat("##val", ref v, 0.01f))
+                        { items[i] = v; changed = true; }
+                    });
+                }
+                else if (elementType == typeof(double))
+                {
+                    float v = (float)(double)(elem ?? 0.0);
+                    DrawFieldRow(elemLabel, () =>
+                    {
+                        if (ImGui.DragFloat("##val", ref v, 0.01f))
+                        { items[i] = (double)v; changed = true; }
+                    });
+                }
+                else if (elementType == typeof(int))
+                {
+                    int v = (int)(elem ?? 0);
+                    DrawFieldRow(elemLabel, () =>
+                    {
+                        if (ImGui.DragInt("##val", ref v))
+                        { items[i] = v; changed = true; }
+                    });
+                }
+                else if (elementType == typeof(bool))
+                {
+                    bool v = (bool)(elem ?? false);
+                    DrawFieldRow(elemLabel, () =>
+                    {
+                        if (ImGui.Checkbox("##val", ref v))
+                        { items[i] = v; changed = true; }
+                    });
+                }
+                else if (elementType == typeof(string))
+                {
+                    string v = (string)(elem ?? string.Empty);
+                    DrawFieldRow(elemLabel, () =>
+                    {
+                        if (ImGui.InputText("##val", ref v, 512))
+                        { items[i] = v; changed = true; }
+                    });
+                }
+                else if (elementType.IsEnum)
+                {
+                    string[] names = Enum.GetNames(elementType);
+                    Array vals = Enum.GetValues(elementType);
+                    int cur = Array.IndexOf(vals, elem ?? vals.GetValue(0));
+                    if (cur < 0) cur = 0;
+                    DrawFieldRow(elemLabel, () =>
+                    {
+                        if (ImGui.Combo("##val", ref cur, names, names.Length))
+                        { items[i] = vals.GetValue(cur); changed = true; }
+                    });
+                }
+                else if (elementType.IsSubclassOf(typeof(EngineObject)) || elementType == typeof(EngineObject) || elementType == typeof(GameObject))
+                {
+                    // Draw a mini asset-reference field for each element
+                    DrawListElementAssetReference(elemLabel, items, i, elementType, ref changed);
+                }
+                else
+                {
+                    string text = elem?.ToString() ?? "(null)";
+                    DrawFieldRow(elemLabel, () => ImGui.TextDisabled(text));
+                }
+
+                ImGui.PopID();
+            }
+
+            if (removeIdx >= 0)
+            {
+                items.RemoveAt(removeIdx);
+                changed = true;
+            }
+
+            ImGui.TreePop();
+        }
+
+        if (changed)
+        {
+            object newValue;
+            if (fieldType.IsArray)
+            {
+                var newArr = Array.CreateInstance(elementType, items.Count);
+                for (int i = 0; i < items.Count; i++)
+                    newArr.SetValue(items[i], i);
+                newValue = newArr;
+            }
+            else
+            {
+                var newList = (System.Collections.IList)Activator.CreateInstance(fieldType)!;
+                foreach (var item in items)
+                    newList.Add(item);
+                newValue = newList;
+            }
+            SetFieldWithUndo(target, field, value, newValue);
+        }
+    }
+
+    /// <summary>
+    /// Draws a compact asset-reference field for a single list element.
+    /// </summary>
+    private void DrawListElementAssetReference(string elemLabel, List<object?> items, int index, Type elementType, ref bool changed)
+    {
+        EngineObject? current = items[index] as EngineObject;
+        string fieldId = $"listelem_{index}";
+        string popupId = $"##ListElemPicker_{index}";
+
+        if (ImGui.BeginTable("##le_" + index, 2, ImGuiTableFlags.None))
+        {
+            float totalW = ImGui.GetContentRegionAvail().X;
+            ImGui.TableSetupColumn("lbl", ImGuiTableColumnFlags.WidthFixed, totalW * LabelRatio);
+            ImGui.TableSetupColumn("val", ImGuiTableColumnFlags.WidthFixed, totalW * (1 - LabelRatio));
+            ImGui.TableNextRow();
+
+            ImGui.TableSetColumnIndex(0);
+            ImGui.AlignTextToFramePadding();
+            ImGui.TextUnformatted(elemLabel);
+
+            ImGui.TableSetColumnIndex(1);
+
+            float availW = ImGui.GetContentRegionAvail().X;
+            float clearBtnW = 15 * Game.DpiScale;
+            float refBtnW = availW - clearBtnW - ImGui.GetStyle().ItemSpacing.X - 10;
+            if (refBtnW < 30 * Game.DpiScale) refBtnW = 30 * Game.DpiScale;
+
+            string displayName = current != null ? $"{current.Name} ({elementType.Name})" : $"None ({elementType.Name})";
+
+            ImGui.PushStyleColor(ImGuiCol.Button, current != null
+                ? new Vector4(0.22f, 0.30f, 0.22f, 1f)
+                : new Vector4(0.20f, 0.20f, 0.20f, 1f));
+            ImGui.Button(displayName, new Vector2(refBtnW, 0));
+            ImGui.PopStyleColor();
+
+            // Drag-drop target
+            if (ImGui.IsItemHovered() && EditorDragDrop.IsDragging)
+            {
+                ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.28f, 0.56f, 1.0f, 0.40f));
+                ImGui.Button(displayName, new Vector2(refBtnW, 0));
+                ImGui.PopStyleColor();
+
+                if (ImGui.IsMouseReleased(ImGuiMouseButton.Left))
+                {
+                    if (EditorDragDrop.PayloadType == "AssetEntry" && EditorDragDrop.Payload is AssetEntry entry)
+                    {
+                        EngineObject? loaded = TryLoadAssetForField(entry, elementType);
+                        if (loaded != null)
+                        { items[index] = loaded; changed = true; }
+                        EditorDragDrop.Clear();
+                    }
+                }
+            }
+
+            // ImGui native drag-drop target
+            if (ImGui.BeginDragDropTarget())
+            {
+                var payload = ImGui.AcceptDragDropPayload("ASSET_ENTRY");
+                unsafe
+                {
+                    if (payload.NativePtr != null && payload.DataSize > 0)
+                    {
+                        string data = System.Text.Encoding.UTF8.GetString(
+                            (byte*)payload.Data, payload.DataSize).TrimEnd('\0');
+
+                        if (EditorServices.TryGet<IAssetService>(out var assetSvc))
+                        {
+                            string? resolvedPath = assetSvc!.GetAssetPathByGuid(data);
+                            string relativePath = resolvedPath ?? data;
+                            string absPath = assetSvc.GetAbsolutePath(relativePath);
+
+                            var fakeEntry = new AssetEntry
+                            {
+                                Name = Path.GetFileName(absPath),
+                                FullPath = absPath,
+                                RelativePath = relativePath,
+                                Extension = Path.GetExtension(absPath),
+                            };
+
+                            EngineObject? loaded = TryLoadAssetForField(fakeEntry, elementType);
+                            if (loaded != null)
+                            { items[index] = loaded; changed = true; }
+                        }
+                    }
+                }
+                ImGui.EndDragDropTarget();
+            }
+
+            // Context menu: clear
+            if (ImGui.BeginPopupContextItem("##elemctx"))
+            {
+                if (ImGui.MenuItem("Clear"))
+                { items[index] = null; changed = true; }
+                ImGui.EndPopup();
+            }
+
+            // Clear button
+            ImGui.SameLine();
+            if (EditorIcons.ImageButton("##ElemClear" + index, EditorIconType.Close, new Vector2(clearBtnW, clearBtnW)))
+            { items[index] = null; changed = true; }
+
+            ImGui.EndTable();
+        }
+    }
+
+    /// <summary>
+    /// Creates a default instance for an element type.
+    /// </summary>
+    private static object? CreateDefault(Type elementType)
+    {
+        if (elementType == typeof(string)) return string.Empty;
+        if (elementType.IsValueType) return Activator.CreateInstance(elementType);
+        return null; // reference types default to null
     }
 
     // ────────────────────────────────────────────────────────────
@@ -1381,6 +1679,9 @@ public sealed class InspectorPanel : EditorPanel
             case ".png" or ".jpg" or ".jpeg" or ".bmp" or ".tga" or ".hdr":
                 DrawTextureAssetInfo(asset);
                 break;
+            case ".obj" or ".fbx" or ".gltf" or ".glb" or ".dae" or ".blend" or ".3ds" or ".ply" or ".stl":
+                DrawModelAssetInfo(asset);
+                break;
         }
     }
 
@@ -1645,6 +1946,329 @@ public sealed class InspectorPanel : EditorPanel
         {
             _texImportSettings = Importing.TextureImporter.LoadSettings(asset.FullPath);
         }
+    }
+
+    // ── Model inspector cached state ─────────────────────────
+    private static Prowl.Runtime.Resources.Model? _cachedModel;
+    private static string? _cachedModelPath;
+    private static string? _cachedModelError;
+    private static Prowl.Runtime.AssetImporting.ModelImporterSettings? _modelImportSettings;
+    private static string? _modelImportSettingsPath;
+
+    private static void DrawModelAssetInfo(AssetEntry asset)
+    {
+        if (!ImGui.CollapsingHeader("Model", ImGuiTreeNodeFlags.DefaultOpen))
+            return;
+
+        if (!File.Exists(asset.FullPath))
+        {
+            ImGui.TextDisabled("(file not found)");
+            return;
+        }
+
+        // Load the model once and cache it to avoid reloading every frame
+        if (_cachedModel == null || _cachedModelPath != asset.FullPath)
+        {
+            _cachedModel = null;
+            _cachedModelError = null;
+            _cachedModelPath = asset.FullPath;
+            try
+            {
+                _cachedModel = Prowl.Runtime.Resources.Model.LoadFromFile(asset.FullPath);
+            }
+            catch (Exception ex)
+            {
+                _cachedModelError = ex.Message;
+            }
+        }
+
+        if (_cachedModelError != null)
+        {
+            ImGui.TextDisabled($"(error: {_cachedModelError})");
+        }
+        else if (_cachedModel != null)
+        {
+            DrawAssetFieldRow("Meshes", _cachedModel.Meshes.Count.ToString());
+            DrawAssetFieldRow("Materials", _cachedModel.Materials.Count.ToString());
+            DrawAssetFieldRow("Animations", _cachedModel.Animations.Count.ToString());
+            if (_cachedModel.Cameras.Count > 0)
+                DrawAssetFieldRow("Cameras", _cachedModel.Cameras.Count.ToString());
+            if (_cachedModel.Lights.Count > 0)
+                DrawAssetFieldRow("Lights", _cachedModel.Lights.Count.ToString());
+            if (_cachedModel.RootNode != null)
+                DrawAssetFieldRow("Root Node", _cachedModel.RootNode.Name ?? "(unnamed)");
+
+            // List mesh names
+            if (_cachedModel.Meshes.Count > 0 && ImGui.TreeNodeEx("Mesh List", ImGuiTreeNodeFlags.None))
+            {
+                for (int i = 0; i < _cachedModel.Meshes.Count; i++)
+                {
+                    var m = _cachedModel.Meshes[i];
+                    string meshName = m.Mesh?.Name ?? $"Mesh {i}";
+                    int vertCount = m.Mesh?.VertexCount ?? 0;
+                    int idxCount = m.Mesh?.IndexCount ?? 0;
+                    ImGui.BulletText($"{meshName}  (V:{vertCount}  I:{idxCount})");
+                }
+                ImGui.TreePop();
+            }
+        }
+        else
+        {
+            ImGui.TextDisabled("(failed to load model)");
+        }
+
+        // ── Import Settings ──
+        if (!ImGui.CollapsingHeader("Import Settings", ImGuiTreeNodeFlags.DefaultOpen))
+            return;
+
+        // Load settings lazily or when the asset path changes
+        if (_modelImportSettings == null || _modelImportSettingsPath != asset.FullPath)
+        {
+            _modelImportSettings = LoadModelImportSettings(asset.FullPath);
+            _modelImportSettingsPath = asset.FullPath;
+        }
+
+        var s = _modelImportSettings.Value;
+        bool changed = false;
+
+        // Scale
+        DrawFieldRow("Unit Scale", () =>
+        {
+            float scale = s.UnitScale;
+            if (ImGui.DragFloat("##unitScale", ref scale, 0.01f, 0.001f, 1000f, "%.3f"))
+            { s.UnitScale = scale; changed = true; }
+        });
+
+        // Index Format
+        DrawFieldRow("Index Format", () =>
+        {
+            string[] fmtNames = ["UInt16", "UInt32"];
+            int fmtIdx = (int)s.IndexFormat;
+            if (ImGui.Combo("##idxFmt", ref fmtIdx, fmtNames, fmtNames.Length))
+            { s.IndexFormat = (Prowl.Runtime.Resources.IndexFormat)fmtIdx; changed = true; }
+        });
+
+        ImGui.Spacing();
+        ImGui.TextColored(new Vector4(0.55f, 0.55f, 0.55f, 1f), "Normals & Tangents");
+
+        DrawFieldRow("Generate Normals", () =>
+        {
+            bool v = s.GenerateNormals;
+            if (ImGui.Checkbox("##genNormals", ref v))
+            { s.GenerateNormals = v; changed = true; }
+        });
+
+        DrawFieldRow("Smooth Normals", () =>
+        {
+            bool v = s.GenerateSmoothNormals;
+            if (ImGui.Checkbox("##smoothNormals", ref v))
+            { s.GenerateSmoothNormals = v; changed = true; }
+        });
+
+        DrawFieldRow("Calc Tangent Space", () =>
+        {
+            bool v = s.CalculateTangentSpace;
+            if (ImGui.Checkbox("##calcTangent", ref v))
+            { s.CalculateTangentSpace = v; changed = true; }
+        });
+
+        DrawFieldRow("Invert Normals", () =>
+        {
+            bool v = s.InvertNormals;
+            if (ImGui.Checkbox("##invertNormals", ref v))
+            { s.InvertNormals = v; changed = true; }
+        });
+
+        ImGui.Spacing();
+        ImGui.TextColored(new Vector4(0.55f, 0.55f, 0.55f, 1f), "Coordinate System");
+
+        DrawFieldRow("Make Left Handed", () =>
+        {
+            bool v = s.MakeLeftHanded;
+            if (ImGui.Checkbox("##makeLeftHanded", ref v))
+            { s.MakeLeftHanded = v; changed = true; }
+        });
+
+        DrawFieldRow("Flip UVs", () =>
+        {
+            bool v = s.FlipUVs;
+            if (ImGui.Checkbox("##flipUVs", ref v))
+            { s.FlipUVs = v; changed = true; }
+        });
+
+        DrawFieldRow("Flip Winding Order", () =>
+        {
+            bool v = s.FlipWindingOrder;
+            if (ImGui.Checkbox("##flipWinding", ref v))
+            { s.FlipWindingOrder = v; changed = true; }
+        });
+
+        ImGui.Spacing();
+        ImGui.TextColored(new Vector4(0.55f, 0.55f, 0.55f, 1f), "Optimization");
+
+        DrawFieldRow("Optimize Graph", () =>
+        {
+            bool v = s.OptimizeGraph;
+            if (ImGui.Checkbox("##optGraph", ref v))
+            { s.OptimizeGraph = v; changed = true; }
+        });
+
+        DrawFieldRow("Optimize Meshes", () =>
+        {
+            bool v = s.OptimizeMeshes;
+            if (ImGui.Checkbox("##optMeshes", ref v))
+            { s.OptimizeMeshes = v; changed = true; }
+        });
+
+        DrawFieldRow("Weld Vertices", () =>
+        {
+            bool v = s.WeldVertices;
+            if (ImGui.Checkbox("##weldVerts", ref v))
+            { s.WeldVertices = v; changed = true; }
+        });
+
+        DrawFieldRow("Global Scale", () =>
+        {
+            bool v = s.GlobalScale;
+            if (ImGui.Checkbox("##globalScale", ref v))
+            { s.GlobalScale = v; changed = true; }
+        });
+
+        ImGui.Spacing();
+        ImGui.TextColored(new Vector4(0.55f, 0.55f, 0.55f, 1f), "Scene Content");
+
+        DrawFieldRow("Import Cameras", () =>
+        {
+            bool v = s.ImportCameras;
+            if (ImGui.Checkbox("##importCameras", ref v))
+            { s.ImportCameras = v; changed = true; }
+        });
+
+        DrawFieldRow("Import Lights", () =>
+        {
+            bool v = s.ImportLights;
+            if (ImGui.Checkbox("##importLights", ref v))
+            { s.ImportLights = v; changed = true; }
+        });
+
+        if (changed)
+            _modelImportSettings = s;
+
+        // Apply / Revert buttons
+        ImGui.Spacing();
+        if (ImGui.Button("Apply Import Settings"))
+        {
+            SaveModelImportSettings(asset.FullPath, _modelImportSettings.Value);
+            // Invalidate cached model so it reloads with new settings
+            _cachedModel = null;
+            _cachedModelPath = null;
+            Runtime.Debug.Log($"[Inspector] Saved model import settings for: {asset.Name}");
+        }
+        ImGui.SameLine();
+        if (ImGui.Button("Revert"))
+        {
+            _modelImportSettings = LoadModelImportSettings(asset.FullPath);
+        }
+    }
+
+    /// <summary>
+    /// Loads model import settings from the .meta file associated with the given path.
+    /// </summary>
+    private static Prowl.Runtime.AssetImporting.ModelImporterSettings LoadModelImportSettings(string absolutePath)
+    {
+        string metaPath = MetaFile.GetMetaPath(absolutePath);
+        MetaFile? meta = MetaFile.Load(metaPath);
+        if (meta != null && meta.ImportSettings.Count > 0)
+            return ModelImportSettingsFromMeta(meta.ImportSettings);
+        return new Prowl.Runtime.AssetImporting.ModelImporterSettings();
+    }
+
+    /// <summary>
+    /// Saves model import settings to the .meta file.
+    /// </summary>
+    private static void SaveModelImportSettings(string absolutePath, Prowl.Runtime.AssetImporting.ModelImporterSettings settings)
+    {
+        string metaPath = MetaFile.GetMetaPath(absolutePath);
+        MetaFile? meta = MetaFile.Load(metaPath);
+        if (meta == null)
+            meta = MetaFile.CreateNew();
+
+        ModelImportSettingsToMeta(settings, meta.ImportSettings);
+        meta.Save(metaPath);
+    }
+
+    private static Prowl.Runtime.AssetImporting.ModelImporterSettings ModelImportSettingsFromMeta(Dictionary<string, object?> d)
+    {
+        var s = new Prowl.Runtime.AssetImporting.ModelImporterSettings();
+        if (TryGetMetaBool(d, "generateNormals", out bool gn)) s.GenerateNormals = gn;
+        if (TryGetMetaBool(d, "generateSmoothNormals", out bool gsn)) s.GenerateSmoothNormals = gsn;
+        if (TryGetMetaBool(d, "calculateTangentSpace", out bool cts)) s.CalculateTangentSpace = cts;
+        if (TryGetMetaBool(d, "makeLeftHanded", out bool mlh)) s.MakeLeftHanded = mlh;
+        if (TryGetMetaBool(d, "flipUVs", out bool fuv)) s.FlipUVs = fuv;
+        if (TryGetMetaBool(d, "optimizeGraph", out bool og)) s.OptimizeGraph = og;
+        if (TryGetMetaBool(d, "optimizeMeshes", out bool om)) s.OptimizeMeshes = om;
+        if (TryGetMetaBool(d, "flipWindingOrder", out bool fwo)) s.FlipWindingOrder = fwo;
+        if (TryGetMetaBool(d, "weldVertices", out bool wv)) s.WeldVertices = wv;
+        if (TryGetMetaBool(d, "invertNormals", out bool inv)) s.InvertNormals = inv;
+        if (TryGetMetaBool(d, "globalScale", out bool gs)) s.GlobalScale = gs;
+        if (TryGetMetaFloat(d, "unitScale", out float us)) s.UnitScale = us;
+        if (TryGetMetaInt(d, "indexFormat", out int ifmt)) s.IndexFormat = (Prowl.Runtime.Resources.IndexFormat)ifmt;
+        if (TryGetMetaBool(d, "importCameras", out bool ic)) s.ImportCameras = ic;
+        if (TryGetMetaBool(d, "importLights", out bool il)) s.ImportLights = il;
+        return s;
+    }
+
+    private static void ModelImportSettingsToMeta(Prowl.Runtime.AssetImporting.ModelImporterSettings s, Dictionary<string, object?> d)
+    {
+        d["generateNormals"] = s.GenerateNormals;
+        d["generateSmoothNormals"] = s.GenerateSmoothNormals;
+        d["calculateTangentSpace"] = s.CalculateTangentSpace;
+        d["makeLeftHanded"] = s.MakeLeftHanded;
+        d["flipUVs"] = s.FlipUVs;
+        d["optimizeGraph"] = s.OptimizeGraph;
+        d["optimizeMeshes"] = s.OptimizeMeshes;
+        d["flipWindingOrder"] = s.FlipWindingOrder;
+        d["weldVertices"] = s.WeldVertices;
+        d["invertNormals"] = s.InvertNormals;
+        d["globalScale"] = s.GlobalScale;
+        d["unitScale"] = s.UnitScale;
+        d["indexFormat"] = (int)s.IndexFormat;
+        d["importCameras"] = s.ImportCameras;
+        d["importLights"] = s.ImportLights;
+    }
+
+    private static bool TryGetMetaBool(Dictionary<string, object?> d, string key, out bool result)
+    {
+        result = false;
+        if (!d.TryGetValue(key, out var v) || v == null) return false;
+        if (v is bool b) { result = b; return true; }
+        if (v is System.Text.Json.JsonElement je)
+        {
+            if (je.ValueKind == System.Text.Json.JsonValueKind.True) { result = true; return true; }
+            if (je.ValueKind == System.Text.Json.JsonValueKind.False) { result = false; return true; }
+        }
+        return false;
+    }
+
+    private static bool TryGetMetaFloat(Dictionary<string, object?> d, string key, out float result)
+    {
+        result = 0;
+        if (!d.TryGetValue(key, out var v) || v == null) return false;
+        if (v is float f) { result = f; return true; }
+        if (v is double dv) { result = (float)dv; return true; }
+        if (v is System.Text.Json.JsonElement je && je.ValueKind == System.Text.Json.JsonValueKind.Number)
+        { result = (float)je.GetDouble(); return true; }
+        return false;
+    }
+
+    private static bool TryGetMetaInt(Dictionary<string, object?> d, string key, out int result)
+    {
+        result = 0;
+        if (!d.TryGetValue(key, out var v) || v == null) return false;
+        if (v is int i) { result = i; return true; }
+        if (v is System.Text.Json.JsonElement je && je.ValueKind == System.Text.Json.JsonValueKind.Number)
+        { result = je.GetInt32(); return true; }
+        return false;
     }
 
     private static void DrawScriptableObjectAssetInfo(AssetEntry asset)

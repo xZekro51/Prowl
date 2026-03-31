@@ -76,6 +76,9 @@ Pass "Compose"
 
 		// Apply fog - fogCoord is the linear depth
 		vec3 ApplyFog(float fogCoord, vec3 color) {
+			// When no fog mode is active (all states = 0), return color unchanged
+			if (_FogStates.x + _FogStates.y + _FogStates.z < 0.5)
+				return color;
 			float prowlFog = 0.0;
 			prowlFog += (fogCoord * _FogParams.z + _FogParams.w) * _FogStates.x;
 			prowlFog += exp2(-fogCoord * _FogParams.y) * _FogStates.y;

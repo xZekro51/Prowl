@@ -14,18 +14,21 @@ public class MeshRenderable : IRenderable
     private Float4x4 _transform;
     private int _layerIndex;
     private PropertyState _properties;
+    private int _subMeshIndex;
 
-    public MeshRenderable(Mesh mesh, Material material, Float4x4 matrix, int layerIndex, PropertyState? propertyBlock = null)
+    public MeshRenderable(Mesh mesh, Material material, Float4x4 matrix, int layerIndex, PropertyState? propertyBlock = null, int subMeshIndex = -1)
     {
         _mesh = mesh;
         _material = material;
         _transform = matrix;
         _layerIndex = layerIndex;
         _properties = propertyBlock ?? new();
+        _subMeshIndex = subMeshIndex;
     }
 
     public Material GetMaterial() => _material;
     public int GetLayer() => _layerIndex;
+    public int GetSubMeshIndex() => _subMeshIndex;
 
     public Float3 GetPosition()
     {
@@ -44,7 +47,8 @@ public class MeshRenderable : IRenderable
     public void GetCullingData(out bool isRenderable, out AABB bounds)
     {
         isRenderable = true;
-        //bounds = Bounds.CreateFromMinMax(new Vector3(999999), new Vector3(999999));
-        bounds = _mesh.bounds.TransformBy(_transform);
+        bounds = _subMeshIndex >= 0 && _subMeshIndex < _mesh.SubMeshCount
+            ? _mesh.GetSubMesh(_subMeshIndex).Bounds.TransformBy(_transform)
+            : _mesh.bounds.TransformBy(_transform);
     }
 }

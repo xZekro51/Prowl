@@ -164,7 +164,7 @@ public class Scene : EngineObject, ISerializationCallbackReceiver
             Exponential,
             ExponentialSquared
         }
-        public FogMode Mode = FogMode.ExponentialSquared;
+        public FogMode Mode = FogMode.Off;
         public Color Color = new(0.5f, 0.5f, 0.5f, 1.0f);
         public float Start = 20;
         public float End = 100;

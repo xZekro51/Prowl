@@ -242,7 +242,10 @@ public sealed class SceneCamera
         Float4x4 vp = GetProjectionMatrix(aspect) * GetViewMatrix();
         Float4 clip = Float4x4.TransformPoint(new Float4(worldPos, 1f), vp);
 
-        if (clip.W == 0f) return new Float3(-1, -1, -1);
+        // Behind the camera (or degenerate): clip.W <= 0 means the point
+        // is at or behind the near plane.  Returning negative Z lets callers
+        // detect behind-camera positions with a simple "Z < 0" check.
+        if (clip.W <= 0f) return new Float3(-1, -1, -1);
 
         Float3 ndc = new(clip.X / clip.W, clip.Y / clip.W, clip.Z / clip.W);
 

@@ -46,6 +46,13 @@ public interface IRenderable
     public void GetRenderingData(ViewerData viewer, out PropertyState properties, out Mesh mesh, out Float4x4 model, out InstanceData[]? instanceData);
 
     public void GetCullingData(out bool isRenderable, out AABB bounds);
+
+    /// <summary>
+    /// Gets the sub-mesh index to render. Return -1 to render all indices (the default).
+    /// When &gt;= 0, the renderer will use the corresponding <see cref="SubMeshDescriptor"/>
+    /// from the mesh to draw only that subset of the index buffer.
+    /// </summary>
+    public int GetSubMeshIndex() => -1;
 }
 
 public enum LightType
@@ -146,7 +153,7 @@ public abstract class RenderPipeline : EngineObject
     private readonly List<(IRenderable renderable, float distSq)> _reusableSortPairs = [];
     private readonly List<IRenderable> _reusableSortResult = [];
     private readonly List<RenderBatch> _reusableBatches = [];
-    private readonly Dictionary<(ulong, int, Mesh), int> _reusableBatchLookup = [];
+    private readonly Dictionary<(ulong, int, Mesh, int), int> _reusableBatchLookup = [];
     private readonly List<int> _reusableKeyBuffer = [];
 
     private void CleanupUnusedModelMatrices()
@@ -653,6 +660,7 @@ public abstract class RenderPipeline : EngineObject
         public int PassIndex;          // Shader pass index
         public ulong MaterialHash;     // Hash of material uniforms (for sorting/grouping)
         public int SortKey;            // Sort order based on tag value + offset
+        public int SubMeshIndex;       // Sub-mesh index (-1 = draw all indices)
         public List<int> RenderableIndices;  // Indices of objects in this batch
         public bool IsInstanced;       // True if this batch uses GPU instancing
         public int InstancedRenderableIndex;  // Index of the instanced renderable (if IsInstanced is true)
@@ -732,6 +740,7 @@ public abstract class RenderPipeline : EngineObject
 
             // Get material hash for batching - materials with identical uniforms will batch together
             ulong materialHash = material.GetStateHash();
+            int subMeshIndex = renderable.GetSubMeshIndex();
 
             // Find ALL shader passes matching the requested tag (e.g., "Opaque", "Transparent", "ShadowCaster")
             // Multi-pass rendering: materials can have multiple passes with the same tag (e.g., terrain with many texture layers)
@@ -745,8 +754,8 @@ public abstract class RenderPipeline : EngineObject
 
 
                 // Found matching pass - add to appropriate batch
-                // Batch key: (material hash, pass index, mesh) ensures each pass gets its own batch
-                var batchKey = (materialHash, passIndex, mesh);
+                // Batch key: (material hash, pass index, mesh, submesh) ensures each pass+submesh gets its own batch
+                var batchKey = (materialHash, passIndex, mesh, subMeshIndex);
                 if (_reusableBatchLookup.TryGetValue(batchKey, out int batchIndex))
                 {
                     // Batch already exists - add this object to it
@@ -758,7 +767,7 @@ public abstract class RenderPipeline : EngineObject
                     int sortKey = hasRenderOrder ? passIndex + pass.GetTagSortOffset(shaderTag) : passIndex;
                     hasSortOffsets |= sortKey != passIndex;
 
-                    // Create new batch for this unique material+pass+mesh combination
+                    // Create new batch for this unique material+pass+mesh+submesh combination
                     RenderBatch newBatch = new()
                     {
                         Material = material,
@@ -766,6 +775,7 @@ public abstract class RenderPipeline : EngineObject
                         PassIndex = passIndex,
                         MaterialHash = materialHash,
                         SortKey = sortKey,
+                        SubMeshIndex = subMeshIndex,
                         RenderableIndices = new() { renderIndex }
                     };
                     _reusableBatchLookup[batchKey] = _reusableBatches.Count;
@@ -800,7 +810,23 @@ public abstract class RenderPipeline : EngineObject
             Material material = batch.Material;
             Mesh mesh = batch.Mesh;
             int passIndex = batch.PassIndex;
+            int batchSubMeshIndex = batch.SubMeshIndex;
             RenderTexture grabRT = null;
+
+            // Resolve the index range for this batch (full mesh or a single sub-mesh)
+            int drawIndexCount;
+            int drawFirstIndex;
+            if (batchSubMeshIndex >= 0 && batchSubMeshIndex < mesh.SubMeshCount)
+            {
+                SubMeshDescriptor subDesc = mesh.GetSubMesh(batchSubMeshIndex);
+                drawIndexCount = subDesc.IndexCount;
+                drawFirstIndex = subDesc.IndexStart;
+            }
+            else
+            {
+                drawIndexCount = mesh.IndexCount;
+                drawFirstIndex = 0;
+            }
 
             // Configure shader keywords based on mesh attributes (normals, UVs, skinning, etc.)
             // Since all objects in the batch share the same mesh, this is done once per batch
@@ -929,7 +955,10 @@ public abstract class RenderPipeline : EngineObject
                     unsafe
                     {
                         Graphics.BindVertexArray(mesh.VertexArrayObject);
-                        Graphics.DrawIndexed(mesh.MeshTopology, (uint)mesh.IndexCount, mesh.IndexFormat == IndexFormat.UInt32, null);
+                        if (drawFirstIndex == 0)
+                            Graphics.DrawIndexed(mesh.MeshTopology, (uint)drawIndexCount, mesh.IndexFormat == IndexFormat.UInt32, null);
+                        else
+                            Graphics.DrawIndexed(mesh.MeshTopology, (uint)drawIndexCount, drawFirstIndex, 0, mesh.IndexFormat == IndexFormat.UInt32);
                         Graphics.BindVertexArray(null);
                     }
                 }
@@ -946,10 +975,10 @@ public abstract class RenderPipeline : EngineObject
                         if (bindGroup != null)
                             Graphics.ActiveGraphiteCmdBuffer!.SetBindGroup(0, bindGroup);
                     }
-                    Graphics.ActiveGraphiteCmdBuffer!.DrawIndexed((uint)mesh.IndexCount);
+                    Graphics.ActiveGraphiteCmdBuffer!.DrawIndexed((uint)drawIndexCount, 1, (uint)drawFirstIndex);
                 }
 
-                RenderStats.Instance.AddDrawCall(mesh.VertexCount, mesh.IndexCount);
+                RenderStats.Instance.AddDrawCall(mesh.VertexCount, drawIndexCount);
             }
 
             RenderStats.Instance.AddBatch();

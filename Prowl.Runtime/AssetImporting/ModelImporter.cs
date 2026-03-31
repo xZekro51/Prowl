@@ -33,7 +33,17 @@ public struct ModelImporterSettings
     public bool InvertNormals = false;
     public bool GlobalScale = false;
 
+    /// <summary> Scale factor applied to all vertex positions and translations. </summary>
     public float UnitScale = 1.0f;
+
+    /// <summary> Index buffer format for imported meshes. </summary>
+    public IndexFormat IndexFormat = IndexFormat.UInt32;
+
+    /// <summary> When true, cameras found in the scene are imported into <see cref="Model.Cameras"/>. </summary>
+    public bool ImportCameras = false;
+
+    /// <summary> When true, lights found in the scene are imported into <see cref="Model.Lights"/>. </summary>
+    public bool ImportLights = false;
 
     public ModelImporterSettings() { }
 }
@@ -148,7 +158,6 @@ public class ModelImporter
 
     private float GetScale(ModelImporterSettings settings, string extension)
     {
-        return 1f;
         float scale = settings.UnitScale;
         // FBX's are usually in cm, so scale them to meters
         if (extension.Equals(".fbx", StringComparison.OrdinalIgnoreCase))
@@ -168,12 +177,23 @@ public class ModelImporter
         if (scene->MNumMeshes > 0)
             LoadMeshes(assetPath, settings, scene, scale, model.Materials, model.Meshes);
 
+        // Build the node hierarchy from the Assimp scene graph
+        model.RootNode = BuildNodeHierarchy(scene->MRootNode, scale);
+
         // Build skeleton with hierarchy and mesh attachments
         model.Skeleton = BuildSkeleton(scene, model.Meshes, scale);
 
         // Animations
         if (scene->MNumAnimations > 0)
             LoadAnimations(scene, scale, model.Animations);
+
+        // Cameras
+        if (settings.ImportCameras && scene->MNumCameras > 0)
+            LoadCameras(scene, model.Cameras);
+
+        // Lights
+        if (settings.ImportLights && scene->MNumLights > 0)
+            LoadLights(scene, model.Lights);
 
         // Set skeleton reference in all animations and rebuild bone mapping
         if (model.Skeleton.IsValid())
@@ -314,8 +334,8 @@ public class ModelImporter
 
             Mesh mesh = new();
             mesh.Name = m->MName.AsString;
+            mesh.IndexFormat = settings.IndexFormat;
             int vertexCount = (int)m->MNumVertices;
-            mesh.IndexFormat = vertexCount >= ushort.MaxValue ? IndexFormat.UInt32 : IndexFormat.UInt16;
 
             // Vertices
             Float3[] vertices = new Float3[vertexCount];
@@ -605,6 +625,46 @@ public class ModelImporter
         return null;
     }
 
+    /// <summary>
+    /// Recursively walks the Assimp scene graph and builds a <see cref="ModelNode"/>
+    /// tree that mirrors the source file's hierarchy.
+    /// </summary>
+    private static unsafe ModelNode BuildNodeHierarchy(Silk.NET.Assimp.Node* assimpNode, float scale)
+    {
+        if (assimpNode == null) return null;
+
+        string nodeName = assimpNode->MName.AsString;
+        var node = new ModelNode(nodeName);
+
+        // Decompose the node's local transform
+        System.Numerics.Matrix4x4 nodeTransform = assimpNode->MTransformation;
+        System.Numerics.Matrix4x4.Decompose(nodeTransform,
+            out System.Numerics.Vector3 scaleVec,
+            out System.Numerics.Quaternion rotation,
+            out System.Numerics.Vector3 position);
+
+        node.LocalPosition = new Float3(position.X, position.Y, position.Z) * scale;
+        var euler = Quaternion.ToEuler(new Quaternion(rotation.X, rotation.Y, rotation.Z, rotation.W));
+        node.LocalRotation = Quaternion.FromEuler(euler.X, -euler.Y, euler.Z);
+        node.LocalScale = new Float3(scaleVec.X, scaleVec.Y, scaleVec.Z);
+
+        // Record mesh indices attached to this node
+        for (uint i = 0; i < assimpNode->MNumMeshes; i++)
+        {
+            node.MeshIndices.Add((int)assimpNode->MMeshes[i]);
+        }
+
+        // Recurse into children
+        for (uint i = 0; i < assimpNode->MNumChildren; i++)
+        {
+            ModelNode child = BuildNodeHierarchy(assimpNode->MChildren[i], scale);
+            if (child != null)
+                node.Children.Add(child);
+        }
+
+        return node;
+    }
+
     private static unsafe Skeleton BuildSkeleton(Scene* scene, List<ModelMesh> meshes, float scale)
     {
         // Collect offset matrices from meshes (for bones with weights)
@@ -721,5 +781,58 @@ public class ModelImporter
     private static void LoadTextureIntoMesh(string name, FileInfo file, Material mat)
     {
         mat.SetTexture(name, Texture2D.LoadFromFile(file.FullName, true));
+    }
+
+    private static unsafe void LoadCameras(Scene* scene, List<Resources.ModelCamera> cameras)
+    {
+        for (uint i = 0; i < scene->MNumCameras; i++)
+        {
+            Silk.NET.Assimp.Camera* cam = scene->MCameras[i];
+            cameras.Add(new Resources.ModelCamera
+            {
+                Name = cam->MName.AsString,
+                FieldOfView = cam->MHorizontalFOV * (180f / MathF.PI), // Assimp stores radians
+                NearPlane = cam->MClipPlaneNear,
+                FarPlane = cam->MClipPlaneFar,
+                AspectRatio = cam->MAspect,
+                Position = new Float3(cam->MPosition.X, cam->MPosition.Y, cam->MPosition.Z),
+                LookAt = new Float3(cam->MLookAt.X, cam->MLookAt.Y, cam->MLookAt.Z),
+                Up = new Float3(cam->MUp.X, cam->MUp.Y, cam->MUp.Z),
+            });
+        }
+    }
+
+    private static unsafe void LoadLights(Scene* scene, List<Resources.ModelLight> lights)
+    {
+        for (uint i = 0; i < scene->MNumLights; i++)
+        {
+            Silk.NET.Assimp.Light* light = scene->MLights[i];
+
+            var kind = light->MType switch
+            {
+                Silk.NET.Assimp.LightSourceType.Directional => Resources.ModelLight.LightKind.Directional,
+                Silk.NET.Assimp.LightSourceType.Point => Resources.ModelLight.LightKind.Point,
+                Silk.NET.Assimp.LightSourceType.Spot => Resources.ModelLight.LightKind.Spot,
+                Silk.NET.Assimp.LightSourceType.Area => Resources.ModelLight.LightKind.Area,
+                Silk.NET.Assimp.LightSourceType.Ambient => Resources.ModelLight.LightKind.Ambient,
+                _ => Resources.ModelLight.LightKind.Point,
+            };
+
+            lights.Add(new Resources.ModelLight
+            {
+                Name = light->MName.AsString,
+                Kind = kind,
+                DiffuseColor = new Color(light->MColorDiffuse.X, light->MColorDiffuse.Y, light->MColorDiffuse.Z, 1),
+                SpecularColor = new Color(light->MColorSpecular.X, light->MColorSpecular.Y, light->MColorSpecular.Z, 1),
+                AmbientColor = new Color(light->MColorAmbient.X, light->MColorAmbient.Y, light->MColorAmbient.Z, 1),
+                Position = new Float3(light->MPosition.X, light->MPosition.Y, light->MPosition.Z),
+                Direction = new Float3(light->MDirection.X, light->MDirection.Y, light->MDirection.Z),
+                InnerConeAngle = light->MAngleInnerCone,
+                OuterConeAngle = light->MAngleOuterCone,
+                AttenuationConstant = light->MAttenuationConstant,
+                AttenuationLinear = light->MAttenuationLinear,
+                AttenuationQuadratic = light->MAttenuationQuadratic,
+            });
+        }
     }
 }
