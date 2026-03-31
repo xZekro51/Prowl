@@ -377,11 +377,23 @@ public class EventDomainGenerator : IIncrementalGenerator
         sb.AppendLine($"{ci}    => {managerField}.InvokeEvent(EventTypes.{name});");
         sb.AppendLine();
 
+        // InvokeAsync (parameterless)
+        sb.AppendLine($"{ci}/// <summary>Asynchronously invokes <see cref=\"EventTypes.{name}\"/> on this domain's manager, awaiting async handlers.</summary>");
+        sb.AppendLine($"{ci}public{memberStatic} global::System.Threading.Tasks.Task Invoke{name}Async()");
+        sb.AppendLine($"{ci}    => {managerField}.InvokeEventAsync(EventTypes.{name});");
+        sb.AppendLine();
+
         // GlobalInvoke (parameterless) — always static
         sb.AppendLine($"{ci}/// <summary>Invokes <see cref=\"EventTypes.{name}\"/> across all global managers of this domain.</summary>");
         sb.AppendLine($"{ci}[global::System.Runtime.CompilerServices.MethodImpl(global::System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]");
         sb.AppendLine($"{ci}public static void GlobalInvoke{name}()");
         sb.AppendLine($"{ci}    => global::Prowl.Runtime.EventSystem.EventManager<EventTypes>.GlobalInvokeEvent(EventTypes.{name});");
+        sb.AppendLine();
+
+        // GlobalInvokeAsync (parameterless) — always static
+        sb.AppendLine($"{ci}/// <summary>Asynchronously invokes <see cref=\"EventTypes.{name}\"/> across all global managers of this domain, awaiting async handlers.</summary>");
+        sb.AppendLine($"{ci}public static global::System.Threading.Tasks.Task GlobalInvoke{name}Async()");
+        sb.AppendLine($"{ci}    => global::Prowl.Runtime.EventSystem.EventManager<EventTypes>.GlobalInvokeEventAsync(EventTypes.{name});");
         sb.AppendLine();
 
         // Subscribe (parameterless)
@@ -399,6 +411,23 @@ public class EventDomainGenerator : IIncrementalGenerator
         sb.AppendLine($"{ci}    => {managerField}.AddNewDelegate(EventTypes.{name}, handler, priority);");
         sb.AppendLine($"#endif");
         sb.AppendLine();
+
+        // SubscribeAsync (parameterless)
+        string asyncContainerType = $"global::Prowl.Runtime.EventSystem.AsyncEventDelegateContainer<EventTypes, {UnitFqn}>";
+        sb.AppendLine($"{ci}/// <summary>Subscribes a parameterless async handler to <see cref=\"EventTypes.{name}\"/>. Dispose the returned container to unsubscribe.</summary>");
+        sb.AppendLine($"#if DEBUG");
+        sb.AppendLine($"{ci}public{memberStatic} {asyncContainerType} Subscribe{name}Async(");
+        sb.AppendLine($"{ci}    global::System.Func<global::System.Threading.Tasks.Task> handler, int priority = 0,");
+        sb.AppendLine($"{ci}    [global::System.Runtime.CompilerServices.CallerFilePath] string? sourceFile = null,");
+        sb.AppendLine($"{ci}    [global::System.Runtime.CompilerServices.CallerLineNumber] int sourceLine = 0,");
+        sb.AppendLine($"{ci}    [global::System.Runtime.CompilerServices.CallerMemberName] string? sourceMember = null)");
+        sb.AppendLine($"{ci}    => {managerField}.AddNewAsyncDelegate(EventTypes.{name}, handler, priority, sourceFile, sourceLine, sourceMember);");
+        sb.AppendLine($"#else");
+        sb.AppendLine($"{ci}public{memberStatic} {asyncContainerType} Subscribe{name}Async(");
+        sb.AppendLine($"{ci}    global::System.Func<global::System.Threading.Tasks.Task> handler, int priority = 0)");
+        sb.AppendLine($"{ci}    => {managerField}.AddNewAsyncDelegate(EventTypes.{name}, handler, priority);");
+        sb.AppendLine($"#endif");
+        sb.AppendLine();
     }
 
     private static void EmitTypedMethods(StringBuilder sb, string ci, string name, string argsType, string containerType, string memberStatic, string managerField)
@@ -410,11 +439,23 @@ public class EventDomainGenerator : IIncrementalGenerator
         sb.AppendLine($"{ci}    => {managerField}.InvokeEvent(EventTypes.{name}, args);");
         sb.AppendLine();
 
+        // InvokeAsync (typed)
+        sb.AppendLine($"{ci}/// <summary>Asynchronously invokes <see cref=\"EventTypes.{name}\"/> on this domain's manager, awaiting async handlers.</summary>");
+        sb.AppendLine($"{ci}public{memberStatic} global::System.Threading.Tasks.Task Invoke{name}Async({argsType} args)");
+        sb.AppendLine($"{ci}    => {managerField}.InvokeEventAsync(EventTypes.{name}, args);");
+        sb.AppendLine();
+
         // GlobalInvoke (typed) — always static
         sb.AppendLine($"{ci}/// <summary>Invokes <see cref=\"EventTypes.{name}\"/> across all global managers of this domain.</summary>");
         sb.AppendLine($"{ci}[global::System.Runtime.CompilerServices.MethodImpl(global::System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]");
         sb.AppendLine($"{ci}public static void GlobalInvoke{name}({argsType} args)");
         sb.AppendLine($"{ci}    => global::Prowl.Runtime.EventSystem.EventManager<EventTypes>.GlobalInvokeEvent(EventTypes.{name}, args);");
+        sb.AppendLine();
+
+        // GlobalInvokeAsync (typed) — always static
+        sb.AppendLine($"{ci}/// <summary>Asynchronously invokes <see cref=\"EventTypes.{name}\"/> across all global managers of this domain, awaiting async handlers.</summary>");
+        sb.AppendLine($"{ci}public static global::System.Threading.Tasks.Task GlobalInvoke{name}Async({argsType} args)");
+        sb.AppendLine($"{ci}    => global::Prowl.Runtime.EventSystem.EventManager<EventTypes>.GlobalInvokeEventAsync(EventTypes.{name}, args);");
         sb.AppendLine();
 
         // Subscribe (typed)
@@ -430,6 +471,23 @@ public class EventDomainGenerator : IIncrementalGenerator
         sb.AppendLine($"{ci}public{memberStatic} {containerType} Subscribe{name}(");
         sb.AppendLine($"{ci}    global::System.Action<{argsType}> handler, int priority = 0)");
         sb.AppendLine($"{ci}    => {managerField}.AddNewDelegate<{argsType}>(EventTypes.{name}, handler, priority);");
+        sb.AppendLine($"#endif");
+        sb.AppendLine();
+
+        // SubscribeAsync (typed)
+        string asyncContainerType = $"global::Prowl.Runtime.EventSystem.AsyncEventDelegateContainer<EventTypes, {argsType}>";
+        sb.AppendLine($"{ci}/// <summary>Subscribes a typed async handler to <see cref=\"EventTypes.{name}\"/>. Dispose the returned container to unsubscribe.</summary>");
+        sb.AppendLine($"#if DEBUG");
+        sb.AppendLine($"{ci}public{memberStatic} {asyncContainerType} Subscribe{name}Async(");
+        sb.AppendLine($"{ci}    global::System.Func<{argsType}, global::System.Threading.Tasks.Task> handler, int priority = 0,");
+        sb.AppendLine($"{ci}    [global::System.Runtime.CompilerServices.CallerFilePath] string? sourceFile = null,");
+        sb.AppendLine($"{ci}    [global::System.Runtime.CompilerServices.CallerLineNumber] int sourceLine = 0,");
+        sb.AppendLine($"{ci}    [global::System.Runtime.CompilerServices.CallerMemberName] string? sourceMember = null)");
+        sb.AppendLine($"{ci}    => {managerField}.AddNewAsyncDelegate<{argsType}>(EventTypes.{name}, handler, priority, sourceFile, sourceLine, sourceMember);");
+        sb.AppendLine($"#else");
+        sb.AppendLine($"{ci}public{memberStatic} {asyncContainerType} Subscribe{name}Async(");
+        sb.AppendLine($"{ci}    global::System.Func<{argsType}, global::System.Threading.Tasks.Task> handler, int priority = 0)");
+        sb.AppendLine($"{ci}    => {managerField}.AddNewAsyncDelegate<{argsType}>(EventTypes.{name}, handler, priority);");
         sb.AppendLine($"#endif");
         sb.AppendLine();
     }

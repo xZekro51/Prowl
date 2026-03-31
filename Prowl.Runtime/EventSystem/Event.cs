@@ -3,6 +3,7 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Reflection;
+using System.Threading.Tasks;
 
 namespace Prowl.Runtime.EventSystem;
 
@@ -163,6 +164,79 @@ public class Event<T> where T : struct, Enum
             sw?.Restart();
 #endif
             typedSnapshot[j].Invoke(args);
+
+#if DEBUG
+            if (sw is not null)
+            {
+                sw.Stop();
+                double elapsed = sw.Elapsed.TotalMilliseconds;
+                if (elapsed > threshold)
+                {
+                    Debug.LogWarning(
+                        $"[EventSystem] Slow handler on {typeof(T).Name}.{_eventType}: " +
+                        $"{elapsed:F2}ms (threshold {threshold:F1}ms). " +
+                        $"Handler: {typedSnapshot[j].SourceDescription}");
+                }
+            }
+#endif
+
+            if (CancellableCheck<TArgs>.IsCancellable && args is ICancellable { Cancelled: true })
+                break;
+        }
+    }
+
+    /// <summary>
+    /// Asynchronously invokes all handlers for the given <typeparamref name="TArgs"/>,
+    /// awaiting async handlers (<see cref="IAsyncInvocable{TArgs}"/>) sequentially while
+    /// calling synchronous handlers inline. Priority ordering and cancellation semantics
+    /// are identical to <see cref="Invoke{TArgs}"/>.
+    /// <para>
+    /// Intended for editor/tool events where handlers legitimately need to perform I/O.
+    /// Not recommended for the game-loop hot path — use <see cref="Invoke{TArgs}"/> instead.
+    /// </para>
+    /// </summary>
+    public async Task InvokeAsync<TArgs>(TArgs args)
+    {
+        if (!Enabled) return;
+
+        EventDelegateContainer<T, TArgs>[] typedSnapshot;
+#if DEBUG
+        EventDelegateContainer<T>[] fullSnapshot;
+#endif
+        lock (_lock)
+        {
+            typedSnapshot = _typedSnapshots.TryGetValue(typeof(TArgs), out var obj)
+                ? (EventDelegateContainer<T, TArgs>[])obj
+                : [];
+#if DEBUG
+            fullSnapshot = _cachedSnapshot;
+#endif
+        }
+
+#if DEBUG
+        // Warn about handlers on this event registered with a different TArgs.
+        if (fullSnapshot.Length > typedSnapshot.Length)
+        {
+            for (int j = 0; j < fullSnapshot.Length; j++)
+            {
+                if (fullSnapshot[j] is not EventDelegateContainer<T, TArgs>)
+                    WarnTypeMismatch<TArgs>(fullSnapshot[j]);
+            }
+        }
+
+        double threshold = SlowHandlerThresholdMs;
+        Stopwatch? sw = threshold > 0 ? Stopwatch.StartNew() : null;
+#endif
+
+        for (int j = 0; j < typedSnapshot.Length; j++)
+        {
+#if DEBUG
+            sw?.Restart();
+#endif
+            if (typedSnapshot[j] is IAsyncInvocable<TArgs> asyncHandler)
+                await asyncHandler.InvokeAsync(args).ConfigureAwait(false);
+            else
+                typedSnapshot[j].Invoke(args);
 
 #if DEBUG
             if (sw is not null)

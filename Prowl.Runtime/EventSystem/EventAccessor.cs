@@ -2,6 +2,7 @@
 // Licensed under the MIT License. See the LICENSE file in the project root for details.
 
 using System;
+using System.Threading.Tasks;
 
 namespace Prowl.Runtime.EventSystem;
 
@@ -30,6 +31,9 @@ public readonly struct EventAccessor<TEnum> where TEnum : struct, Enum
     /// <summary>Fire the parameterless event.</summary>
     public void Invoke() => _manager.InvokeEvent(_eventType);
 
+    /// <summary>Asynchronously fire the parameterless event, awaiting async handlers.</summary>
+    public Task InvokeAsync() => _manager.InvokeEventAsync(_eventType);
+
     public static EventAccessor<TEnum> operator +(EventAccessor<TEnum> accessor, Action handler)
     {
         accessor._manager.AddNewDelegate(accessor._eventType, handler, 0);
@@ -37,6 +41,18 @@ public readonly struct EventAccessor<TEnum> where TEnum : struct, Enum
     }
 
     public static EventAccessor<TEnum> operator -(EventAccessor<TEnum> accessor, Action handler)
+    {
+        accessor._manager.RemoveDelegate(accessor._eventType, handler);
+        return accessor;
+    }
+
+    public static EventAccessor<TEnum> operator +(EventAccessor<TEnum> accessor, Func<Task> handler)
+    {
+        accessor._manager.AddNewAsyncDelegate(accessor._eventType, handler, 0);
+        return accessor;
+    }
+
+    public static EventAccessor<TEnum> operator -(EventAccessor<TEnum> accessor, Func<Task> handler)
     {
         accessor._manager.RemoveDelegate(accessor._eventType, handler);
         return accessor;
@@ -62,6 +78,9 @@ public readonly struct EventAccessor<TEnum, TArgs> where TEnum : struct, Enum
     /// <summary>Fire the event with the given arguments.</summary>
     public void Invoke(TArgs args) => _manager.InvokeEvent<TArgs>(_eventType, args);
 
+    /// <summary>Asynchronously fire the event with the given arguments, awaiting async handlers.</summary>
+    public Task InvokeAsync(TArgs args) => _manager.InvokeEventAsync<TArgs>(_eventType, args);
+
     public static EventAccessor<TEnum, TArgs> operator +(EventAccessor<TEnum, TArgs> accessor, Action<TArgs> handler)
     {
         accessor._manager.AddNewDelegate<TArgs>(accessor._eventType, handler, 0);
@@ -69,6 +88,18 @@ public readonly struct EventAccessor<TEnum, TArgs> where TEnum : struct, Enum
     }
 
     public static EventAccessor<TEnum, TArgs> operator -(EventAccessor<TEnum, TArgs> accessor, Action<TArgs> handler)
+    {
+        accessor._manager.RemoveDelegate(accessor._eventType, handler);
+        return accessor;
+    }
+
+    public static EventAccessor<TEnum, TArgs> operator +(EventAccessor<TEnum, TArgs> accessor, Func<TArgs, Task> handler)
+    {
+        accessor._manager.AddNewAsyncDelegate<TArgs>(accessor._eventType, handler, 0);
+        return accessor;
+    }
+
+    public static EventAccessor<TEnum, TArgs> operator -(EventAccessor<TEnum, TArgs> accessor, Func<TArgs, Task> handler)
     {
         accessor._manager.RemoveDelegate(accessor._eventType, handler);
         return accessor;

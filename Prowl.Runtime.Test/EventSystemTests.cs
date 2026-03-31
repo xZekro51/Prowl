@@ -1031,6 +1031,179 @@ public class EventSystemTests : IDisposable
 
     #endregion
 
+    #region Async Invoke
+
+    [Fact]
+    public async Task InvokeEventAsync_CallsAsyncDelegate()
+    {
+        var manager = CreateManager();
+        bool called = false;
+        manager.AddNewAsyncDelegate<TestParam>(TestEvents.EventA, async args =>
+        {
+            await Task.Yield();
+            called = true;
+        });
+
+        await manager.InvokeEventAsync(TestEvents.EventA, new TestParam { Data = 1 });
+
+        Assert.True(called);
+    }
+
+    [Fact]
+    public async Task InvokeEventAsync_ParameterlessAsync_Works()
+    {
+        var manager = CreateManager();
+        bool called = false;
+        manager.AddNewAsyncDelegate(TestEvents.EventA, async () =>
+        {
+            await Task.Yield();
+            called = true;
+        });
+
+        await manager.InvokeEventAsync(TestEvents.EventA);
+
+        Assert.True(called);
+    }
+
+    [Fact]
+    public async Task InvokeEventAsync_MixedSyncAndAsync_BothCalled()
+    {
+        var manager = CreateManager();
+        var order = new List<int>();
+
+        manager.AddNewDelegate<TestParam>(TestEvents.EventA, _ => order.Add(1), priority: 0);
+        manager.AddNewAsyncDelegate<TestParam>(TestEvents.EventA, async _ =>
+        {
+            await Task.Yield();
+            order.Add(2);
+        }, priority: 1);
+
+        await manager.InvokeEventAsync(TestEvents.EventA, new TestParam());
+
+        Assert.Equal(2, order.Count);
+        Assert.Contains(1, order);
+        Assert.Contains(2, order);
+    }
+
+    [Fact]
+    public async Task InvokeEventAsync_PriorityOrder_Maintained()
+    {
+        var manager = CreateManager();
+        var order = new List<int>();
+
+        manager.AddNewAsyncDelegate<TestParam>(TestEvents.EventA, async _ =>
+        {
+            await Task.Yield();
+            order.Add(2);
+        }, priority: 1);
+        manager.AddNewDelegate<TestParam>(TestEvents.EventA, _ => order.Add(1), priority: 0);
+
+        await manager.InvokeEventAsync(TestEvents.EventA, new TestParam());
+
+        Assert.Equal(new List<int> { 1, 2 }, order);
+    }
+
+    [Fact]
+    public async Task InvokeEventAsync_Cancellation_StopsPropagation()
+    {
+        var manager = CreateManager();
+        var order = new List<int>();
+
+        manager.AddNewAsyncDelegate<CancellableTestArgs>(TestEvents.EventA, async args =>
+        {
+            await Task.Yield();
+            order.Add(1);
+            args.Cancelled = true;
+        }, priority: 0);
+        manager.AddNewAsyncDelegate<CancellableTestArgs>(TestEvents.EventA, async _ =>
+        {
+            await Task.Yield();
+            order.Add(2);
+        }, priority: 1);
+
+        await manager.InvokeEventAsync(TestEvents.EventA, new CancellableTestArgs());
+
+        Assert.Single(order);
+        Assert.Equal(1, order[0]);
+    }
+
+    [Fact]
+    public async Task InvokeEventAsync_DisabledManager_DoesNotInvoke()
+    {
+        var manager = CreateManager();
+        bool called = false;
+        manager.AddNewAsyncDelegate(TestEvents.EventA, async () =>
+        {
+            await Task.Yield();
+            called = true;
+        });
+
+        manager.Enabled = false;
+        await manager.InvokeEventAsync(TestEvents.EventA);
+
+        Assert.False(called);
+    }
+
+    [Fact]
+    public async Task GlobalInvokeEventAsync_ReachesGlobalManagers()
+    {
+        var globalMgr = CreateManager(global: true);
+        var nonGlobal = CreateManager(global: false);
+        bool globalCalled = false;
+        bool nonGlobalCalled = false;
+
+        globalMgr.AddNewAsyncDelegate(TestEvents.EventA, async () =>
+        {
+            await Task.Yield();
+            globalCalled = true;
+        });
+        nonGlobal.AddNewAsyncDelegate(TestEvents.EventA, async () =>
+        {
+            await Task.Yield();
+            nonGlobalCalled = true;
+        });
+
+        await EventManager<TestEvents>.GlobalInvokeEventAsync(TestEvents.EventA);
+
+        Assert.True(globalCalled);
+        Assert.False(nonGlobalCalled);
+    }
+
+    [Fact]
+    public void AsyncDelegate_Dispose_Unsubscribes()
+    {
+        var manager = CreateManager();
+        bool called = false;
+        var container = manager.AddNewAsyncDelegate(TestEvents.EventA, async () =>
+        {
+            await Task.Yield();
+            called = true;
+        });
+
+        container.Dispose();
+        manager.InvokeEvent(TestEvents.EventA);
+
+        Assert.False(called);
+    }
+
+    [Fact]
+    public async Task InvokeEventAsync_ContractMismatch_DoesNotThrow()
+    {
+        var manager = CreateContractedManager();
+        manager.AddNewAsyncDelegate<int>(ContractedEvents.TypedEvent, async x =>
+        {
+            await Task.Yield();
+        });
+
+        // Invoke with wrong type — silently rejected by contract check
+        var ex = await Record.ExceptionAsync(() =>
+            manager.InvokeEventAsync(ContractedEvents.TypedEvent, "wrong"));
+
+        Assert.Null(ex);
+    }
+
+    #endregion
+
     /// <summary>
     /// Test event argument class used by typed-args tests.
     /// </summary>

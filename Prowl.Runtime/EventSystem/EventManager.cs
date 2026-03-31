@@ -2,6 +2,7 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Runtime.CompilerServices;
+using System.Threading.Tasks;
 
 namespace Prowl.Runtime.EventSystem;
 
@@ -212,6 +213,36 @@ public class EventManager<T> : IDisposable where T : struct, Enum
     }
 
     /// <summary>
+    /// Asynchronously invoke an event with typed arguments. Async handlers are
+    /// awaited sequentially; synchronous handlers are called inline.
+    /// Intended for editor/tool events that perform I/O.
+    /// </summary>
+    public async Task InvokeEventAsync<TArgs>(T eventType, TArgs args)
+    {
+        if (_disposed || !Enabled) return;
+
+        if (!EventArgsContract<T>.IsValid<TArgs>(eventType))
+        {
+            Debug.LogError(
+                $"[EventSystem] Type mismatch on {typeof(T).Name}.{eventType}: " +
+                $"invoked with '{typeof(TArgs).Name}' but the event declares " +
+                $"'{EventArgsContract<T>.GetDeclaredName(eventType)}' via [EventArgs].");
+            return;
+        }
+
+        if (_events.TryGetValue(eventType, out var evt))
+            await evt.InvokeAsync(args).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Asynchronously invoke a parameterless event.
+    /// </summary>
+    public Task InvokeEventAsync(T eventType)
+    {
+        return InvokeEventAsync(eventType, default(Unit));
+    }
+
+    /// <summary>
     /// Register a typed delegate for an event.
     /// </summary>
     public EventDelegateContainer<T, TArgs> AddNewDelegate<TArgs>(
@@ -343,6 +374,70 @@ public class EventManager<T> : IDisposable where T : struct, Enum
 
 
     /// <summary>
+    /// Register a typed async delegate for an event.
+    /// </summary>
+    public AsyncEventDelegateContainer<T, TArgs> AddNewAsyncDelegate<TArgs>(
+        T eventType, Func<TArgs, Task> eventDelegate, int priority = 0
+#if DEBUG
+        , [CallerFilePath] string? sourceFile = null,
+        [CallerLineNumber] int sourceLine = 0,
+        [CallerMemberName] string? sourceMember = null
+#endif
+    )
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+
+        if (!EventArgsContract<T>.IsValid<TArgs>(eventType))
+        {
+            throw new InvalidOperationException(
+                $"[EventSystem] Type mismatch on {typeof(T).Name}.{eventType}: " +
+                $"async handler registered with '{typeof(TArgs).Name}' but the event " +
+                $"declares '{EventArgsContract<T>.GetDeclaredName(eventType)}' " +
+                $"via [EventArgs]. Fix the subscriber's type parameter.");
+        }
+#if DEBUG
+        var container = new AsyncEventDelegateContainer<T, TArgs>(eventType, eventDelegate, priority, sourceFile, sourceLine, sourceMember);
+#else
+        var container = new AsyncEventDelegateContainer<T, TArgs>(eventType, eventDelegate, priority);
+#endif
+        GetOrCreateEvent(eventType).Add(container);
+        return container;
+    }
+
+    /// <summary>
+    /// Register a parameterless async delegate for an event.
+    /// </summary>
+    public AsyncEventDelegateContainer<T, Unit> AddNewAsyncDelegate(
+        T eventType, Func<Task> eventDelegate, int priority = 0
+#if DEBUG
+        , [CallerFilePath] string? sourceFile = null,
+        [CallerLineNumber] int sourceLine = 0,
+        [CallerMemberName] string? sourceMember = null
+#endif
+    )
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+
+        if (!EventArgsContract<T>.IsValid<Unit>(eventType))
+        {
+            throw new InvalidOperationException(
+                $"[EventSystem] Type mismatch on {typeof(T).Name}.{eventType}: " +
+                $"async handler registered with 'Unit' (parameterless) but the event " +
+                $"declares '{EventArgsContract<T>.GetDeclaredName(eventType)}' " +
+                $"via [EventArgs]. Fix the subscriber's type parameter.");
+        }
+
+#if DEBUG
+        var container = new ParameterlessAsyncEventDelegateContainer<T>(eventType, eventDelegate, priority, sourceFile, sourceLine, sourceMember);
+#else
+        var container = new ParameterlessAsyncEventDelegateContainer<T>(eventType, eventDelegate, priority);
+#endif
+        GetOrCreateEvent(eventType).Add(container);
+        return container;
+    }
+
+
+    /// <summary>
     /// Invoke an event with typed arguments across all global managers.
     /// </summary>
     public static void GlobalInvokeEvent<TArgs>(T eventType, TArgs args)
@@ -365,6 +460,31 @@ public class EventManager<T> : IDisposable where T : struct, Enum
     public static void GlobalInvokeEvent(T eventType)
     {
         GlobalInvokeEvent(eventType, default(Unit));
+    }
+
+    /// <summary>
+    /// Asynchronously invoke an event with typed arguments across all global managers.
+    /// </summary>
+    public static async Task GlobalInvokeEventAsync<TArgs>(T eventType, TArgs args)
+    {
+        var snapshot = s_globalSnapshot;
+
+        for (int i = 0; i < snapshot.Length; i++)
+        {
+            var instance = snapshot[i];
+            if (instance.Enabled)
+            {
+                await instance.InvokeEventAsync(eventType, args).ConfigureAwait(false);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Asynchronously invoke a parameterless event across all global managers.
+    /// </summary>
+    public static Task GlobalInvokeEventAsync(T eventType)
+    {
+        return GlobalInvokeEventAsync(eventType, default(Unit));
     }
 
     public void Dispose()
