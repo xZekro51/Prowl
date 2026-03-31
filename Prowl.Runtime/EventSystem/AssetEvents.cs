@@ -7,19 +7,20 @@ namespace Prowl.Runtime.EventSystem;
 /// Events raised by the asset system when assets change on disk.
 /// These are only available in the editor (or tools that run the asset pipeline).
 /// </summary>
-public enum AssetEvents
+[EventDomain(Global = true)]
+public static partial class AssetEvents
 {
     /// <summary>Raised after the asset database is refreshed (files re-scanned).</summary>
     [EventArgs(typeof(Unit))]
-    OnAssetsRefreshed,
+    private static readonly EventKey _OnAssetsRefreshed = new();
 
     /// <summary>Raised when one or more files are imported into the project (e.g. from OS drag-drop).</summary>
     [EventArgs(typeof(AssetImportedArgs))]
-    OnAssetsImported,
+    private static readonly EventKey _OnAssetsImported = new();
 
     /// <summary>Raised when an asset is deleted from the project.</summary>
     [EventArgs(typeof(AssetDeletedArgs))]
-    OnAssetDeleted,
+    private static readonly EventKey _OnAssetDeleted = new();
 }
 
 /// <summary>

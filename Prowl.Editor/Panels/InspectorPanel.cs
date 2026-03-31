@@ -63,8 +63,7 @@ public sealed class InspectorPanel : EditorPanel
     public InspectorPanel() : base("Inspector")
     {
         // Invalidate cached component list when user scripts are recompiled
-        EditorApplication.EditorEventManager.AddNewDelegate(
-            EditorEvents.OnAssemblyChanged, InvalidateComponentCache);
+        EditorEvents.SubscribeOnAssemblyChanged(InvalidateComponentCache);
     }
 
     /// <summary>

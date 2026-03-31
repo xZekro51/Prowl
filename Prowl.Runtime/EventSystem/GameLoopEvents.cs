@@ -7,30 +7,31 @@ namespace Prowl.Runtime.EventSystem;
 
 /// <summary>
 /// Events raised during the main game loop lifecycle.
-/// Subscribe via <c>Game.GameLoopEventManager.AddNewDelegate(...)</c> or
-/// listen globally with <see cref="EventManager{T}.GlobalInvokeEvent"/>.
+/// Subscribe via <c>GameLoopEvents.SubscribeOnXxx(...)</c> or
+/// invoke globally with <c>GameLoopEvents.GlobalInvokeOnXxx(...)</c>.
 /// </summary>
-public enum GameLoopEvents
+[EventDomain(Global = true)]
+public static partial class GameLoopEvents
 {
     /// <summary>Raised once after the engine and window have been fully initialized.</summary>
     [EventArgs(typeof(InitializedArgs))]
-    OnInitialized,
+    private static readonly EventKey _OnInitialized = new();
 
     /// <summary>Raised at the very beginning of each frame, before input processing.</summary>
     [EventArgs(typeof(FrameBeginArgs))]
-    OnFrameBegin,
+    private static readonly EventKey _OnFrameBegin = new();
 
     /// <summary>Raised after all update logic has completed for the frame.</summary>
     [EventArgs(typeof(FrameEndArgs))]
-    OnFrameEnd,
+    private static readonly EventKey _OnFrameEnd = new();
 
     /// <summary>Raised after rendering is complete (after Profiler.EndFrame).</summary>
     [EventArgs(typeof(RenderCompleteArgs))]
-    OnRenderComplete,
+    private static readonly EventKey _OnRenderComplete = new();
 
     /// <summary>Raised when the application window is closing.</summary>
     [EventArgs(typeof(ClosingArgs))]
-    OnClosing,
+    private static readonly EventKey _OnClosing = new();
 }
 
 /// <summary>

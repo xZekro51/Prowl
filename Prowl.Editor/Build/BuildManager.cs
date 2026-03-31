@@ -187,8 +187,8 @@ public static class BuildManager
         }
 
         // Hook Debug output to console for headless mode
-        using var logSub = Debug.DebugEventManager.AddNewDelegate<LogEventArgs>(
-            DebugEvents.OnLog, args => OnConsoleLog(args.Message, args.StackTrace, args.Severity));
+        using var logSub = DebugEvents.SubscribeOnLog(
+            args => OnConsoleLog(args.Message, args.StackTrace, args.Severity));
 
         try
         {

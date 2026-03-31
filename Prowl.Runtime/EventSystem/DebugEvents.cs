@@ -6,11 +6,12 @@ namespace Prowl.Runtime.EventSystem;
 /// <summary>
 /// Events raised by the <see cref="Debug"/> logging system.
 /// </summary>
-public enum DebugEvents
+[EventDomain]
+public static partial class DebugEvents
 {
     /// <summary>Raised whenever a message is logged via <see cref="Debug.Log"/> or related methods.</summary>
     [EventArgs(typeof(LogEventArgs))]
-    OnLog,
+    private static readonly EventKey _OnLog = new();
 }
 
 /// <summary>

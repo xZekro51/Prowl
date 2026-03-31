@@ -44,8 +44,8 @@ public static class PlayerFileLogger
             _writer.WriteLine(new string('=', 72));
             _writer.WriteLine();
 
-            _logSubscription = Debug.DebugEventManager.AddNewDelegate<LogEventArgs>(
-                DebugEvents.OnLog, args => OnLogReceived(args.Message, args.StackTrace, args.Severity));
+            _logSubscription = DebugEvents.SubscribeOnLog(
+                args => OnLogReceived(args.Message, args.StackTrace, args.Severity));
             _initialized = true;
         }
         catch (Exception ex)

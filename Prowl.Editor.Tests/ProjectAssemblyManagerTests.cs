@@ -82,8 +82,7 @@ public sealed class ProjectAssemblyManagerTests : IDisposable
 
         using var mgr = new ProjectAssemblyManager(_projectPath);
         int callCount = 0;
-        using var sub = EditorApplication.EditorEventManager.AddNewDelegate(
-            EditorEvents.OnAssemblyChanged, () => callCount++);
+        using var sub = EditorEvents.SubscribeOnAssemblyChanged(() => callCount++);
 
         mgr.CompileAndLoad();
 
@@ -153,8 +152,7 @@ public sealed class ProjectAssemblyManagerTests : IDisposable
 
         using var mgr = new ProjectAssemblyManager(_projectPath);
         int callCount = 0;
-        using var sub = EditorApplication.EditorEventManager.AddNewDelegate(
-            EditorEvents.OnAssemblyChanged, () => callCount++);
+        using var sub = EditorEvents.SubscribeOnAssemblyChanged(() => callCount++);
 
         // No pending request — should not compile.
         mgr.ProcessPendingRecompile();

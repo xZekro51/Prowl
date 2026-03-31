@@ -60,8 +60,7 @@ public sealed class ProjectPanel : EditorPanel
 
     public ProjectPanel() : base("Project")
     {
-        EditorApplication.EditorEventManager.AddNewDelegate(
-            EditorEvents.OnAssemblyChanged, InvalidateScriptableObjectMenuCache);
+        EditorEvents.SubscribeOnAssemblyChanged(InvalidateScriptableObjectMenuCache);
     }
 
     /// <summary>

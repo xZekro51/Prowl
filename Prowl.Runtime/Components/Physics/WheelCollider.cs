@@ -181,10 +181,10 @@ public sealed class WheelCollider : MonoBehaviour
         }
 
         // Subscribe to physics events
-        _preStepSubscription = Game.PhysicsEventManager.AddNewDelegate<PhysicsStepArgs>(
-            PhysicsEvents.OnPrePhysicsStep, args => OnPreStep(args.DeltaTime));
-        _postStepSubscription = Game.PhysicsEventManager.AddNewDelegate<PhysicsStepArgs>(
-            PhysicsEvents.OnPostPhysicsStep, args => OnPostStep(args.DeltaTime));
+        _preStepSubscription = PhysicsEvents.SubscribeOnPrePhysicsStep(
+            args => OnPreStep(args.DeltaTime));
+        _postStepSubscription = PhysicsEvents.SubscribeOnPostPhysicsStep(
+            args => OnPostStep(args.DeltaTime));
 
         AdjustWheelValues();
     }

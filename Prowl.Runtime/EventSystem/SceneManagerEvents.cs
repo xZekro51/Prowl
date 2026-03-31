@@ -9,14 +9,16 @@ namespace Prowl.Runtime.EventSystem;
 /// Events raised by <see cref="Prowl.Runtime.SceneManager"/> during
 /// additive scene load/unload operations.
 /// </summary>
-public enum SceneManagerEvents
+[EventDomain]
+public static partial class SceneManagerEvents
 {
     /// <summary>Raised after a scene is loaded additively.</summary>
     [EventArgs(typeof(SceneEventArgs))]
-    OnSceneLoaded,
+    private static readonly EventKey _OnSceneLoaded = new();
+
     /// <summary>Raised after a scene is unloaded.</summary>
     [EventArgs(typeof(SceneEventArgs))]
-    OnSceneUnloaded,
+    private static readonly EventKey _OnSceneUnloaded = new();
 }
 
 /// <summary>

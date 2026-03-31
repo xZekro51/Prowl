@@ -100,6 +100,9 @@ public static class ProjectScriptCompiler
             references,
             compilationOptions);
 
+        // ── Run source generators (e.g. [EventDomain]) ────────
+        compilation = RunSourceGenerators(compilation, parseOptions);
+
         // ── Emit ───────────────────────────────────────────────
         string outDir = Path.Combine(projectPath, "Library", "ScriptAssemblies");
         Directory.CreateDirectory(outDir);
@@ -228,6 +231,76 @@ public static class ProjectScriptCompiler
         catch
         {
             return false;
+        }
+    }
+
+    // ── Source-generator support ────────────────────────────────
+
+    /// <summary>
+    /// Loads incremental source generators from the engine's analyzer directory
+    /// and runs them against <paramref name="compilation"/>, returning the
+    /// updated compilation with any generated sources appended.
+    /// </summary>
+    private static CSharpCompilation RunSourceGenerators(
+        CSharpCompilation compilation,
+        CSharpParseOptions parseOptions)
+    {
+        string? generatorDll = ProjectSolutionGenerator.FindGeneratorDllPath();
+        if (generatorDll == null)
+            return compilation;
+
+        var generators = LoadIncrementalGenerators(generatorDll);
+        if (generators.Length == 0)
+            return compilation;
+
+        var sourceGens = Array.ConvertAll(generators, g => g.AsSourceGenerator());
+        var driver = CSharpGeneratorDriver.Create(
+            (IEnumerable<ISourceGenerator>)sourceGens, null, parseOptions);
+
+        driver.RunGeneratorsAndUpdateCompilation(
+            compilation,
+            out var outputCompilation,
+            out var generatorDiags);
+
+        // Surface any generator-produced errors to the console.
+        foreach (var diag in generatorDiags)
+        {
+            if (diag.Severity == DiagnosticSeverity.Error)
+                Debug.LogError($"[Scripts] Generator: {diag}");
+        }
+
+        return (CSharpCompilation)outputCompilation;
+    }
+
+    /// <summary>
+    /// Loads all <see cref="IIncrementalGenerator"/> implementations from the
+    /// given assembly path.
+    /// </summary>
+    private static IIncrementalGenerator[] LoadIncrementalGenerators(string dllPath)
+    {
+        try
+        {
+            var asm = AssemblyLoadContext.Default.LoadFromAssemblyPath(dllPath);
+            var result = new List<IIncrementalGenerator>();
+
+            foreach (var type in asm.GetTypes())
+            {
+                if (type.IsAbstract || type.IsInterface)
+                    continue;
+
+                if (typeof(IIncrementalGenerator).IsAssignableFrom(type))
+                {
+                    if (Activator.CreateInstance(type) is IIncrementalGenerator gen)
+                        result.Add(gen);
+                }
+            }
+
+            return result.ToArray();
+        }
+        catch (Exception ex)
+        {
+            Debug.LogError($"[Scripts] Failed to load source generators from {dllPath}: {ex.Message}");
+            return [];
         }
     }
 

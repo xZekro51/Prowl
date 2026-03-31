@@ -51,12 +51,10 @@ public static class DpiManager
 
     /// <summary>
     /// Event manager for DPI change notifications.
-    /// Subscribe to <see cref="DpiEvents.OnDpiChanged"/> with priority ordering
-    /// and thread-safe dispatch.
-    /// Parameters: <see cref="DpiChangedArgs"/> with OldScale and NewScale.
-    /// Always raised on the main thread.
     /// </summary>
-    public static EventManager<DpiEvents> DpiEventManager { get; } = new();
+    [Obsolete("Use DpiEvents.Manager or the generated convenience methods instead.")]
+    public static EventManager<DpiEvents.EventTypes> DpiEventManager
+        => DpiEvents.Manager;
 
     // ── Process DPI Awareness ────────────────────────────────────────
 
@@ -196,7 +194,7 @@ public static class DpiManager
 
         float oldCombined = Scale;
         MonitorScale = newScale;
-        DpiEventManager.InvokeEvent(DpiEvents.OnDpiChanged, new DpiChangedArgs(oldCombined, Scale));
+        DpiEvents.InvokeOnDpiChanged(new DpiChangedArgs(oldCombined, Scale));
     }
 
     // ── Win32 P/Invoke ───────────────────────────────────────────────

@@ -7,14 +7,15 @@ namespace Prowl.Runtime.EventSystem;
 /// Events raised by <see cref="Prowl.Runtime.DpiManager"/> when the display
 /// scaling factor changes at runtime.
 /// </summary>
-public enum DpiEvents
+[EventDomain]
+public static partial class DpiEvents
 {
     /// <summary>
     /// Raised when the DPI scale changes (e.g., window dragged to a monitor
     /// with a different scaling setting).
     /// </summary>
     [EventArgs(typeof(DpiChangedArgs))]
-    OnDpiChanged,
+    private static readonly EventKey _OnDpiChanged = new();
 }
 
 /// <summary>

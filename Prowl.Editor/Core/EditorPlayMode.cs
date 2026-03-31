@@ -66,13 +66,13 @@ public sealed class EditorPlayMode
         {
             State = PlayModeState.Paused;
             EditorServices.Get<IEditorTime>().Pause();
-            EditorApplication.EditorEventManager.InvokeEvent(EditorEvents.OnPlayModeStateChanged, new PlayModeChangedArgs(State));
+            EditorEvents.InvokeOnPlayModeStateChanged(new PlayModeChangedArgs(State));
         }
         else if (State == PlayModeState.Paused)
         {
             State = PlayModeState.Playing;
             EditorServices.Get<IEditorTime>().Play();
-            EditorApplication.EditorEventManager.InvokeEvent(EditorEvents.OnPlayModeStateChanged, new PlayModeChangedArgs(State));
+            EditorEvents.InvokeOnPlayModeStateChanged(new PlayModeChangedArgs(State));
         }
     }
 
@@ -123,7 +123,7 @@ public sealed class EditorPlayMode
         time.Play();
 
         State = PlayModeState.Playing;
-        EditorApplication.EditorEventManager.InvokeEvent(EditorEvents.OnPlayModeStateChanged, new PlayModeChangedArgs(State));
+        EditorEvents.InvokeOnPlayModeStateChanged(new PlayModeChangedArgs(State));
 
         Debug.Log("[PlayMode] Entered play mode.");
     }
@@ -145,7 +145,7 @@ public sealed class EditorPlayMode
         _sceneSnapshot = null;
 
         State = PlayModeState.Stopped;
-        EditorApplication.EditorEventManager.InvokeEvent(EditorEvents.OnPlayModeStateChanged, new PlayModeChangedArgs(State));
+        EditorEvents.InvokeOnPlayModeStateChanged(new PlayModeChangedArgs(State));
 
         Debug.Log("[PlayMode] Exited play mode. Scene restored.");
     }

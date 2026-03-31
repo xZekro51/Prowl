@@ -340,6 +340,17 @@ public sealed class DesktopBuildPipeline : IBuildPipeline
             sb.AppendLine("  </ItemGroup>");
         }
 
+        // Source generator for [EventDomain] classes
+        string? generatorDll = Prowl.Editor.Project.ProjectSolutionGenerator.FindGeneratorDllPath();
+        if (generatorDll != null)
+        {
+            sb.AppendLine();
+            sb.AppendLine("  <ItemGroup>");
+            string escapedGen = SecurityElement.Escape(generatorDll) ?? generatorDll;
+            sb.AppendLine($"    <Analyzer Include=\"{escapedGen}\" />");
+            sb.AppendLine("  </ItemGroup>");
+        }
+
         sb.AppendLine();
         sb.AppendLine("</Project>");
 

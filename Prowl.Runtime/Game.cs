@@ -89,29 +89,38 @@ public abstract class Game
         list.Add((KeyCode.SuperLeft, PaperKey.LeftSuper));
         list.Add((KeyCode.SuperRight, PaperKey.RightSuper));
         return [.. list];
-    }
+        }
 
-    public static EventSystem.EventManager<EventSystem.BaseEvents> BaseEventManager { get; } = new();
+    // ── Backward-compatible event-manager shims ──────────────────────
+    // These delegate to the source-generated Manager on each domain class.
+    // User code should migrate to the generated convenience methods
+    // (e.g. GameLoopEvents.InvokeOnFrameBegin, GameLoopEvents.SubscribeOnFrameBegin)
+    // or access the manager directly via GameLoopEvents.Manager.
 
-    /// <summary>
-    /// Event manager for game loop lifecycle events (initialize, frame begin/end, closing).
-    /// </summary>
-    public static EventSystem.EventManager<EventSystem.GameLoopEvents> GameLoopEventManager { get; } = new(global: true);
+    /// <inheritdoc cref="EventSystem.BaseEvents.Manager"/>
+    [Obsolete("Use BaseEvents.Manager or the generated convenience methods instead.")]
+    public static EventSystem.EventManager<EventSystem.BaseEvents.EventTypes> BaseEventManager
+        => EventSystem.BaseEvents.Manager;
 
-    /// <summary>
-    /// Event manager for rendering pipeline events.
-    /// </summary>
-    public static EventSystem.EventManager<EventSystem.RenderingEvents> RenderingEventManager { get; } = new(global: true);
+    /// <inheritdoc cref="EventSystem.GameLoopEvents.Manager"/>
+    [Obsolete("Use GameLoopEvents.Manager or the generated convenience methods instead.")]
+    public static EventSystem.EventManager<EventSystem.GameLoopEvents.EventTypes> GameLoopEventManager
+        => EventSystem.GameLoopEvents.Manager;
 
-    /// <summary>
-    /// Event manager for physics simulation events.
-    /// </summary>
-    public static EventSystem.EventManager<EventSystem.PhysicsEvents> PhysicsEventManager { get; } = new(global: true);
+    /// <inheritdoc cref="EventSystem.RenderingEvents.Manager"/>
+    [Obsolete("Use RenderingEvents.Manager or the generated convenience methods instead.")]
+    public static EventSystem.EventManager<EventSystem.RenderingEvents.EventTypes> RenderingEventManager
+        => EventSystem.RenderingEvents.Manager;
 
-    /// <summary>
-    /// Event manager for asset system events (import, delete, refresh).
-    /// </summary>
-    public static EventSystem.EventManager<EventSystem.AssetEvents> AssetEventManager { get; } = new(global: true);
+    /// <inheritdoc cref="EventSystem.PhysicsEvents.Manager"/>
+    [Obsolete("Use PhysicsEvents.Manager or the generated convenience methods instead.")]
+    public static EventSystem.EventManager<EventSystem.PhysicsEvents.EventTypes> PhysicsEventManager
+        => EventSystem.PhysicsEvents.Manager;
+
+    /// <inheritdoc cref="EventSystem.AssetEvents.Manager"/>
+    [Obsolete("Use AssetEvents.Manager or the generated convenience methods instead.")]
+    public static EventSystem.EventManager<EventSystem.AssetEvents.EventTypes> AssetEventManager
+        => EventSystem.AssetEvents.Manager;
 
     public string WindowTitle => _title;
 
@@ -145,7 +154,7 @@ public abstract class Game
         {
             Profiler.BeginFrame();
 
-            GameLoopEventManager.InvokeEvent(EventSystem.GameLoopEvents.OnFrameBegin,
+            EventSystem.GameLoopEvents.InvokeOnFrameBegin(
                 new EventSystem.FrameBeginArgs(frameCounter, delta));
 
             using (Profiler.Section("Input"))
@@ -208,7 +217,7 @@ public abstract class Game
             using (Profiler.Section("EndUpdate"))
                 EndUpdate();
 
-            GameLoopEventManager.InvokeEvent(EventSystem.GameLoopEvents.OnFrameEnd,
+            EventSystem.GameLoopEvents.InvokeOnFrameEnd(
                 new EventSystem.FrameEndArgs(
                     frameCounter,
                     time.DeltaTime,
@@ -323,8 +332,7 @@ public abstract class Game
             _overlayManager?.Initialize();
 
             // Subscribe to dynamic DPI changes
-            _dpiSubscription = DpiManager.DpiEventManager.AddNewDelegate<EventSystem.DpiChangedArgs>(
-                EventSystem.DpiEvents.OnDpiChanged,
+            _dpiSubscription = EventSystem.DpiEvents.SubscribeOnDpiChanged(
                 args => OnDpiChangedInternal(args.OldScale, args.NewScale));
 
             // Register built-in profiler section descriptions
@@ -332,7 +340,7 @@ public abstract class Game
 
             Initialize();
 
-            GameLoopEventManager.InvokeEvent(EventSystem.GameLoopEvents.OnInitialized,
+            EventSystem.GameLoopEvents.InvokeOnInitialized(
                 new EventSystem.InitializedArgs(
                     backend,
                     Graphics.IsGraphiteReady ? Graphics.Graphite.BackendName : backend.ToString(),
@@ -382,12 +390,12 @@ public abstract class Game
                         Rendering.ShadowAtlas.Clear();
                     }
 
-                    RenderingEventManager.InvokeEvent(EventSystem.RenderingEvents.OnShadowsReady);
+                    EventSystem.RenderingEvents.InvokeOnShadowsReady();
 
                     using (Profiler.Section("BeginRender"))
                         BeginRender();
 
-                    RenderingEventManager.InvokeEvent(EventSystem.RenderingEvents.OnBeginRender);
+                    EventSystem.RenderingEvents.InvokeOnBeginRender();
 
                     using (Profiler.Section("RenderScenes"))
                         RenderScenes();
@@ -395,7 +403,7 @@ public abstract class Game
                     using (Profiler.Section("EndRender"))
                         EndRender();
 
-                    RenderingEventManager.InvokeEvent(EventSystem.RenderingEvents.OnEndRender);
+                    EventSystem.RenderingEvents.InvokeOnEndRender();
                 }
                 catch (Exception e)
                 {
@@ -479,7 +487,7 @@ public abstract class Game
 
                 Profiler.EndFrame();
 
-                GameLoopEventManager.InvokeEvent(EventSystem.GameLoopEvents.OnRenderComplete,
+                EventSystem.GameLoopEvents.InvokeOnRenderComplete(
                     new EventSystem.RenderCompleteArgs(frameCounter, delta));
             }
             catch (Exception e)
@@ -509,7 +517,7 @@ public abstract class Game
         Debug.Log("[SetupWindowAndStart] Registering Closing handler...");
         Window.Closing += () =>
         {
-            GameLoopEventManager.InvokeEvent(EventSystem.GameLoopEvents.OnClosing,
+            EventSystem.GameLoopEvents.InvokeOnClosing(
                 new EventSystem.ClosingArgs(Time.TimeSinceStartup, Time.FrameCount));
 
             _dpiSubscription?.Dispose();

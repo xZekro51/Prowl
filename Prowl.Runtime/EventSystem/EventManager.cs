@@ -97,6 +97,17 @@ public class EventManager<T> : IDisposable where T : struct, Enum
         }
     }
 
+    /// <summary>
+    /// Removes the first delegate container that wraps the given handler delegate.
+    /// Used by the generated event <c>-=</c> accessors.
+    /// </summary>
+    public bool RemoveDelegate(T eventType, Delegate handler)
+    {
+        if (_events.TryGetValue(eventType, out var evt))
+            return evt.RemoveByDelegate(handler);
+        return false;
+    }
+
 
 
     public void RemoveEvent(Event<T> xEvent)

@@ -181,6 +181,33 @@ public class Event<T> where T : struct, Enum
         }
     }
 
+    /// <summary>
+    /// Removes the first delegate container whose wrapped handler equals the
+    /// specified <paramref name="handler"/>. Used by generated <c>-=</c> event accessors.
+    /// </summary>
+    public bool RemoveByDelegate(Delegate handler)
+    {
+        lock (_lock)
+        {
+            for (int i = 0; i < _sortedKeys.Count; i++)
+            {
+                var bucket = _eventDelegates[_sortedKeys[i]];
+                for (int j = 0; j < bucket.Count; j++)
+                {
+                    if (bucket[j].MatchesDelegate(handler))
+                    {
+                        var container = bucket[j];
+                        bucket.RemoveAt(j);
+                        container.Unlink();
+                        RebuildSnapshot();
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }
+    }
+
 
     private void SortKeys()
     {

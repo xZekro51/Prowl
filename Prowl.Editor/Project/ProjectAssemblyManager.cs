@@ -5,6 +5,7 @@ using System.Reflection;
 using System.Runtime.Loader;
 
 using Prowl.Echo;
+using Prowl.Editor.Core;
 using Prowl.Runtime;
 using Prowl.Runtime.Resources;
 
@@ -155,7 +156,7 @@ public sealed class ProjectAssemblyManager : IDisposable, IProjectTypeResolver
         // detect our own compilation as a change.
         SnapshotFileTimestamps();
 
-        EditorApplication.EditorEventManager.InvokeEvent(Editor.Core.EditorEvents.OnAssemblyChanged);
+        EditorEvents.InvokeOnAssemblyChanged();
         return result;
     }
 

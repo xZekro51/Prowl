@@ -86,12 +86,12 @@ public class PhysicsWorld
 
     private void OnPreStep(float deltaTime)
     {
-        Game.PhysicsEventManager.InvokeEvent(PhysicsEvents.OnPrePhysicsStep, new PhysicsStepArgs(deltaTime));
+        PhysicsEvents.InvokeOnPrePhysicsStep(new PhysicsStepArgs(deltaTime));
     }
 
     private void OnPostStep(float deltaTime)
     {
-        Game.PhysicsEventManager.InvokeEvent(PhysicsEvents.OnPostPhysicsStep, new PhysicsStepArgs(deltaTime));
+        PhysicsEvents.InvokeOnPostPhysicsStep(new PhysicsStepArgs(deltaTime));
     }
 
     public void Clear()

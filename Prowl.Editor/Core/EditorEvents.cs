@@ -7,21 +7,22 @@ namespace Prowl.Editor.Core;
 
 /// <summary>
 /// Events raised by the editor for play mode, assembly reloads, and error logging.
-/// Subscribe via <c>EditorApplication.EditorEventManager.AddNewDelegate(...)</c>.
+/// Subscribe via the generated convenience methods (e.g. <c>EditorEvents.SubscribeOnAssemblyChanged(...)</c>).
 /// </summary>
-public enum EditorEvents
+[EventDomain]
+public static partial class EditorEvents
 {
     /// <summary>Raised when the play mode state changes (play, pause, stop).</summary>
     [EventArgs(typeof(PlayModeChangedArgs))]
-    OnPlayModeStateChanged,
+    private static readonly EventKey _OnPlayModeStateChanged = new();
 
     /// <summary>Raised after the user-script assembly has been recompiled and reloaded.</summary>
     [EventArgs(typeof(Unit))]
-    OnAssemblyChanged,
+    private static readonly EventKey _OnAssemblyChanged = new();
 
     /// <summary>Raised when an error or exception is logged. Used to pause play mode.</summary>
     [EventArgs(typeof(Unit))]
-    OnErrorLogged,
+    private static readonly EventKey _OnErrorLogged = new();
 }
 
 /// <summary>

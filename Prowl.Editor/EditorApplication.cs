@@ -71,9 +71,11 @@ public sealed class EditorApplication : Game
     public static ProjectAssemblyManager? ScriptAssemblyManager { get; private set; }
 
     /// <summary>
-    /// Event manager for editor-specific lifecycle events (play mode, assembly reload, error logging).
+    /// Event manager for editor-specific lifecycle events.
     /// </summary>
-    public static EventManager<Core.EditorEvents> EditorEventManager { get; } = new();
+    [Obsolete("Use EditorEvents.Manager or the generated convenience methods instead.")]
+    public static EventManager<Core.EditorEvents.EventTypes> EditorEventManager
+        => Core.EditorEvents.Manager;
 
     /// <summary>
     /// Controls whether component gizmos (<see cref="MonoBehaviour.DrawGizmos"/>) are rendered.
@@ -174,8 +176,7 @@ public sealed class EditorApplication : Game
         EditorConsoleLogger.Initialize();
 
         // Wire up "Clear on Play": automatically clear the log when entering play mode
-        EditorEventManager.AddNewDelegate<PlayModeChangedArgs>(
-            Core.EditorEvents.OnPlayModeStateChanged, args =>
+        Core.EditorEvents.SubscribeOnPlayModeStateChanged(args =>
             {
                 if (args.State == PlayModeState.Playing && EditorConsoleLogger.ClearOnPlay)
                 {
@@ -185,8 +186,7 @@ public sealed class EditorApplication : Game
             });
 
         // Wire up "Error Pause": pause play mode when an error is logged
-        EditorEventManager.AddNewDelegate(
-            Core.EditorEvents.OnErrorLogged, () =>
+        Core.EditorEvents.SubscribeOnErrorLogged(() =>
             {
                 if (EditorConsoleLogger.ErrorPause && _playMode.State == PlayModeState.Playing)
                     _playMode.TogglePause();
@@ -235,7 +235,7 @@ public sealed class EditorApplication : Game
             ProjectAssembly.Register(_assemblyManager);
 
             ScriptAssemblyManager = _assemblyManager;
-            EditorEventManager.AddNewDelegate(Core.EditorEvents.OnAssemblyChanged, OnScriptAssemblyChanged);
+            Core.EditorEvents.SubscribeOnAssemblyChanged(OnScriptAssemblyChanged);
             _assemblyManager.CompileAndLoad();
             _assemblyManager.StartWatching();
 
@@ -1014,8 +1014,7 @@ public sealed class EditorApplication : Game
         if (importedPaths.Count > 0)
         {
             assets.Refresh();
-            Game.AssetEventManager.InvokeEvent(
-                Runtime.EventSystem.AssetEvents.OnAssetsImported,
+            Runtime.EventSystem.AssetEvents.InvokeOnAssetsImported(
                 new Runtime.EventSystem.AssetImportedArgs([.. importedPaths]));
             Debug.LogSuccess($"[Import] Successfully imported {importedPaths.Count} item(s) into {(targetRelDir == "." ? "Assets/" : $"Assets/{targetRelDir}/")}");
         }

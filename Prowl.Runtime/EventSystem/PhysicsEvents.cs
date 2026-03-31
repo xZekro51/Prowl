@@ -6,15 +6,16 @@ namespace Prowl.Runtime.EventSystem;
 /// <summary>
 /// Events raised during the physics simulation step.
 /// </summary>
-public enum PhysicsEvents
+[EventDomain(Global = true)]
+public static partial class PhysicsEvents
 {
     /// <summary>Raised before the physics world steps forward.</summary>
     [EventArgs(typeof(PhysicsStepArgs))]
-    OnPrePhysicsStep,
+    private static readonly EventKey _OnPrePhysicsStep = new();
 
     /// <summary>Raised after the physics world has completed a step.</summary>
     [EventArgs(typeof(PhysicsStepArgs))]
-    OnPostPhysicsStep,
+    private static readonly EventKey _OnPostPhysicsStep = new();
 }
 
 /// <summary>

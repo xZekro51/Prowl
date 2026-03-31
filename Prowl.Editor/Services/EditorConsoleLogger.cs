@@ -57,8 +57,8 @@ public static class EditorConsoleLogger
     {
         if (_initialized) return;
         _initialized = true;
-        _logSubscription = Debug.DebugEventManager.AddNewDelegate<LogEventArgs>(
-            DebugEvents.OnLog, args => OnLogReceived(args.Message, args.StackTrace, args.Severity));
+        _logSubscription = DebugEvents.SubscribeOnLog(
+            args => OnLogReceived(args.Message, args.StackTrace, args.Severity));
     }
 
     /// <summary> Unsubscribes from the engine log event. </summary>
@@ -196,7 +196,7 @@ public static class EditorConsoleLogger
 
         // Fire outside the lock to avoid deadlocks from re-entrant logging
         if (severity is LogSeverity.Error or LogSeverity.Exception)
-            EditorApplication.EditorEventManager?.InvokeEvent(EditorEvents.OnErrorLogged);
+            EditorEvents.InvokeOnErrorLogged();
     }
 
     private static void AppendEntry(string message, LogSeverity severity, DebugStackTrace? stackTrace)
