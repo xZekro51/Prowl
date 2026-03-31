@@ -22,7 +22,11 @@ function HomepageHeader() {
           </Link>
           <Link
             className="button button--secondary button--lg"
-            style={{ marginLeft: '1rem' }}
+            to="/docs/">
+            📖 Documentation
+          </Link>
+          <Link
+            className="button button--secondary button--lg"
             href="https://github.com/ProwlEngine/Prowl">
             GitHub ⭐
           </Link>
@@ -34,43 +38,54 @@ function HomepageHeader() {
 
 const features = [
   {
-    title: 'Unity-like API',
+    title: '🎯 Unity-like API',
     description:
       'Familiar GameObject & Component architecture with C# scripting. Seamless transition for Unity developers.',
+    link: '/docs/features/scripting',
   },
   {
-    title: 'Cross-Platform',
+    title: '🖥️ Cross-Platform',
     description:
       'Runs on Windows, Linux, and macOS. Build standalone applications for all three platforms.',
+    link: '/docs/getting-started',
   },
   {
-    title: 'Modern .NET 9',
+    title: '⚡ Modern .NET 9',
     description:
       'Built with the latest .NET, leveraging source generators, Span<T>, and modern C# features for performance.',
+    link: '/docs/architecture/event-system',
   },
   {
-    title: 'Multiple Rendering Backends',
+    title: '🎨 Multiple Rendering Backends',
     description:
       'OpenGL, Vulkan, Metal, and DirectX 11 support through the Graphite abstraction layer.',
+    link: '/docs/features/rendering',
   },
   {
-    title: 'PBR Rendering',
+    title: '💎 PBR Rendering',
     description:
       'Deferred rendering pipeline with HDR, physically-based materials, shadow mapping, and post-processing.',
+    link: '/docs/architecture/vulkan-rendering-pipeline',
   },
   {
-    title: 'Open Source',
+    title: '🔓 Open Source',
     description:
       'MIT licensed. Free to use, modify, and distribute. Community-driven development.',
+    link: '/docs/contributing',
   },
 ];
 
-function Feature({ title, description }) {
+function Feature({ title, description, link }) {
   return (
     <div className={clsx('col col--4')}>
       <div className="text--center padding-horiz--md padding-vert--md">
         <Heading as="h3">{title}</Heading>
         <p>{description}</p>
+        {link && (
+          <Link className="button button--outline button--primary button--sm" to={link}>
+            Learn more →
+          </Link>
+        )}
       </div>
     </div>
   );

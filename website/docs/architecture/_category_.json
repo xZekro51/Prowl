@@ -3,6 +3,6 @@
   "position": 4,
   "link": {
     "type": "generated-index",
-    "description": "Deep dives into the core systems and architecture of the Prowl engine."
+    "description": "Deep dives into the core systems and architecture of the Prowl engine. Understand how the event system, rendering pipeline, and other subsystems are designed and connected."
   }
 }

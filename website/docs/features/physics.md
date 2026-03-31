@@ -2,6 +2,8 @@
 id: physics
 title: Physics
 sidebar_position: 2
+description: Prowl's physics system powered by Jitter Physics 2 — colliders, events, and shape casting.
+keywords: [prowl, physics, jitter, colliders, raycasting]
 ---
 
 # Physics
@@ -21,16 +23,20 @@ Prowl integrates [Jitter Physics 2](https://github.com/notgiven688/jitterphysics
 
 ## Features
 
+:::info Key Capabilities
+
 - **Collision Layers** — Control which objects can interact with each other
-- **Physics Events** — `OnPrePhysicsStep` and `OnPostPhysicsStep` events via the [Event System](/docs/architecture/event-system)
 - **Fixed Timestep** — Physics runs at a fixed timestep independent of frame rate
-- **Shape Casting** — Ray and shape cast queries
+- **Shape Casting** — Ray and shape cast queries for gameplay logic
+- **Physics Events** — `OnPrePhysicsStep` and `OnPostPhysicsStep` events via the [Event System](../architecture/event-system)
+
+:::
 
 ## Physics Events
 
-The physics system integrates with Prowl's event system:
+The physics system integrates with Prowl's [Event System](../architecture/event-system):
 
-```csharp
+```csharp title="Subscribing to physics events"
 // Subscribe to physics events
 PhysicsEvents.OnPrePhysicsStep += (args) =>
 {
@@ -43,3 +49,9 @@ PhysicsEvents.OnPostPhysicsStep += (args) =>
     // Called after each physics step
 };
 ```
+
+:::tip
+
+Physics events use the same priority-ordered, cancellable dispatch as all other Prowl events. See the [Event System architecture doc](../architecture/event-system) for details on priority ordering and lifecycle-aware subscriptions.
+
+:::

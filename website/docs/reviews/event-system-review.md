@@ -1,6 +1,8 @@
 ---
 sidebar_position: 1
 title: "Event System — Technical Review"
+description: In-depth technical review of Prowl's event system — scorecard, architecture analysis, strengths, and recommendations.
+keywords: [prowl, event system, review, architecture, performance]
 ---
 
 # Event System — Technical Review
@@ -12,6 +14,8 @@ title: "Event System — Technical Review"
 
 ## 1. Scorecard
 
+:::info Overall Rating: **8.7 / 10**
+
 | Criterion | Score (1–10) | Notes |
 |---|---|---|
 | API design & ergonomics | 9 | Generated accessors give C#-event feel with zero boilerplate; lifecycle-aware subscriptions eliminate manual cleanup |
@@ -21,7 +25,10 @@ title: "Event System — Technical Review"
 | Cold-path performance | 8 | `BeginBatch` / `EndBatch` defers snapshot rebuilds during bulk subscriptions; O(n²) → O(n log n) |
 | Extensibility | 7 | Adding a new domain is one enum + one attribute; cross-domain composition not yet addressed |
 | Debuggability | 9 | `#if DEBUG` caller-info on every subscription; per-handler slow timing with configurable threshold |
-| **Overall** | **8.7 / 10** | All major review recommendations implemented; production-quality event bus with strong guarantees |
+
+All major review recommendations implemented; production-quality event bus with strong guarantees.
+
+:::
 
 ---
 
@@ -68,6 +75,9 @@ title: "Event System — Technical Review"
 
 ## 3. Strengths
 
+<details>
+<summary><strong>✅ View all 10 identified strengths</strong></summary>
+
 ### 3.1 Zero-allocation invocation path
 
 `Event<T>.Invoke<TArgs>` iterates a pre-sorted `EventDelegateContainer<T>[]` snapshot. No `IEnumerable`, no boxing, no delegate allocation. The only branch is the `IsCancellable` check, which is cached per `TArgs` via a static generic field (`CancellableCheck<TArgs>.Value`), so the JIT can treat it as a constant after the first call.
@@ -76,7 +86,7 @@ title: "Event System — Technical Review"
 
 The Roslyn incremental generator (`EventDomainGenerator`) emits strongly-typed `On` / `Invoke` accessors for every enum member annotated with `[EventDomain]`. Adding a new event is:
 
-```csharp
+```csharp title="Defining an event domain"
 [EventDomain]
 public enum GameLoopEvents
 {
@@ -122,9 +132,17 @@ In DEBUG builds, each handler invocation is timed via `Stopwatch`. Handlers exce
 
 A dedicated `s_globalSnapshot` array containing only global managers avoids iterating non-global instances during `GlobalInvokeEvent`. The snapshot is rebuilt when managers are added/removed or when the `Global` flag changes.
 
+</details>
+
 ---
 
 ## 4. Weaknesses & Risks
+
+:::caution Areas requiring attention
+
+These are not blockers, but areas where the design has known trade-offs.
+
+:::
 
 ### 4.1 Reflection in `CreateArrayBuilder`
 
@@ -163,10 +181,14 @@ All handlers are synchronous `Action<TArgs>`. There's no `Func<TArgs, Task>` or 
 
 ## 6. Remaining Recommendations
 
+:::tip Remaining Improvements
+
 | Priority | Recommendation |
 |---|---|
 | 🟡 Medium | Add an `async` invoke path (`InvokeAsync<TArgs>`) for editor/tool events where handlers legitimately need to perform I/O. Not a priority for the game loop hot path. |
 | 🟢 Low | Consider a `[CallerArgumentExpression]` capture in Release builds (not just DEBUG) to improve production diagnostics without the full `CallerFilePath` cost. |
+
+:::
 
 ---
 

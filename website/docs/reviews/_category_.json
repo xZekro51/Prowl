@@ -1,8 +1,8 @@
 {
-  "label": "Reviews",
+  "label": "Technical Reviews",
   "position": 5,
   "link": {
     "type": "generated-index",
-    "description": "Technical reviews and analysis of Prowl engine subsystems."
+    "description": "In-depth technical reviews and analysis of Prowl engine subsystems — performance scorecards, architecture assessments, and actionable recommendations."
   }
 }

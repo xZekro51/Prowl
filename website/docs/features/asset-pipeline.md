@@ -2,6 +2,8 @@
 id: asset-pipeline
 title: Asset Pipeline
 sidebar_position: 4
+description: Prowl's asset pipeline — meta files, GUID references, import caching, custom importers, and build system.
+keywords: [prowl, assets, pipeline, import, build, guid]
 ---
 
 # Asset Pipeline
@@ -19,20 +21,25 @@ Prowl includes a powerful asset pipeline for managing project resources.
 | **Sub-Assets** | Assets can be stored inside other assets |
 | **Dependency Tracking** | The pipeline tracks dependencies between assets |
 
-## Supported Formats
+<details>
+<summary><strong>📁 Supported Formats</strong></summary>
 
 Prowl supports many major file formats through third-party libraries:
 
-- **3D Models** — via [Assimp](https://github.com/assimp/assimp) (FBX, OBJ, GLTF, and more)
-- **Images** — via [ImageSharp](https://github.com/SixLabors/ImageSharp) (PNG, JPG, BMP, TGA, and more)
-- **Audio** — WAV files (more formats planned)
-- **Shaders** — Custom GLSL-based shader format
+| Category | Formats | Library |
+|----------|---------|---------|
+| **3D Models** | FBX, OBJ, GLTF, and more | [Assimp](https://github.com/assimp/assimp) |
+| **Images** | PNG, JPG, BMP, TGA, and more | [ImageSharp](https://github.com/SixLabors/ImageSharp) |
+| **Audio** | WAV (more formats planned) | Built-in |
+| **Shaders** | Custom GLSL-based format | Built-in |
+
+</details>
 
 ## Asset Events
 
-The asset pipeline integrates with the [Event System](/docs/architecture/event-system):
+The asset pipeline integrates with the [Event System](../architecture/event-system):
 
-```csharp
+```csharp title="Reacting to asset changes"
 // React to asset changes
 AssetEvents.OnAssetsRefreshed += () =>
 {
@@ -52,15 +59,38 @@ AssetEvents.OnAssetDeleted += (args) =>
 
 ## Build System
 
-Prowl includes a complete build system for creating standalone applications:
+:::info
 
-- **Packed Asset Files** — Assets are bundled into optimized pack files
-- **Tiny Builds** — Only used assets are exported, keeping builds small
-- **Cross-Platform** — Build for Windows, macOS, and Linux from any platform
+Prowl includes a complete build system for creating standalone applications — **Windows, macOS, and Linux** from any platform.
+
+:::
+
+| Feature | Description |
+|---------|-------------|
+| **Packed Asset Files** | Assets are bundled into optimized pack files |
+| **Tiny Builds** | Only used assets are exported, keeping builds small |
+| **Cross-Platform** | Build for Windows, macOS, and Linux from any platform |
 
 ### Build Pipeline
 
-1. The editor analyzes scene references to determine which assets are needed
-2. Referenced assets (and their dependencies) are serialized and packed
-3. The runtime project is compiled with the packed assets
-4. A standalone executable is produced for the target platform
+```
+┌──────────────────────────────────────────────────┐
+│ 1. Analyze scene references                       │
+│    └─ Determine which assets are needed           │
+├──────────────────────────────────────────────────┤
+│ 2. Serialize & pack                               │
+│    └─ Referenced assets + dependencies → pack     │
+├──────────────────────────────────────────────────┤
+│ 3. Compile runtime project                        │
+│    └─ With packed assets embedded                 │
+├──────────────────────────────────────────────────┤
+│ 4. Produce standalone executable                  │
+│    └─ For target platform                         │
+└──────────────────────────────────────────────────┘
+```
+
+:::tip
+
+Only assets that are actually referenced by your scenes (and their transitive dependencies) end up in the build. This keeps standalone builds as small as possible.
+
+:::

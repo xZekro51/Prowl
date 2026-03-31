@@ -2,11 +2,17 @@
 id: vulkan-rendering-pipeline
 title: Vulkan Rendering Pipeline
 sidebar_position: 2
+description: A beginner-friendly explanation of how Prowl draws things on screen using its Vulkan rendering backend.
+keywords: [prowl, vulkan, rendering, pipeline, graphite, gpu, deferred rendering]
 ---
 
 # Prowl Engine — Vulkan Rendering Pipeline
 
-A beginner-friendly explanation of how the Prowl game engine draws things on screen using its Vulkan rendering backend.
+:::tip Who is this for?
+
+This is a **beginner-friendly** explanation of how the Prowl game engine draws things on screen using its Vulkan rendering backend. No prior Vulkan knowledge required!
+
+:::
 
 ---
 
@@ -49,7 +55,13 @@ Prowl's rendering stack is organized in layers:
 └─────────────────────────────────────────────┘
 ```
 
-Prowl supports both OpenGL and Vulkan through a shared abstraction called **Graphite**. The rendering pipeline code doesn't talk to Vulkan directly — it talks to Graphite, and Graphite translates those calls into whichever backend is active.
+Prowl supports both OpenGL and Vulkan through a shared abstraction called **Graphite**.
+
+:::info
+
+The rendering pipeline code doesn't talk to Vulkan directly — it talks to **Graphite**, and Graphite translates those calls into whichever backend is active. This means your game code works identically across all backends.
+
+:::
 
 ---
 
@@ -58,6 +70,9 @@ Prowl supports both OpenGL and Vulkan through a shared abstraction called **Grap
 ### The Device (`GraphiteDevice`)
 
 The central hub is `GraphiteDevice` — an abstract class with methods like:
+
+<details>
+<summary><strong>📋 GraphiteDevice API</strong></summary>
 
 | Method | What It Does |
 |--------|-------------|
@@ -68,6 +83,8 @@ The central hub is `GraphiteDevice` — an abstract class with methods like:
 | `CreateCommandList()` | Creates a recorder for GPU commands |
 | `SubmitCommands(...)` | Sends recorded commands to the GPU |
 | `BeginFrame()` / `EndFrame()` | Manages per-frame synchronization and swapchain image acquisition |
+
+</details>
 
 The Vulkan implementation is `VKGraphiteDevice`, which translates every Graphite call into Vulkan API calls using **Silk.NET**.
 
@@ -99,7 +116,11 @@ The Vulkan implementation is `VKGraphiteDevice`, which translates every Graphite
 
 ### Swapchain
 
+:::note Swapchain Configuration
+
 The swapchain uses **2 frames in flight** (`MaxFramesInFlight = 2`) and prefers **BGRA8 Unorm** format with **Mailbox** present mode (low-latency).
+
+:::
 
 ---
 
@@ -116,7 +137,13 @@ The swapchain uses **2 frames in flight** (`MaxFramesInFlight = 2`) and prefers 
 
 ### Textures (`VKTexture`)
 
-Textures can be sampled (read by shaders), render targets (written to by the GPU), or depth/stencil buffers. Vulkan requires explicit **image layout transitions** via pipeline barriers.
+Textures can be sampled (read by shaders), render targets (written to by the GPU), or depth/stencil buffers.
+
+:::info
+
+Vulkan requires explicit **image layout transitions** via pipeline barriers — the GPU needs to know how a texture will be used before it can access it.
+
+:::
 
 ### Samplers (`VKSampler`)
 
@@ -132,7 +159,7 @@ Synchronization primitives — the GPU raises a flag when it finishes work, and 
 
 Prowl's shaders are written in **GLSL** but Vulkan requires **SPIR-V**. The `ShaderCrossCompiler` handles this:
 
-```
+```text title="Shader cross-compilation pipeline"
 GLSL Source Code  →  ShaderCrossCompiler  →  SPIR-V Binary  →  VKShaderModule
   (human-readable)     (uses shaderc)        (GPU-ready)       (Vulkan object)
 ```
@@ -145,7 +172,7 @@ After compilation, `SpirvReflection` parses the binary to discover uniform buffe
 
 In Vulkan, you **record** commands into a **command buffer**, then **submit** the whole list at once:
 
-```
+```text title="Command list recording pattern"
 CommandList.Begin()
     ├── BeginRenderPass()    ← "I'm going to draw to these textures"
     │   ├── SetPipeline()    ← "Use this shader + settings"
@@ -256,6 +283,9 @@ Scene Objects ──→ Culling ──→ Shadow Atlas
 
 ### GBuffer Layout
 
+<details>
+<summary><strong>🎨 GBuffer Layout Details</strong></summary>
+
 | Buffer | Contents | Purpose |
 |--------|----------|---------|
 | **A** | RGB = Albedo, A = Alpha | Base color |
@@ -263,6 +293,8 @@ Scene Objects ──→ Culling ──→ Shadow Atlas
 | **C** | R = Roughness, G = Metalness, B = Specular, A = AO | Material properties |
 | **D** | Custom data per shading mode | Extra data (e.g., emissive) |
 | **Depth** | Depth values | Distance from camera |
+
+</details>
 
 ---
 
@@ -276,7 +308,11 @@ Scene Objects ──→ Culling ──→ Shadow Atlas
 4. Create a Bind Group (descriptor set)
 5. Retire temporary resources for deferred cleanup
 
-**Property resolution order:** Per-object → Material → Global
+:::caution Property Resolution Order
+
+**Per-object → Material → Global** — properties set on the object override material defaults, which override global defaults.
+
+:::
 
 ---
 

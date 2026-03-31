@@ -7,6 +7,7 @@ const sidebars = {
     {
       type: 'category',
       label: 'Architecture',
+      collapsed: false,
       items: [
         'architecture/event-system',
         'architecture/vulkan-rendering-pipeline',
@@ -14,7 +15,7 @@ const sidebars = {
     },
     {
       type: 'category',
-      label: 'Reviews',
+      label: 'Technical Reviews',
       items: [
         'reviews/event-system-review',
         'reviews/vulkan-pipeline-review',
@@ -23,6 +24,7 @@ const sidebars = {
     {
       type: 'category',
       label: 'Features',
+      collapsed: false,
       items: [
         'features/rendering',
         'features/physics',

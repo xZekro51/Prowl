@@ -2,6 +2,8 @@
 id: vulkan-pipeline-review
 title: Vulkan Pipeline Review
 sidebar_position: 2
+description: Technical review of Prowl's Vulkan rendering backend — architecture, performance, resource management, and recommendations.
+keywords: [prowl, vulkan, review, rendering, pipeline, performance, gpu]
 ---
 
 # Prowl Engine — Vulkan Rendering Pipeline: Technical Review
@@ -13,9 +15,9 @@ sidebar_position: 2
 
 ## Executive Summary
 
-Prowl's Vulkan backend has matured from a first-generation migration target into a **well-optimised, production-aware renderer**. The Graphite abstraction layer remains clean, and the backend now addresses the critical resource-management gaps that previously limited scalability. Memory sub-allocation, pooled descriptors, per-frame ring buffers, batched uploads, debug tooling, and precise pipeline barriers have all been implemented.
+Prowl's Vulkan backend has matured from a first-generation migration target into a **well-optimised, production-aware renderer**. The Graphite abstraction layer remains clean, and the backend now addresses the critical resource-management gaps that previously limited scalability.
 
-### Overall Rating: **B+ / A-** — Production-Capable, Room to Grow
+:::info Overall Rating: **B+ / A-** — Production-Capable, Room to Grow
 
 | Category | Score | Notes |
 |----------|-------|-------|
@@ -27,6 +29,8 @@ Prowl's Vulkan backend has matured from a first-generation migration target into
 | Code Quality | ★★★★☆ | Well-commented, idiomatic C#, clear naming. |
 | Scalability | ★★★☆☆ | Ring buffer + pooled descriptors handle thousands of draws; async compute and transfer queue remain opportunities. |
 | Production Readiness | ★★★☆☆ | Core infrastructure is solid; shader disk cache and draw-call batching are the remaining gaps. |
+
+:::
 
 ---
 
@@ -51,7 +55,7 @@ Follows canonical Vulkan setup: discrete GPU preference, validation layer fallba
 
 **`VKMemoryAllocator`** — a block-based sub-allocator that eliminates the ~4096 `vkAllocateMemory` driver limit. Allocates 64 MB blocks per memory type and sub-divides them with offset tracking. Allocations above the 16 MB dedicated threshold fall back to individual `vkAllocateMemory` calls, which is the correct behaviour for large render targets and staging buffers. Host-visible blocks are persistently mapped, so uniform/staging writes are a simple `memcpy` with no map/unmap overhead.
 
-```csharp
+```csharp title="Sub-allocator usage"
 // VKBuffer now allocates through the sub-allocator
 _allocation = device.MemoryAllocator.Allocate(memRequirements, memoryProperties);
 ```
@@ -71,14 +75,14 @@ _allocation = device.MemoryAllocator.Allocate(memRequirements, memoryProperties)
 
 **`VKDescriptorPoolManager`** — replaces the former per-bind-group descriptor pool approach with shared per-frame pools (512 max sets, 1024 descriptors per type). Pools are bulk-reset at frame boundaries via `vkResetDescriptorPool`, which is effectively free. When a pool is exhausted mid-frame, a new pool is chained automatically. This eliminates the pathological case where each draw call created and destroyed its own descriptor pool.
 
-```csharp
+```csharp title="Shared descriptor pool allocation"
 // VKBindGroup now allocates from the shared pool manager
 descriptorSet = device.DescriptorPoolManager.Allocate(layout);
 ```
 
 **`VKUniformRingBuffer`** — a per-frame bump allocator (4 MB default) for per-draw UBO data. Offsets are aligned to `minUniformBufferOffsetAlignment`. When the buffer is exhausted mid-frame, it grows automatically and the old buffer is "retired" — kept alive until the in-flight fence signals, since descriptor sets written earlier in the frame still reference it. This replaces the former pattern of `vkCreateBuffer` + `vkAllocateMemory` + map + unmap + deferred-destroy on every draw call.
 
-```csharp
+```csharp title="Ring buffer bump allocation"
 // Per-draw UBO allocation is now a bump-pointer increment
 var (ringBuffer, offset) = device.UniformRingBuffer.Allocate(uniformData);
 ```
@@ -97,7 +101,7 @@ Textbook correct fence/semaphore lifecycle, exit subpass dependencies, layout tr
 
 **Precise pipeline barriers** — `ResourceBarrierCore` now maps `ResourceState` to specific `PipelineStageFlags` via `ToPipelineStageFlags()` rather than using `AllCommandsBit`. This eliminates full-pipeline bubbles and allows the driver to overlap independent work.
 
-```csharp
+```csharp title="Precise pipeline stage barriers"
 // Precise stage masks instead of AllCommandsBit
 _device.Vk.CmdPipelineBarrier(Handle,
     ToPipelineStageFlags(barrier.StateBefore),
@@ -120,7 +124,7 @@ _device.Vk.CmdPipelineBarrier(Handle,
 
 **`BeginUploadBatch()` / `FlushUploadBatch()`** — batches multiple texture and buffer uploads into a single command buffer. Staging resources are tracked and freed after the batch fence signals. This is particularly effective during scene load, where dozens of textures are uploaded in rapid succession.
 
-```csharp
+```csharp title="Upload batching"
 device.BeginUploadBatch();
 // ... multiple texture/buffer uploads record into the shared command buffer
 device.FlushUploadBatch(); // single submit + fence wait
@@ -136,7 +140,7 @@ This replaces the former pattern where each upload was its own `BeginSingleTimeC
 
 **`VK_EXT_debug_utils`** is fully integrated via `SetDebugName()` and `CmdBeginDebugLabel()`. Vulkan objects (buffers, images, pipelines) are named at creation time, and render passes / compute dispatches are wrapped in labeled regions. This makes RenderDoc and Nsight captures immediately readable.
 
-```csharp
+```csharp title="Debug naming and labeling"
 // Objects are named at creation
 device.SetDebugName(ObjectType.Buffer, buffer.Handle.Handle, "GBuffer:Albedo");
 
@@ -191,7 +195,7 @@ Solid deferred+forward hybrid: GBuffer pass, light accumulation with additive bl
 
 ## 10. Recommendations (priority order)
 
-### Important
+:::danger Important
 
 1. **SPIR-V disk cache** — hash shader source + variant keywords, write compiled SPIR-V to disk. Eliminates first-encounter compilation hitches entirely. Most engines see a 5–10× reduction in shader load time.
 
@@ -199,7 +203,9 @@ Solid deferred+forward hybrid: GBuffer pass, light accumulation with additive bl
 
 3. **Draw call batching / instancing** — group draws with identical material + mesh into instanced batches. The ring buffer and descriptor pool infrastructure are already in place to support this.
 
-### Nice to Have
+:::
+
+:::tip Nice to Have
 
 4. **Static shadow caching** — cache shadow maps for stationary lights; only re-render when shadow casters move.
 
@@ -209,9 +215,14 @@ Solid deferred+forward hybrid: GBuffer pass, light accumulation with additive bl
 
 7. **Remove dual-backend branches** once Vulkan is the sole production target, collapsing the `if (!isVulkan)` code paths.
 
+:::
+
 ---
 
 ## 11. Positive Highlights
+
+<details>
+<summary><strong>✅ What the implementation gets right (16 items)</strong></summary>
 
 Things the implementation gets *right* that many Vulkan renderers struggle with:
 
@@ -233,12 +244,18 @@ Things the implementation gets *right* that many Vulkan renderers struggle with:
 - ✅ GC pressure mitigation (reusable collections)
 - ✅ Relaxed GLSL compilation for migration path
 
+</details>
+
 ---
 
 ## Final Verdict
+
+:::info Rating: **B+ / A-**
 
 Prowl's Vulkan backend has addressed every critical scalability issue identified in its earlier iteration. The memory sub-allocator, descriptor pool manager, and uniform ring buffer form a cohesive resource-management stack that can handle thousands of draw calls per frame without pathological allocation patterns. Upload batching, precise barriers, and debug tooling bring the implementation in line with production Vulkan renderers.
 
 The remaining opportunities — SPIR-V disk caching, transfer queue utilisation, and draw-call batching — are optimisations that build on the existing infrastructure rather than requiring architectural rework. The foundation is sound, the hot paths are efficient, and the debugging story is solid.
 
-**Rating: B+ / A-** — a well-engineered Vulkan renderer with production-grade resource management and clear paths to further optimisation.
+A well-engineered Vulkan renderer with production-grade resource management and clear paths to further optimisation.
+
+:::

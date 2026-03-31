@@ -2,7 +2,12 @@
 id: getting-started
 title: Getting Started
 sidebar_position: 2
+description: Get Prowl up and running in minutes with this step-by-step guide.
+keywords: [prowl, getting started, installation, setup, dotnet]
 ---
+
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
 
 # Getting Started
 
@@ -10,48 +15,66 @@ Getting Prowl up and running is super easy!
 
 ## Prerequisites
 
-- [.NET 9 SDK](https://dotnet.microsoft.com/en-us/download/dotnet/9.0)
-- A compatible IDE:
+:::info Required Software
+
+- [**.NET 9 SDK**](https://dotnet.microsoft.com/en-us/download/dotnet/9.0) — required to build and run
+- A compatible IDE (pick one):
   - [Visual Studio 2022 17.8+](https://visualstudio.microsoft.com/vs/preview/)
   - [Visual Studio Code](https://code.visualstudio.com/) with the C# extension
   - [JetBrains Rider](https://www.jetbrains.com/rider/)
 
+:::
+
 ## Installation
 
-1. **Clone the repository**
+### 1. Clone the repository
 
-   ```bash
-   git clone https://github.com/ProwlEngine/Prowl.git
-   cd Prowl
-   ```
+```bash title="Terminal"
+git clone https://github.com/ProwlEngine/Prowl.git
+cd Prowl
+```
 
-2. **Update submodules**
+### 2. Update submodules
 
-   On Windows:
-   ```bash
-   UpdateSubmodules.bat
-   ```
+<Tabs groupId="operating-system">
+  <TabItem value="win" label="🪟 Windows" default>
 
-   On Linux / macOS:
-   ```bash
-   ./UpdateSubmodules.sh
-   ```
+```bash title="Command Prompt or PowerShell"
+UpdateSubmodules.bat
+```
 
-3. **Open the solution**
+  </TabItem>
+  <TabItem value="unix" label="🐧 Linux / 🍎 macOS">
 
-   Open the `.sln` file in your preferred IDE.
+```bash title="Terminal"
+./UpdateSubmodules.sh
+```
 
-4. **Run the Editor**
+  </TabItem>
+</Tabs>
 
-   Set `Prowl.Editor` as the startup project and run it.
+### 3. Open the solution
 
-That's it! 🎉
+Open the `.sln` file in your preferred IDE.
 
-## Running from VS Code
+### 4. Run the Editor
 
-- Open `Prowl.Editor/Program.cs`
-- Go to **Run → Start Debugging**
-- Make sure you have the `Program.cs` file selected
+Set **`Prowl.Editor`** as the startup project and run it.
+
+:::tip That's it! 🎉
+
+The editor should open and you're ready to start exploring. If you run into issues, check the [GitHub Issues](https://github.com/ProwlEngine/Prowl/issues) or ask on [Discord](https://discord.gg/BqnJ9Rn4sn).
+
+:::
+
+<details>
+<summary>💡 Running from VS Code</summary>
+
+1. Open `Prowl.Editor/Program.cs`
+2. Go to **Run → Start Debugging**
+3. Make sure you have the `Program.cs` file selected
+
+</details>
 
 ## Project Structure
 
@@ -69,6 +92,10 @@ That's it! 🎉
 
 ## Next Steps
 
-- Read the [Event System](/docs/architecture/event-system) and [Vulkan Rendering Pipeline](/docs/architecture/vulkan-rendering-pipeline) docs to understand how the engine is structured
-- Check the [Rendering](/docs/features/rendering), [Physics](/docs/features/physics), [Scripting](/docs/features/scripting), and [Asset Pipeline](/docs/features/asset-pipeline) docs for detailed feature documentation
-- See [Contributing](/docs/contributing) to learn how to help develop Prowl
+:::note Where to go from here
+
+- 📐 **Architecture** — Read the [Event System](./architecture/event-system) and [Vulkan Rendering Pipeline](./architecture/vulkan-rendering-pipeline) docs to understand how the engine is structured
+- 🎨 **Features** — Explore [Rendering](./features/rendering), [Physics](./features/physics), [Scripting](./features/scripting), and [Asset Pipeline](./features/asset-pipeline) for detailed feature docs
+- 🤝 **Contributing** — See [Contributing](./contributing) to learn how to help develop Prowl
+
+:::

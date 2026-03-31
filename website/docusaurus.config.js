@@ -46,6 +46,14 @@ const config = {
     /** @type {import('@docusaurus/preset-classic').ThemeConfig} */
     ({
       image: 'img/prowl-social-card.png',
+      announcementBar: {
+        id: 'early_development',
+        content:
+          '🚧 Prowl is in early development — <a href="https://github.com/ProwlEngine/Prowl">star us on GitHub</a> and <a href="https://discord.gg/BqnJ9Rn4sn">join the Discord</a> to follow along!',
+        backgroundColor: '#6c63ff',
+        textColor: '#fff',
+        isCloseable: true,
+      },
       navbar: {
         title: 'Prowl Engine',
         logo: {
