@@ -15,6 +15,8 @@ public sealed class DefaultSelectionService : ISelectionService
     private EngineObject? _activeObject;
     private AssetEntry? _selectedAsset;
 
+    public SelectionServiceEvents Events { get; } = new();
+
     public EngineObject? ActiveObject
     {
         get => _activeObject;
@@ -25,7 +27,7 @@ public sealed class DefaultSelectionService : ISelectionService
 
             _activeObject = value;
             _selectedAsset = null; // selecting a scene object clears asset selection
-            SelectionChanged?.Invoke();
+            Events.InvokeOnSelectionChanged();
         }
     }
 
@@ -39,9 +41,7 @@ public sealed class DefaultSelectionService : ISelectionService
 
             _selectedAsset = value;
             _activeObject = null; // selecting an asset clears scene object selection
-            SelectionChanged?.Invoke();
+            Events.InvokeOnSelectionChanged();
         }
     }
-
-    public event Action? SelectionChanged;
 }

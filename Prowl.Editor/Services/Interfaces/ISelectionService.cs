@@ -18,6 +18,6 @@ public interface ISelectionService
     /// <summary> The currently selected project asset, or null. Setting this clears <see cref="ActiveObject"/>. </summary>
     AssetEntry? SelectedAsset { get; set; }
 
-    /// <summary> Fires whenever the selection changes (either ActiveObject or SelectedAsset). </summary>
-    event Action? SelectionChanged;
+    /// <summary> Per-instance event domain for selection notifications. </summary>
+    SelectionServiceEvents Events { get; }
 }

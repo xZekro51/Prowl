@@ -41,8 +41,8 @@ public sealed class PrefabEditMode
     /// <summary> The root GameObject of the prefab being edited (lives in the temp scene). </summary>
     public GameObject? PrefabRoot { get; private set; }
 
-    /// <summary> Fires when prefab edit mode is entered or exited. </summary>
-    public event Action<bool>? ModeChanged;
+    /// <summary> Per-instance event domain for prefab edit mode notifications. </summary>
+    public PrefabEditModeEvents Events { get; } = new();
 
     /// <summary>
     /// Opens a prefab asset for editing in an isolated scene.
@@ -102,7 +102,7 @@ public sealed class PrefabEditMode
         sceneService.ClearDirty();
         sceneService.SceneFilePath = null;
 
-        ModeChanged?.Invoke(true);
+        Events.InvokeOnModeChanged(new PrefabModeChangedArgs(true));
         Debug.Log($"[PrefabEditMode] Opened prefab: {PrefabName}");
         return true;
     }
@@ -163,7 +163,7 @@ public sealed class PrefabEditMode
         PrefabPath = null;
         IsActive = false;
 
-        ModeChanged?.Invoke(false);
+        Events.InvokeOnModeChanged(new PrefabModeChangedArgs(false));
         Debug.Log("[PrefabEditMode] Exited prefab edit mode. Scene restored.");
     }
 

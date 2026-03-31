@@ -26,15 +26,14 @@ public sealed class DefaultSceneService : ISceneService
 
     public string? SceneFilePath { get; set; }
 
-    public event Action<bool>? DirtyStateChanged;
-    public event Action<Scene>? SceneLoaded;
+    public SceneServiceEvents Events { get; } = new();
 
     public void MarkDirty()
     {
         if (!_isDirty)
         {
             _isDirty = true;
-            DirtyStateChanged?.Invoke(true);
+            Events.InvokeOnDirtyStateChanged(new DirtyStateChangedArgs(true));
         }
     }
 
@@ -43,7 +42,7 @@ public sealed class DefaultSceneService : ISceneService
         if (_isDirty)
         {
             _isDirty = false;
-            DirtyStateChanged?.Invoke(false);
+            Events.InvokeOnDirtyStateChanged(new DirtyStateChangedArgs(false));
         }
     }
 
@@ -57,7 +56,7 @@ public sealed class DefaultSceneService : ISceneService
 
         SceneFilePath = null;
         ClearDirty();
-        SceneLoaded?.Invoke(scene);
+        Events.InvokeOnSceneLoaded(new SceneLoadedArgs(scene));
 
         return scene;
     }
@@ -66,7 +65,7 @@ public sealed class DefaultSceneService : ISceneService
     {
         Scene.Load(scene);
         ClearDirty();
-        SceneLoaded?.Invoke(scene);
+        Events.InvokeOnSceneLoaded(new SceneLoadedArgs(scene));
         Debug.Log($"Loaded Scene: {scene.Name}");
     }
 
@@ -129,7 +128,7 @@ public sealed class DefaultSceneService : ISceneService
             if (restored != null)
             {
                 Scene.Load(restored);
-                SceneLoaded?.Invoke(restored);
+                Events.InvokeOnSceneLoaded(new SceneLoadedArgs(restored));
             }
         }
         catch (Exception ex)

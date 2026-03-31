@@ -3,6 +3,7 @@
 
 using System;
 
+using Prowl.Runtime.EventSystem;
 using Prowl.Runtime.Graphite;
 
 using Silk.NET.Input;
@@ -22,19 +23,6 @@ public static class Window
     /// This may differ from the requested backend if a fallback occurred.
     /// </summary>
     public static GraphicsBackendType ActiveBackend { get; private set; } = GraphicsBackendType.OpenGL;
-
-    public static event Action? Load;
-    public static event Action<float>? Update;
-    public static event Action<float>? Render;
-    public static event Action<float>? PostRender;
-    public static event Action<bool>? FocusChanged;
-    public static event Action<Vector2D<int>>? Resize;
-    public static event Action<Vector2D<int>>? FramebufferResize;
-    public static event Action? Closing;
-
-    public static event Action<Vector2D<int>>? Move;
-    public static event Action<WindowState>? StateChanged;
-    public static event Action<string[]>? FileDrop;
 
     public static Vector2D<int> Size
     {
@@ -127,8 +115,8 @@ public static class Window
 
         Debug.Log($"Added all stuff to callbacks");
 
-        InternalWindow.StateChanged += (state) => { StateChanged?.Invoke(state); };
-        InternalWindow.FileDrop += (files) => { FileDrop?.Invoke(files); };
+        InternalWindow.StateChanged += (state) => { WindowEvents.InvokeOnStateChanged(new WindowStateChangedArgs((int)state)); };
+        InternalWindow.FileDrop += (files) => { WindowEvents.InvokeOnFileDrop(new WindowFileDropArgs(files)); };
 
         InternalWindow.FocusChanged += (focused) => { isFocused = focused; };
     }
@@ -151,23 +139,9 @@ public static class Window
         isFocused = true;
         _loadException = null;
         _fatalError = false;
-
-        // Clear all static event subscribers so the next setup
-        // can resubscribe cleanly without duplicate handlers.
-        Load = null;
-        Update = null;
-        Render = null;
-        PostRender = null;
-        FocusChanged = null;
-        Resize = null;
-        FramebufferResize = null;
-        Closing = null;
-        Move = null;
-        StateChanged = null;
-        FileDrop = null;
     }
 
-    private static void OnMove(Vector2D<int> d) => Move?.Invoke(d);
+    private static void OnMove(Vector2D<int> d) => WindowEvents.InvokeOnMove(new WindowMoveArgs(d.X, d.Y));
 
     public static void Start()
     {
@@ -211,7 +185,7 @@ public static class Window
 
             // Push Default Handler
             Input.PushHandler(WindowInputHandler);
-            Load?.Invoke();
+            WindowEvents.InvokeOnLoad();
             Debug.Log($"[SILK] OnLoad completed successfully.");
         }
         catch (Exception ex)
@@ -236,27 +210,27 @@ public static class Window
 
         Rendering.GraphiteMaterialBinder.BeginFrame();
 
-        Render?.Invoke((float)delta);
-        PostRender?.Invoke((float)delta);
+        WindowEvents.InvokeOnRender(new WindowRenderArgs((float)delta));
+        WindowEvents.InvokeOnPostRender(new WindowRenderArgs((float)delta));
 
         Graphics.Graphite.Present();
     }
 
     public static void OnFocusChanged(bool focused)
     {
-        FocusChanged?.Invoke(focused);
+        WindowEvents.InvokeOnFocusChanged(new WindowFocusChangedArgs(focused));
     }
 
     public static void OnResize(Vector2D<int> size)
     {
-        Resize?.Invoke(size);
+        WindowEvents.InvokeOnResize(new WindowResizeArgs(size.X, size.Y));
     }
 
     public static void OnFramebufferResize(Vector2D<int> size)
     {
         if (Graphics.IsGraphiteReady)
             Graphics.Graphite.ResizeSwapchain((uint)size.X, (uint)size.Y);
-        FramebufferResize?.Invoke(size);
+        WindowEvents.InvokeOnFramebufferResize(new WindowResizeArgs(size.X, size.Y));
     }
 
     public static void OnUpdate(double delta)
@@ -264,13 +238,13 @@ public static class Window
         if (_fatalError)
             return;
 
-        Update?.Invoke((float)delta);
+        WindowEvents.InvokeOnUpdate(new WindowUpdateArgs((float)delta));
         WindowInputHandler?.LateUpdate();
     }
 
     public static void OnClose()
     {
-        try { Closing?.Invoke(); } catch { }
+        try { WindowEvents.InvokeOnClosing(); } catch { }
         try { WindowInputHandler?.Dispose(); } catch { }
         try { Input.PopHandler(); } catch { }
         try { Graphics.Dispose(); } catch { }
