@@ -640,13 +640,13 @@ public class Scene : EngineObject, ISerializationCallbackReceiver
         foreach (GameObject go in activeGOs)
             go.PreUpdate(editFilter ? ShouldRunInEditMode : null);
 
-        Game.BaseEventManager.InvokeEvent(EventSystem.BaseEvents.OnBeforeUpdate);
+        EventSystem.BaseEvents.InvokeOnBeforeUpdate();
         ForeachComponent(activeGOs, s_updateAction, editFilter);
-        Game.BaseEventManager.InvokeEvent(EventSystem.BaseEvents.OnAfterUpdate);
+        EventSystem.BaseEvents.InvokeOnAfterUpdate();
 
-        Game.BaseEventManager.InvokeEvent(EventSystem.BaseEvents.OnBeforeLateUpdate);
+        EventSystem.BaseEvents.InvokeOnBeforeLateUpdate();
         ForeachComponent(activeGOs, s_lateUpdateAction, editFilter);
-        Game.BaseEventManager.InvokeEvent(EventSystem.BaseEvents.OnAfterLateUpdate);
+        EventSystem.BaseEvents.InvokeOnAfterLateUpdate();
 
         Flush();
     }

@@ -25,6 +25,45 @@ public static class ProjectSolutionGenerator
     /// <summary>Standard C# project type GUID used in .sln files.</summary>
     private static readonly Guid CSharpProjectTypeGuid = new("FAE04EC0-301F-11D3-BF4B-00C04F79EFBC");
 
+    /// <summary>File name of the event-system source generator assembly.</summary>
+    internal const string GeneratorDllName = "Prowl.EventSystem.Generators.dll";
+
+    /// <summary>
+    /// Attempts to locate the <c>Prowl.EventSystem.Generators.dll</c> analyzer.
+    /// Searches the <c>analyzers/</c> subfolder of the editor's base directory
+    /// first, then falls back to the generator project's build output (useful
+    /// during development when running from the build tree).
+    /// Returns <c>null</c> if not found.
+    /// </summary>
+    internal static string? FindGeneratorDllPath()
+    {
+        string baseDir = AppDomain.CurrentDomain.BaseDirectory;
+
+        // 1. Deployed location: {editor}/analyzers/
+        string deployed = Path.Combine(baseDir, "analyzers", GeneratorDllName);
+        if (File.Exists(deployed))
+            return Path.GetFullPath(deployed);
+
+        // 2. Development location: walk up from the editor output to the solution
+        //    root, then into the generator project's build output.
+        //    Editor output is typically: <sln>/Build/Editor/<config>/net9.0/
+        var dir = new DirectoryInfo(baseDir);
+        while (dir != null)
+        {
+            string candidate = Path.Combine(dir.FullName,
+                "Prowl.EventSystem.Generators", "bin");
+            if (Directory.Exists(candidate))
+            {
+                // Search all configuration/TFM combos under bin/
+                foreach (string dll in Directory.GetFiles(candidate, GeneratorDllName, SearchOption.AllDirectories))
+                    return Path.GetFullPath(dll);
+            }
+            dir = dir.Parent;
+        }
+
+        return null;
+    }
+
     /// <summary>
     /// Generates (or regenerates) the <c>Assembly-Project.csproj</c> and
     /// <c>{ProjectName}.sln</c> files at the root of <paramref name="projectPath"/>.
@@ -45,7 +84,10 @@ public static class ProjectSolutionGenerator
         // Collect engine DLL references from the editor's output directory.
         var references = CollectEngineReferences();
 
-        WriteCsProj(csprojPath, references);
+        // Locate the source generator so it can be emitted as an <Analyzer>.
+        string? generatorDll = FindGeneratorDllPath();
+
+        WriteCsProj(csprojPath, references, generatorDll);
         WriteSln(slnPath, csprojFileName, ProjectScriptCompiler.AssemblyName, projectGuid);
 
         Debug.Log($"[Scripts] Generated IDE solution: {slnPath}");
@@ -82,7 +124,8 @@ public static class ProjectSolutionGenerator
 
     private static void WriteCsProj(
         string path,
-        List<(string name, string dllPath)> references)
+        List<(string name, string dllPath)> references,
+        string? generatorDllPath)
     {
         var sb = new StringBuilder();
 
@@ -114,6 +157,16 @@ public static class ProjectSolutionGenerator
                 sb.AppendLine("      <Private>false</Private>");
                 sb.AppendLine("    </Reference>");
             }
+            sb.AppendLine("  </ItemGroup>");
+        }
+
+        // Source generator so that [EventDomain] classes get IntelliSense
+        if (generatorDllPath != null)
+        {
+            sb.AppendLine();
+            sb.AppendLine("  <ItemGroup>");
+            string escaped = SecurityElement.Escape(generatorDllPath) ?? generatorDllPath;
+            sb.AppendLine($"    <Analyzer Include=\"{escaped}\" />");
             sb.AppendLine("  </ItemGroup>");
         }
 

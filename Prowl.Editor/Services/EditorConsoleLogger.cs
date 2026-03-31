@@ -3,7 +3,9 @@
 
 using System.Text;
 
+using Prowl.Editor.Core;
 using Prowl.Runtime;
+using Prowl.Runtime.EventSystem;
 
 namespace Prowl.Editor.Services;
 
@@ -22,7 +24,7 @@ public sealed class LogEntry
 }
 
 /// <summary>
-/// Static log sink that subscribes to <see cref="Debug.OnLog"/> and stores
+/// Static log sink that subscribes to <see cref="Debug.DebugEventManager"/> and stores
 /// entries in memory for the Console panel and Status bar to read.
 /// Call <see cref="Initialize"/> once during editor startup.
 /// </summary>
@@ -31,6 +33,7 @@ public static class EditorConsoleLogger
     private static readonly List<LogEntry> _entries = new();
     private static readonly object _lock = new();
     private static bool _initialized;
+    private static IDisposable? _logSubscription;
 
     /// <summary> Maximum entries kept in memory before oldest are discarded. </summary>
     public static int MaxEntries { get; set; } = 4096;
@@ -49,24 +52,20 @@ public static class EditorConsoleLogger
     /// <summary> Pause play mode when an error or exception is logged. </summary>
     public static bool ErrorPause { get; set; }
 
-    /// <summary>
-    /// Fired when an error or exception is logged. Used by the editor
-    /// to pause play mode when <see cref="ErrorPause"/> is enabled.
-    /// </summary>
-    public static event Action? OnErrorLogged;
-
-    /// <summary> Subscribes to the engine's Debug.OnLog event. Safe to call multiple times. </summary>
+    /// <summary> Subscribes to the engine's Debug event system. Safe to call multiple times. </summary>
     public static void Initialize()
     {
         if (_initialized) return;
         _initialized = true;
-        Debug.OnLog += OnLogReceived;
+        _logSubscription = DebugEvents.SubscribeOnLog(
+            args => OnLogReceived(args.Message, args.StackTrace, args.Severity));
     }
 
     /// <summary> Unsubscribes from the engine log event. </summary>
     public static void Shutdown()
     {
-        Debug.OnLog -= OnLogReceived;
+        _logSubscription?.Dispose();
+        _logSubscription = null;
         _initialized = false;
     }
 
@@ -197,7 +196,7 @@ public static class EditorConsoleLogger
 
         // Fire outside the lock to avoid deadlocks from re-entrant logging
         if (severity is LogSeverity.Error or LogSeverity.Exception)
-            OnErrorLogged?.Invoke();
+            EditorEvents.InvokeOnErrorLogged();
     }
 
     private static void AppendEntry(string message, LogSeverity severity, DebugStackTrace? stackTrace)

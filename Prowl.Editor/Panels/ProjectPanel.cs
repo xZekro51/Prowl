@@ -5,7 +5,9 @@ using System.Diagnostics;
 using System.Numerics;
 using ImGuiNET;
 using Prowl.Runtime;
+using Prowl.Runtime.EventSystem;
 using Prowl.Runtime.Resources;
+using Prowl.Editor.Core;
 using Prowl.Editor.Docking;
 using Prowl.Editor.Icons;
 using Prowl.Editor.Prefabs;
@@ -58,8 +60,7 @@ public sealed class ProjectPanel : EditorPanel
 
     public ProjectPanel() : base("Project")
     {
-        if (EditorApplication.ScriptAssemblyManager != null)
-            EditorApplication.ScriptAssemblyManager.OnAssemblyChanged += InvalidateScriptableObjectMenuCache;
+        EditorEvents.SubscribeOnAssemblyChanged(InvalidateScriptableObjectMenuCache);
     }
 
     /// <summary>

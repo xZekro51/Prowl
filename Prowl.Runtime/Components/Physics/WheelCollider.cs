@@ -11,6 +11,7 @@ using Jitter2.Dynamics;
 using Jitter2.LinearMath;
 
 using Prowl.Echo;
+using Prowl.Runtime.EventSystem;
 using Prowl.Vector;
 
 namespace Prowl.Runtime;
@@ -43,6 +44,9 @@ public sealed class WheelCollider : MonoBehaviour
     private float torque;
     private float wheelRotation;
     private float steerAngle;
+
+    private IDisposable? _preStepSubscription;
+    private IDisposable? _postStepSubscription;
 
     private const float DampingFrac = 0.8f;
     private const float SpringFrac = 0.45f;
@@ -177,8 +181,10 @@ public sealed class WheelCollider : MonoBehaviour
         }
 
         // Subscribe to physics events
-        GameObject.Scene.Physics.PreStep += OnPreStep;
-        GameObject.Scene.Physics.PostStep += OnPostStep;
+        _preStepSubscription = PhysicsEvents.SubscribeOnPrePhysicsStep(
+            args => OnPreStep(args.DeltaTime));
+        _postStepSubscription = PhysicsEvents.SubscribeOnPostPhysicsStep(
+            args => OnPostStep(args.DeltaTime));
 
         AdjustWheelValues();
     }
@@ -186,11 +192,10 @@ public sealed class WheelCollider : MonoBehaviour
     public override void OnDisable()
     {
         // Unsubscribe from physics events
-        if (GameObject?.Scene?.Physics != null)
-        {
-            GameObject.Scene.Physics.PreStep -= OnPreStep;
-            GameObject.Scene.Physics.PostStep -= OnPostStep;
-        }
+        _preStepSubscription?.Dispose();
+        _postStepSubscription?.Dispose();
+        _preStepSubscription = null;
+        _postStepSubscription = null;
     }
 
     /// <summary>

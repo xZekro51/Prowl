@@ -25,6 +25,9 @@
   <ItemGroup>
     <ProjectReference Include="..\Prowl.Runtime\Prowl.Runtime.csproj" />
     <ProjectReference Include="..\Prowl.ImGui\Prowl.ImGui.csproj" />
+    <ProjectReference Include="..\Prowl.EventSystem.Generators\Prowl.EventSystem.Generators.csproj"
+                      OutputItemType="Analyzer"
+                      ReferenceOutputAssembly="false" />
   </ItemGroup>
 
   <ItemGroup>
@@ -37,5 +40,20 @@
     <EmbeddedResource Include="Icons\Resources\*.png" />
     <EmbeddedResource Include="Icons\Resources\*.ttf" />
   </ItemGroup>
+
+  <!-- Copy the source generator DLL to the output so that the editor can
+       reference it at runtime for IDE solution generation and Roslyn script
+       compilation.  Placed in an 'analyzers' subfolder to keep it out of
+       the regular engine-reference scan. -->
+  <Target Name="CopyEventSystemGeneratorToOutput" AfterTargets="Build">
+    <PropertyGroup>
+      <_EventGenDll Condition="Exists('$(MSBuildThisFileDirectory)..\Prowl.EventSystem.Generators\bin\$(Configuration)\netstandard2.0\Prowl.EventSystem.Generators.dll')">$(MSBuildThisFileDirectory)..\Prowl.EventSystem.Generators\bin\$(Configuration)\netstandard2.0\Prowl.EventSystem.Generators.dll</_EventGenDll>
+    </PropertyGroup>
+    <MakeDir Directories="$(TargetDir)analyzers" Condition="'$(_EventGenDll)' != ''" />
+    <Copy SourceFiles="$(_EventGenDll)"
+          DestinationFolder="$(TargetDir)analyzers"
+          SkipUnchangedFiles="true"
+          Condition="'$(_EventGenDll)' != ''" />
+  </Target>
 
 </Project>

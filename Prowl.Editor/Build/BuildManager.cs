@@ -2,6 +2,7 @@
 // Licensed under the MIT License. See the LICENSE file in the project root for details.
 
 using Prowl.Runtime;
+using Prowl.Runtime.EventSystem;
 
 namespace Prowl.Editor.Build;
 
@@ -186,7 +187,8 @@ public static class BuildManager
         }
 
         // Hook Debug output to console for headless mode
-        Debug.OnLog += OnConsoleLog;
+        using var logSub = DebugEvents.SubscribeOnLog(
+            args => OnConsoleLog(args.Message, args.StackTrace, args.Severity));
 
         try
         {
@@ -215,7 +217,6 @@ public static class BuildManager
         }
         finally
         {
-            Debug.OnLog -= OnConsoleLog;
         }
     }
 

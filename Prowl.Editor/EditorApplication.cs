@@ -18,6 +18,7 @@ using Prowl.Editor.Toolbar;
 using Prowl.Editor.Undo;
 using Prowl.ImGuiIntegration;
 using Prowl.Runtime;
+using Prowl.Runtime.EventSystem;
 using Prowl.Runtime.Resources;
 using Prowl.PaperUI;
 using Prowl.UI;
@@ -68,6 +69,13 @@ public sealed class EditorApplication : Game
     /// or subscribe to assembly-change events. Null when no project is open.
     /// </summary>
     public static ProjectAssemblyManager? ScriptAssemblyManager { get; private set; }
+
+    /// <summary>
+    /// Event manager for editor-specific lifecycle events.
+    /// </summary>
+    [Obsolete("Use EditorEvents.Manager or the generated convenience methods instead.")]
+    public static EventManager<Core.EditorEvents.EventTypes> EditorEventManager
+        => Core.EditorEvents.Manager;
 
     /// <summary>
     /// Controls whether component gizmos (<see cref="MonoBehaviour.DrawGizmos"/>) are rendered.
@@ -168,21 +176,21 @@ public sealed class EditorApplication : Game
         EditorConsoleLogger.Initialize();
 
         // Wire up "Clear on Play": automatically clear the log when entering play mode
-        _playMode.StateChanged += state =>
-        {
-            if (state == PlayModeState.Playing && EditorConsoleLogger.ClearOnPlay)
+        Core.EditorEvents.SubscribeOnPlayModeStateChanged(args =>
             {
-                EditorConsoleLogger.Clear();
-                EditorConsoleLogger.ResetCounts();
-            }
-        };
+                if (args.State == PlayModeState.Playing && EditorConsoleLogger.ClearOnPlay)
+                {
+                    EditorConsoleLogger.Clear();
+                    EditorConsoleLogger.ResetCounts();
+                }
+            });
 
         // Wire up "Error Pause": pause play mode when an error is logged
-        EditorConsoleLogger.OnErrorLogged += () =>
-        {
-            if (EditorConsoleLogger.ErrorPause && _playMode.State == PlayModeState.Playing)
-                _playMode.TogglePause();
-        };
+        Core.EditorEvents.SubscribeOnErrorLogged(() =>
+            {
+                if (EditorConsoleLogger.ErrorPause && _playMode.State == PlayModeState.Playing)
+                    _playMode.TogglePause();
+            });
 
         // Register core services
         EditorServices.Register<ISceneService>(new DefaultSceneService());
@@ -227,7 +235,7 @@ public sealed class EditorApplication : Game
             ProjectAssembly.Register(_assemblyManager);
 
             ScriptAssemblyManager = _assemblyManager;
-            _assemblyManager.OnAssemblyChanged += OnScriptAssemblyChanged;
+            Core.EditorEvents.SubscribeOnAssemblyChanged(OnScriptAssemblyChanged);
             _assemblyManager.CompileAndLoad();
             _assemblyManager.StartWatching();
 
@@ -1006,8 +1014,7 @@ public sealed class EditorApplication : Game
         if (importedPaths.Count > 0)
         {
             assets.Refresh();
-            Game.AssetEventManager.InvokeEvent(
-                Runtime.EventSystem.AssetEvents.OnAssetsImported,
+            Runtime.EventSystem.AssetEvents.InvokeOnAssetsImported(
                 new Runtime.EventSystem.AssetImportedArgs([.. importedPaths]));
             Debug.LogSuccess($"[Import] Successfully imported {importedPaths.Count} item(s) into {(targetRelDir == "." ? "Assets/" : $"Assets/{targetRelDir}/")}");
         }

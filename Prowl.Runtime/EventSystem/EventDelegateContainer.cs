@@ -23,6 +23,8 @@ public abstract class EventDelegateContainer<T> : IDisposable where T : struct, 
         }
     }
 
+    private bool _disposed;
+
     private readonly T eventType;
     public T EventType => eventType;
 
@@ -41,6 +43,12 @@ public abstract class EventDelegateContainer<T> : IDisposable where T : struct, 
     /// Used by <see cref="Event{T}"/> to build per-type snapshots without reflection.
     /// </summary>
     public abstract Type ArgsType { get; }
+
+    /// <summary>
+    /// Returns <c>true</c> when this container wraps the specified handler delegate.
+    /// Used by the generated <c>-=</c> event accessor path.
+    /// </summary>
+    public abstract bool MatchesDelegate(Delegate handler);
 
 #if DEBUG
     /// <summary>
@@ -110,6 +118,9 @@ public abstract class EventDelegateContainer<T> : IDisposable where T : struct, 
     /// </summary>
     public void Dispose()
     {
+        if (_disposed) return;
+
+        _disposed = true;
         Event?.Remove(this);
     }
 }
@@ -120,6 +131,9 @@ public abstract class EventDelegateContainer<T> : IDisposable where T : struct, 
 public class EventDelegateContainer<T, TArgs> : EventDelegateContainer<T>, IInvocable<TArgs> where T : struct, Enum
 {
     public override Type ArgsType => typeof(TArgs);
+
+    /// <inheritdoc />
+    public override bool MatchesDelegate(Delegate handler) => handler != null && handler.Equals(eventDelegate);
 
     private readonly Action<TArgs>? eventDelegate;
 
@@ -169,6 +183,9 @@ public class EventDelegateContainer<T, TArgs> : EventDelegateContainer<T>, IInvo
 /// </summary>
 public sealed class ParameterlessEventDelegateContainer<T> : EventDelegateContainer<T, Unit> where T : struct, Enum
 {
+    /// <inheritdoc />
+    public override bool MatchesDelegate(Delegate handler) => handler != null && handler.Equals(_action);
+
     private readonly Action _action;
 
     public ParameterlessEventDelegateContainer(T eventType, Action action, int priority = 0)

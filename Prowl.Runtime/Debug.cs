@@ -8,6 +8,7 @@ using System.Linq;
 using System.Reflection;
 using System.Text;
 
+using Prowl.Runtime.EventSystem;
 using Prowl.Runtime.Resources;
 using Prowl.Vector;
 
@@ -21,9 +22,6 @@ public enum LogSeverity
     Error = 1 << 3,
     Exception = 1 << 4
 }
-
-
-public delegate void OnLog(string message, DebugStackTrace? stackTrace, LogSeverity logSeverity);
 
 
 public record DebugStackFrame(string FileName, int? Line = null, int? Column = null, MethodBase? MethodBase = null)
@@ -77,7 +75,12 @@ public record DebugStackTrace(params DebugStackFrame[] StackFrames)
 
 public static class Debug
 {
-    public static event OnLog? OnLog;
+    /// <summary>
+    /// Event manager for debug logging events.
+    /// </summary>
+    [Obsolete("Use DebugEvents.Manager or the generated convenience methods instead.")]
+    public static EventManager<DebugEvents.EventTypes> DebugEventManager
+        => DebugEvents.Manager;
 
     public static void Log(object message)
         => Log(message != null ? message.ToString() : "null", LogSeverity.Normal);
@@ -119,7 +122,7 @@ public static class Debug
 
         Console.ForegroundColor = prevColor;
 
-        OnLog?.Invoke(exception.Message + "\n" + (exception.InnerException?.Message ?? ""), trace, LogSeverity.Exception);
+        DebugEvents.InvokeOnLog(new LogEventArgs(exception.Message + "\n" + (exception.InnerException?.Message ?? ""), trace, LogSeverity.Exception));
     }
 
     // NOTE : StackTrace is pretty fast on modern .NET, so it's nice to keep it on by default, since it gives useful line numbers for debugging purposes.
@@ -142,12 +145,12 @@ public static class Debug
         if (customTrace != null)
         {
             Console.WriteLine(customTrace.ToString());
-            OnLog?.Invoke(message, customTrace, logSeverity);
+            DebugEvents.InvokeOnLog(new LogEventArgs(message, customTrace, logSeverity));
         }
         else
         {
             StackTrace trace = new(2, true);
-            OnLog?.Invoke(message, (DebugStackTrace)trace, logSeverity);
+            DebugEvents.InvokeOnLog(new LogEventArgs(message, (DebugStackTrace)trace, logSeverity));
         }
 
         Console.ForegroundColor = prevColor;

@@ -3,14 +3,18 @@
 
 namespace Prowl.Runtime.EventSystem;
 
-public enum BaseEvents
+[EventDomain]
+public static partial class BaseEvents
 {
     [EventArgs(typeof(Unit))]
-    OnBeforeUpdate,
+    private static readonly EventKey _OnBeforeUpdate = new();
+
     [EventArgs(typeof(Unit))]
-    OnAfterUpdate,
+    private static readonly EventKey _OnAfterUpdate = new();
+
     [EventArgs(typeof(Unit))]
-    OnBeforeLateUpdate,
+    private static readonly EventKey _OnBeforeLateUpdate = new();
+
     [EventArgs(typeof(Unit))]
-    OnAfterLateUpdate,
+    private static readonly EventKey _OnAfterLateUpdate = new();
 }

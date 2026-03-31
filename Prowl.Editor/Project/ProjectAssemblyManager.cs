@@ -5,6 +5,7 @@ using System.Reflection;
 using System.Runtime.Loader;
 
 using Prowl.Echo;
+using Prowl.Editor.Core;
 using Prowl.Runtime;
 using Prowl.Runtime.Resources;
 
@@ -45,13 +46,6 @@ public sealed class ProjectAssemblyManager : IDisposable, IProjectTypeResolver
     private static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(5);
     private DateTime _lastPollTime;
     private Dictionary<string, DateTime>? _knownFileTimestamps;
-
-    /// <summary>
-    /// Raised after a new script assembly has been successfully loaded (or
-    /// after the previous one was unloaded due to compilation failure).
-    /// Listeners should invalidate any cached type lists.
-    /// </summary>
-    public event Action? OnAssemblyChanged;
 
     /// <summary>
     /// The currently loaded user-script assembly, or <c>null</c> if none is loaded.
@@ -162,7 +156,7 @@ public sealed class ProjectAssemblyManager : IDisposable, IProjectTypeResolver
         // detect our own compilation as a change.
         SnapshotFileTimestamps();
 
-        OnAssemblyChanged?.Invoke();
+        EditorEvents.InvokeOnAssemblyChanged();
         return result;
     }
 

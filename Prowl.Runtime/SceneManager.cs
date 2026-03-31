@@ -39,11 +39,10 @@ public static class SceneManager
 
     /// <summary>
     /// Event manager for scene lifecycle notifications.
-    /// Subscribe to <see cref="SceneManagerEvents.OnSceneLoaded"/> and
-    /// <see cref="SceneManagerEvents.OnSceneUnloaded"/> with priority ordering
-    /// and thread-safe dispatch.
     /// </summary>
-    public static EventManager<SceneManagerEvents> SceneEventManager { get; } = new();
+    [Obsolete("Use SceneManagerEvents.Manager or the generated convenience methods instead.")]
+    public static EventManager<SceneManagerEvents.EventTypes> SceneEventManager
+        => SceneManagerEvents.Manager;
 
     private static Scene[] GetSnapshot()
     {
@@ -120,7 +119,7 @@ public static class SceneManager
         if (Scene.Current == null)
             Scene.SetCurrentDirect(scene);
 
-        SceneEventManager.InvokeEvent(SceneManagerEvents.OnSceneLoaded, new SceneEventArgs(scene));
+        SceneManagerEvents.InvokeOnSceneLoaded(new SceneEventArgs(scene));
         Debug.Log($"[SceneManager] Additively loaded scene: {scene.Name ?? "(unnamed)"}");
     }
 
@@ -158,7 +157,7 @@ public static class SceneManager
             }
         }
 
-        SceneEventManager.InvokeEvent(SceneManagerEvents.OnSceneUnloaded, new SceneEventArgs(scene));
+        SceneManagerEvents.InvokeOnSceneUnloaded(new SceneEventArgs(scene));
         Debug.Log($"[SceneManager] Unloaded scene: {scene.Name ?? "(unnamed)"}");
         return true;
     }

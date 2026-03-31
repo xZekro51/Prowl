@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Runtime.CompilerServices;
 
@@ -32,7 +33,7 @@ public class EventManager<T> : IDisposable where T : struct, Enum
         }
     }
 
-    private readonly Dictionary<T, Event<T>> _events = new Dictionary<T, Event<T>>();
+    private readonly ConcurrentDictionary<T, Event<T>> _events = new ConcurrentDictionary<T, Event<T>>();
 
     private bool global = false;
     public bool Global
@@ -97,14 +98,22 @@ public class EventManager<T> : IDisposable where T : struct, Enum
         }
     }
 
+    /// <summary>
+    /// Removes the first delegate container that wraps the given handler delegate.
+    /// Used by the generated event <c>-=</c> accessors.
+    /// </summary>
+    public bool RemoveDelegate(T eventType, Delegate handler)
+    {
+        if (_events.TryGetValue(eventType, out var evt))
+            return evt.RemoveByDelegate(handler);
+        return false;
+    }
+
 
 
     public void RemoveEvent(Event<T> xEvent)
     {
-
-        _events.Remove(xEvent.EventType);
-
-
+        _events.Remove(xEvent.EventType, out _);
     }
 
     public void EnableEvent(T eventType)

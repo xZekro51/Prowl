@@ -41,16 +41,6 @@ public class PhysicsWorld
     public bool UseMultithreading = true;
     public bool AutoSyncTransforms = true;
 
-    /// <summary>
-    /// Event triggered before each physics step.
-    /// </summary>
-    public event Action<float> PreStep;
-
-    /// <summary>
-    /// Event triggered after each physics step.
-    /// </summary>
-    public event Action<float> PostStep;
-
     public PhysicsWorld()
     {
         World = new World();
@@ -96,14 +86,12 @@ public class PhysicsWorld
 
     private void OnPreStep(float deltaTime)
     {
-        PreStep?.Invoke(deltaTime);
-        Game.PhysicsEventManager.InvokeEvent(PhysicsEvents.OnPrePhysicsStep, new PhysicsStepArgs(deltaTime));
+        PhysicsEvents.InvokeOnPrePhysicsStep(new PhysicsStepArgs(deltaTime));
     }
 
     private void OnPostStep(float deltaTime)
     {
-        PostStep?.Invoke(deltaTime);
-        Game.PhysicsEventManager.InvokeEvent(PhysicsEvents.OnPostPhysicsStep, new PhysicsStepArgs(deltaTime));
+        PhysicsEvents.InvokeOnPostPhysicsStep(new PhysicsStepArgs(deltaTime));
     }
 
     public void Clear()

@@ -39,6 +39,13 @@
     <PackageReference Include="Silk.NET.Shaderc.Native" Version="2.23.0" />
   </ItemGroup>
 
+  <!-- Source generator for [EventDomain] classes -->
+  <ItemGroup>
+    <ProjectReference Include="..\Prowl.EventSystem.Generators\Prowl.EventSystem.Generators.csproj"
+                      OutputItemType="Analyzer"
+                      ReferenceOutputAssembly="false" />
+  </ItemGroup>
+
   <ItemGroup>
     <EmbeddedResource Include="Assets\Defaults\**" />
   </ItemGroup>
