@@ -104,7 +104,6 @@ public sealed class DefaultSceneService : ISceneService
         try
         {
             var ctx = new SerializationContext();
-            AssetDatabase.ConfigureContext(ctx);
             _snapshot = Serializer.Serialize(typeof(Scene), CurrentScene, ctx);
             return _snapshot;
         }
