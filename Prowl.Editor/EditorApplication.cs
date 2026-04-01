@@ -89,6 +89,7 @@ public sealed class EditorApplication : Game
     private bool _themeApplied;
     private float _lastAppliedUserScale = 1.0f;
     private bool _firstFrame = true;
+    private string _cachedFps = "";
 
     /// <summary>
     /// Resets the theme flag when DPI changes so that the editor theme
@@ -353,16 +354,18 @@ public sealed class EditorApplication : Game
         _preferencesPanel?.Tick(Time.UnscaledDeltaTime);
         _assemblyManager?.ProcessPendingRecompile();
         HandleKeyboardShortcuts();
-        UpdateWindowTitle();
         TickAutoSave(Time.UnscaledDeltaTime);
     }
 
-    private void UpdateWindowTitle()
+    protected override void UpdateWindowTitle()
     {
+        if (frameCounter % 60 == 0)
+            _cachedFps = $" ({1.0 / Time.DeltaTime:F0} FPS)";
+
         var sceneSvc = EditorServices.Get<ISceneService>();
         string sceneName = sceneSvc.CurrentScene?.Name ?? "Untitled";
         string dirty = sceneSvc.IsDirty ? " *" : "";
-        string title = $"Prowl Editor — {sceneName}{dirty}";
+        string title = $"Prowl Editor — {sceneName}{dirty}{_cachedFps}";
         Window.InternalWindow.Title = title;
     }
 

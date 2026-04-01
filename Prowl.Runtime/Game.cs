@@ -231,18 +231,8 @@ public abstract class Game
                     time.UnscaledDeltaTime,
                     time.Time));
 
-            if (frameCounter++ % 60 == 0)
-            {
-                _titleBuilder.Clear();
-                _titleBuilder.Append(_title);
-                _titleBuilder.Append(" - ");
-                _titleBuilder.Append(Window.InternalWindow.FramebufferSize.X);
-                _titleBuilder.Append('x');
-                _titleBuilder.Append(Window.InternalWindow.FramebufferSize.Y);
-                _titleBuilder.Append(" - FPS: ");
-                _titleBuilder.Append(1.0 / Time.DeltaTime);
-                Window.InternalWindow.Title = _titleBuilder.ToString();
-            }
+            frameCounter++;
+            UpdateWindowTitle();
 
         }
         catch (Exception e)
@@ -422,6 +412,27 @@ public abstract class Game
 
     public virtual void BeginUpdate() { }
     public virtual void EndUpdate() { }
+
+    /// <summary>
+    /// Updates the window title. Called once per frame at the end of <see cref="WindowUpdate"/>.
+    /// The default implementation shows resolution and FPS every 60 frames.
+    /// Override in subclasses (e.g. the editor) to use a custom title format.
+    /// </summary>
+    protected virtual void UpdateWindowTitle()
+    {
+        if (frameCounter % 60 == 0)
+        {
+            _titleBuilder.Clear();
+            _titleBuilder.Append(_title);
+            _titleBuilder.Append(" - ");
+            _titleBuilder.Append(Window.InternalWindow.FramebufferSize.X);
+            _titleBuilder.Append('x');
+            _titleBuilder.Append(Window.InternalWindow.FramebufferSize.Y);
+            _titleBuilder.Append(" - FPS: ");
+            _titleBuilder.Append(1.0 / Time.DeltaTime);
+            Window.InternalWindow.Title = _titleBuilder.ToString();
+        }
+    }
 
     /// <summary>
     /// Called once per frame to render the scene, Paper UI, and overlay (ImGui).
