@@ -25,7 +25,7 @@ public class Event<T> where T : struct, Enum
     /// Configurable threshold in milliseconds. Handlers exceeding this duration
     /// will be logged as warnings in DEBUG builds. Set to 0 to disable.
     /// </summary>
-    public static double SlowHandlerThresholdMs { get; set; } = 5.0;
+    public static double SlowHandlerThresholdMs { get; set; } = 200.0;
 #endif
 
     private readonly T _eventType;

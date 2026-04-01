@@ -64,8 +64,18 @@ public sealed class ProjectManager
 
     public void Save()
     {
-        string json = JsonSerializer.Serialize(_projects, s_jsonOpts);
-        File.WriteAllText(_listPath, json);
+        try
+        {
+            string json = JsonSerializer.Serialize(_projects, s_jsonOpts);
+            // Write to a temp file first, then move — prevents data loss on crash.
+            string tmpPath = _listPath + ".tmp";
+            File.WriteAllText(tmpPath, json);
+            File.Move(tmpPath, _listPath, overwrite: true);
+        }
+        catch (Exception ex)
+        {
+            Debug.LogError($"[ProjectManager] Failed to save project list: {ex.Message}");
+        }
     }
 
     // ── Query / Mutate ──────────────────────────────────────────────
@@ -109,6 +119,7 @@ public sealed class ProjectManager
     /// <summary>
     /// Adds an existing project folder to the list if it looks like a valid project.
     /// Returns the project info, or null if the folder is not a valid project.
+    /// If the project is already in the list, moves it to the top and returns it.
     /// </summary>
     public ProjectInfo? AddExistingProject(string projectPath)
     {
@@ -116,10 +127,16 @@ public sealed class ProjectManager
         if (!IsValidProject(projectPath))
             return null;
 
-        // Already in list?
+        // Already in list? Move to top so it shows as most recent.
         var existing = _projects.FirstOrDefault(p => NormPath(p.Path) == NormPath(projectPath));
         if (existing != null)
+        {
+            _projects.Remove(existing);
+            existing.LastModified = GetProjectTimestamp(projectPath);
+            _projects.Insert(0, existing);
+            Save();
             return existing;
+        }
 
         var info = new ProjectInfo
         {
@@ -150,8 +167,15 @@ public sealed class ProjectManager
 
         if (Directory.Exists(project.Path))
         {
-            try { Directory.Delete(project.Path, true); }
-            catch { /* best effort */ }
+            try
+            {
+                Directory.Delete(project.Path, true);
+                Debug.Log($"[ProjectManager] Deleted project folder: {project.Path}");
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError($"[ProjectManager] Failed to delete project folder '{project.Path}': {ex.Message}");
+            }
         }
     }
 
