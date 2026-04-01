@@ -42,6 +42,13 @@ public abstract class Game
     protected int frameCounter;
 
     private IDisposable? _dpiSubscription;
+    private IDisposable? _windowLoadSub;
+    private IDisposable? _windowUpdateSub;
+    private IDisposable? _windowRenderSub;
+    private IDisposable? _windowResizeSub;
+    private IDisposable? _windowMoveSub;
+    private IDisposable? _windowFbResizeSub;
+    private IDisposable? _windowClosingSub;
 
     private readonly WindowManager _windowManager = new();
     private IOverlayManager? _overlayManager;
@@ -303,7 +310,8 @@ public abstract class Game
         Debug.Log($"[SetupWindowAndStart] Window created, systemScale={systemScale}");
 
         Debug.Log("[SetupWindowAndStart] Registering event handlers...");
-        Window.Load += () =>
+        DisposeWindowSubscriptions();
+        _windowLoadSub = WindowEvents.SubscribeOnLoad(() =>
         {
             try
             {
@@ -346,14 +354,15 @@ public abstract class Game
                     Graphics.IsGraphiteReady ? Graphics.Graphite.BackendName : backend.ToString(),
                     scaledW,
                     scaledH));
-        };
+        });
 
         Debug.Log("[SetupWindowAndStart] Registering Update handler...");
-        Window.Update += WindowUpdate;
+        _windowUpdateSub = WindowEvents.SubscribeOnUpdate(args => WindowUpdate(args.DeltaTime));
 
         Debug.Log("[SetupWindowAndStart] Registering Render handler...");
-        Window.Render += (delta) =>
+        _windowRenderSub = WindowEvents.SubscribeOnRender((args) =>
         {
+            float delta = args.DeltaTime;
             if (!Window.IsVisible)
                 return;
             try
@@ -497,25 +506,25 @@ public abstract class Game
                 if (!HandleFrameException(e, "Render"))
                     throw;
             }
-        };
+        });
 
         Debug.Log("[SetupWindowAndStart] Registering Resize handler...");
-        Window.Resize += (size) =>
+        _windowResizeSub = WindowEvents.SubscribeOnResize((args) =>
         {
-            _paper.SetResolution(size.X, size.Y);
-            _paperRenderer.UpdateProjection(size.X, size.Y);
-            Resize(size.X, size.Y);
-        };
+            _paper.SetResolution(args.Width, args.Height);
+            _paperRenderer.UpdateProjection(args.Width, args.Height);
+            Resize(args.Width, args.Height);
+        });
 
         Debug.Log("[SetupWindowAndStart] Registering Move handler...");
         // Monitor DPI changes when the window moves between monitors or framebuffer resizes.
-        Window.Move += (_) => { if (_overlayManager is { IsReady: true }) DpiManager.CheckForChange(); };
+        _windowMoveSub = WindowEvents.SubscribeOnMove((_) => { if (_overlayManager is { IsReady: true }) DpiManager.CheckForChange(); });
 
         Debug.Log("[SetupWindowAndStart] Registering FramebufferResize handler...");
-        Window.FramebufferResize += (_) => { if (_overlayManager is { IsReady: true }) DpiManager.CheckForChange(); };
+        _windowFbResizeSub = WindowEvents.SubscribeOnFramebufferResize((_) => { if (_overlayManager is { IsReady: true }) DpiManager.CheckForChange(); });
 
         Debug.Log("[SetupWindowAndStart] Registering Closing handler...");
-        Window.Closing += () =>
+        _windowClosingSub = WindowEvents.SubscribeOnClosing(() =>
         {
             EventSystem.GameLoopEvents.InvokeOnClosing(
                 new EventSystem.ClosingArgs(Time.TimeSinceStartup, Time.FrameCount));
@@ -533,7 +542,7 @@ public abstract class Game
             AudioContext.Deinitialize();
 
             Debug.Log("Is terminating...");
-        };
+        });
 
         Debug.Log("[SetupWindowAndStart] All handlers registered. Starting window...");
         Window.Start();
@@ -541,6 +550,21 @@ public abstract class Game
     }
 
     public virtual void Initialize() { }
+
+    /// <summary>
+    /// Disposes all window event subscriptions so they can be re-registered
+    /// cleanly (e.g. during backend fallback).
+    /// </summary>
+    private void DisposeWindowSubscriptions()
+    {
+        _windowLoadSub?.Dispose();      _windowLoadSub = null;
+        _windowUpdateSub?.Dispose();    _windowUpdateSub = null;
+        _windowRenderSub?.Dispose();    _windowRenderSub = null;
+        _windowResizeSub?.Dispose();    _windowResizeSub = null;
+        _windowMoveSub?.Dispose();      _windowMoveSub = null;
+        _windowFbResizeSub?.Dispose();  _windowFbResizeSub = null;
+        _windowClosingSub?.Dispose();   _windowClosingSub = null;
+    }
 
     public virtual void BeginUpdate() { }
     public virtual void EndUpdate() { }

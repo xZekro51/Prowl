@@ -22,11 +22,8 @@ public interface ISceneService
     /// <summary> The file path the scene was last saved to / loaded from, or null if unsaved. </summary>
     string? SceneFilePath { get; set; }
 
-    /// <summary> Raised when <see cref="IsDirty"/> changes. </summary>
-    event Action<bool>? DirtyStateChanged;
-
-    /// <summary> Raised after a scene has been loaded or created and set as current. </summary>
-    event Action<Scene>? SceneLoaded;
+    /// <summary> Per-instance event domain for scene service notifications. </summary>
+    SceneServiceEvents Events { get; }
 
     /// <summary> Marks the current scene as having unsaved changes. </summary>
     void MarkDirty();

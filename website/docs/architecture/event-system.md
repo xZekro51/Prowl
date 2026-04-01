@@ -230,6 +230,31 @@ The generator produces:
 | Convenience methods | `static` | Instance methods |
 | `GlobalInvoke` | Always `static` | Always `static` |
 | Isolation | Single shared manager | Each instance has its own `EventManager` |
+| Best for | Engine-wide singletons (window, game loop, physics) | Services, components, per-object events |
+
+**When to choose which:**
+- **Static domains** — use for process-level singletons: `WindowEvents`, `GameLoopEvents`, `PhysicsEvents`, `RenderingEvents`. There's only ever one instance, and every system subscribes globally.
+- **Instance domains** — use for non-static classes, services, or anything with per-object scope: `SceneServiceEvents`, `SelectionServiceEvents`, `PrefabEditModeEvents`. Expose the domain as a property on the owning interface or class so subscribers can reach it.
+
+```csharp title="Instance domain pattern — service events"
+// 1. Define the domain (not static)
+[EventDomain]
+public partial class SceneServiceEvents
+{
+    [EventArgs(typeof(DirtyStateChangedArgs))]
+    private static readonly EventKey _OnDirtyStateChanged = new();
+}
+
+// 2. Expose on the interface
+public interface ISceneService
+{
+    SceneServiceEvents Events { get; }
+}
+
+// 3. Subscribe via the service
+var svc = EditorServices.Get<ISceneService>();
+svc.Events.SubscribeOnDirtyStateChanged(args => { /* ... */ });
+```
 
 ---
 
@@ -376,6 +401,24 @@ Disabled managers, events, and handlers are **silently skipped** during invocati
 | `OnRenderComplete` | `RenderCompleteArgs` | After rendering is complete |
 | `OnClosing` | `ClosingArgs` | Application window is closing |
 
+### WindowEvents
+
+**Static** | **Global** — Platform window lifecycle events bridging Silk.NET to the engine.
+
+| Event | Args Type | Description |
+|-------|-----------|-------------|
+| `OnLoad` | `Unit` | Window loaded, graphics initialized |
+| `OnUpdate` | `WindowUpdateArgs` | Per-frame update tick |
+| `OnRender` | `WindowRenderArgs` | Per-frame render tick |
+| `OnPostRender` | `WindowRenderArgs` | After main render, before Present |
+| `OnFocusChanged` | `WindowFocusChangedArgs` | Window focus gained/lost |
+| `OnResize` | `WindowResizeArgs` | Logical window size changed |
+| `OnFramebufferResize` | `WindowResizeArgs` | Framebuffer size changed |
+| `OnClosing` | `Unit` | Window closing |
+| `OnMove` | `WindowMoveArgs` | Window moved |
+| `OnStateChanged` | `WindowStateChangedArgs` | Window state changed (minimize/maximize) |
+| `OnFileDrop` | `WindowFileDropArgs` | Files dropped onto window |
+
 ### RenderingEvents
 
 | Event | Args Type | Description |
@@ -412,6 +455,16 @@ Disabled managers, events, and handlers are **silently skipped** during invocati
 - **DebugEvents** — Debug log messages
 - **BaseEvents** — Update lifecycle (BeforeUpdate, AfterUpdate, etc.)
 - **EditorEvents** — Play mode changes, assembly reload, error logging
+
+### Instance Domains (Editor Services)
+
+These are **non-static** event domains — each instance owns its own `EventManager`. They are exposed as properties on service interfaces.
+
+| Domain | File | Events |
+|--------|------|--------|
+| `SceneServiceEvents` | `Editor/Services/Events/SceneServiceEvents.cs` | `OnDirtyStateChanged`, `OnSceneLoaded` |
+| `SelectionServiceEvents` | `Editor/Services/Events/SelectionServiceEvents.cs` | `OnSelectionChanged` |
+| `PrefabEditModeEvents` | `Editor/Prefabs/PrefabEditModeEvents.cs` | `OnModeChanged` |
 
 ---
 
@@ -454,5 +507,9 @@ Disabled managers, events, and handlers are **silently skipped** during invocati
 | `Prowl.Runtime/EventSystem/EventArgsContract.cs` | Runtime type-safety validation |
 | `Prowl.Runtime/EventSystem/ICancellable.cs` | Cancellation interface |
 | `Prowl.EventSystem.Generators/EventDomainGenerator.cs` | Source generator |
+| `Prowl.Runtime/EventSystem/WindowEvents.cs` | Platform window lifecycle events |
+| `Prowl.Editor/Services/Events/SceneServiceEvents.cs` | Per-service: scene dirty state, scene loaded |
+| `Prowl.Editor/Services/Events/SelectionServiceEvents.cs` | Per-service: selection changed |
+| `Prowl.Editor/Prefabs/PrefabEditModeEvents.cs` | Per-instance: prefab edit mode |
 | `Prowl.Runtime.Test/EventSystemTests.cs` | Unit tests |
 | `Prowl.Runtime.Test/EventDomainGeneratorTests.cs` | Generator tests |

@@ -57,6 +57,9 @@ public sealed class EditorApplication : Game
     private BuildPanel? _buildPanel;
     private ProfilerPanel? _profilerPanel;
 
+    // Window event subscription
+    private IDisposable? _fileDropSub;
+
     // Maximize state for scene panel
     private bool _sceneMaximized;
     private bool[] _savedOpenStates = new bool[9]; // hierarchy, inspector, project, game, prefs, console, projSettings, build, profiler
@@ -290,7 +293,7 @@ public sealed class EditorApplication : Game
         EditorServices.Register<ProjectPanel>(_projectPanel);
 
         // Wire up OS file explorer drag-and-drop to import assets into the project
-        Window.FileDrop += OnExternalFileDrop;
+        _fileDropSub = WindowEvents.SubscribeOnFileDrop(args => OnExternalFileDrop(args.Files));
 
         // Menu bar panel toggles
         _menuBar.OnToggleHierarchy = () => _hierarchyPanel.IsOpen = !_hierarchyPanel.IsOpen;
@@ -959,6 +962,10 @@ public sealed class EditorApplication : Game
 
         EditorConsoleLogger.Shutdown();
         EditorServices.Clear();
+
+        _fileDropSub?.Dispose();
+        _fileDropSub = null;
+
         Debug.Log("Editor shutting down.");
     }
 
