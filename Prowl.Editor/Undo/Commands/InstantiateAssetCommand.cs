@@ -70,6 +70,9 @@ public sealed class InstantiateAssetCommand : IUndoableCommand
     /// <summary>
     /// Loads a model file and creates a full GameObject hierarchy
     /// (with MeshRenderers and materials), similar to Unity's model import.
+    /// Stamps <see cref="EngineObject.AssetID"/> and
+    /// <see cref="EngineObject.AssetPath"/> from the .meta system so that
+    /// sub-resources (meshes, materials) serialize as references.
     /// </summary>
     private GameObject? InstantiateModel(ISceneService sceneService)
     {
@@ -81,6 +84,10 @@ public sealed class InstantiateAssetCommand : IUndoableCommand
                 Debug.LogWarning($"[InstantiateAsset] Failed to load model: {_absolutePath}");
                 return sceneService.CreateGameObject(_assetName);
             }
+
+            // Stamp AssetID from the .meta system so that meshes and
+            // materials inside the model serialize as references.
+            StampModelAssetId(model, _absolutePath);
 
             // Build the full hierarchy from the model's node structure
             GameObject root = model.CreateGameObjectHierarchy();
@@ -96,6 +103,38 @@ public sealed class InstantiateAssetCommand : IUndoableCommand
         {
             Debug.LogWarning($"[InstantiateAsset] Error loading model '{_assetName}': {ex.Message}");
             return sceneService.CreateGameObject(_assetName);
+        }
+    }
+
+    /// <summary>
+    /// Resolves the GUID for the model file from the .meta system and stamps
+    /// the model and all its sub-resources with proper AssetID/AssetPath values.
+    /// </summary>
+    private static void StampModelAssetId(Model model, string absolutePath)
+    {
+        if (!EditorServices.TryGet<IAssetService>(out var assetSvc) || !assetSvc!.HasProject)
+            return;
+
+        string relativePath;
+        try
+        {
+            relativePath = Path.GetRelativePath(assetSvc.AssetRootPath, absolutePath).Replace('\\', '/');
+        }
+        catch
+        {
+            return;
+        }
+
+        string? guidStr = assetSvc.GetGuidByPath(relativePath);
+        if (guidStr != null && Guid.TryParse(guidStr, out Guid assetId))
+        {
+            model.AssetID = assetId;
+            model.AssetPath = relativePath;
+            model.StampSubResourceIds();
+        }
+        else
+        {
+            model.AssetPath = relativePath;
         }
     }
 

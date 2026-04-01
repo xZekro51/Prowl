@@ -1131,6 +1131,15 @@ public sealed class InspectorPanel : EditorPanel
             ImGui.Button(displayName, new Vector2(refBtnW, 0));
             ImGui.PopStyleColor();
 
+            // Show AssetID and AssetPath in a tooltip when in debug mode
+            if (_debugMode && ImGui.IsItemHovered() && current != null)
+            {
+                ImGui.BeginTooltip();
+                ImGui.Text($"AssetID: {(current.AssetID != Guid.Empty ? current.AssetID.ToString("N") : "(none)")}");
+                ImGui.Text($"AssetPath: {(!string.IsNullOrEmpty(current.AssetPath) ? current.AssetPath : "(none)")}");
+                ImGui.EndTooltip();
+            }
+
             // Single-click on reference button → ping asset in project view
             if (ImGui.IsItemClicked(ImGuiMouseButton.Left) && !EditorDragDrop.IsDragging && current != null)
             {
@@ -1406,6 +1415,10 @@ public sealed class InspectorPanel : EditorPanel
 
     /// <summary>
     /// Attempts to load an asset from disk and return an EngineObject of the appropriate type.
+    /// After loading, stamps <see cref="EngineObject.AssetID"/> and
+    /// <see cref="EngineObject.AssetPath"/> from the .meta system so that
+    /// serialization emits a compact <c>$assetId</c> reference instead of an
+    /// inline copy.
     /// </summary>
     private static EngineObject? TryLoadAssetForField(AssetEntry entry, Type fieldType)
     {
@@ -1419,7 +1432,10 @@ public sealed class InspectorPanel : EditorPanel
             {
                 if (Importing.TextureImporter.IsTextureFile(ext) && File.Exists(path))
                 {
-                    return Importing.TextureImporter.Import(path);
+                    EngineObject? tex = Importing.TextureImporter.Import(path);
+                    if (tex != null)
+                        StampAssetId(tex, entry);
+                    return tex;
                 }
             }
 
@@ -1429,10 +1445,11 @@ public sealed class InspectorPanel : EditorPanel
                 if (MeshExtensions.Contains(ext) && File.Exists(path))
                 {
                     var model = Prowl.Runtime.Resources.Model.LoadFromFile(path);
+                    StampAssetId(model, entry);
+                    model.StampSubResourceIds();
                     if (model.Meshes.Count > 0)
                     {
                         var mesh = model.Meshes[0].Mesh;
-                        mesh.AssetPath = path;
                         mesh.Name = Path.GetFileNameWithoutExtension(path);
                         return mesh;
                     }
@@ -1444,7 +1461,10 @@ public sealed class InspectorPanel : EditorPanel
             {
                 if (MeshExtensions.Contains(ext) && File.Exists(path))
                 {
-                    return Prowl.Runtime.Resources.Model.LoadFromFile(path);
+                    var model = Prowl.Runtime.Resources.Model.LoadFromFile(path);
+                    StampAssetId(model, entry);
+                    model.StampSubResourceIds();
+                    return model;
                 }
             }
 
@@ -1455,7 +1475,10 @@ public sealed class InspectorPanel : EditorPanel
                 {
                     var mat = MaterialSerializer.Load(path);
                     if (mat != null)
+                    {
+                        StampAssetId(mat, entry);
                         return mat;
+                    }
                 }
             }
 
@@ -1464,7 +1487,10 @@ public sealed class InspectorPanel : EditorPanel
             {
                 if (ext == ".shader" && File.Exists(path))
                 {
-                    return Prowl.Runtime.Resources.Shader.LoadFromFile(path);
+                    var shader = Prowl.Runtime.Resources.Shader.LoadFromFile(path);
+                    if (shader != null)
+                        StampAssetId(shader, entry);
+                    return shader;
                 }
             }
         }
@@ -1474,6 +1500,47 @@ public sealed class InspectorPanel : EditorPanel
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// Resolves the GUID for the given asset entry from the .meta system and
+    /// stamps <see cref="EngineObject.AssetID"/> and
+    /// <see cref="EngineObject.AssetPath"/> on the loaded object.
+    /// </summary>
+    private static void StampAssetId(EngineObject obj, AssetEntry entry)
+    {
+        if (!EditorServices.TryGet<IAssetService>(out var assetSvc) || !assetSvc!.HasProject)
+            return;
+
+        string relativePath = entry.RelativePath;
+        if (string.IsNullOrEmpty(relativePath))
+        {
+            // Derive a relative path from the absolute path if not provided
+            string absPath = entry.FullPath;
+            if (!string.IsNullOrEmpty(absPath) && !string.IsNullOrEmpty(assetSvc.AssetRootPath))
+            {
+                try
+                {
+                    relativePath = Path.GetRelativePath(assetSvc.AssetRootPath, absPath).Replace('\\', '/');
+                }
+                catch { /* not under asset root */ }
+            }
+        }
+
+        if (string.IsNullOrEmpty(relativePath))
+            return;
+
+        string? guidStr = assetSvc.GetGuidByPath(relativePath);
+        if (guidStr != null && Guid.TryParse(guidStr, out Guid assetId))
+        {
+            obj.AssetID = assetId;
+            obj.AssetPath = relativePath;
+        }
+        else
+        {
+            // No .meta yet — still set the path so ping/navigation works
+            obj.AssetPath = relativePath;
+        }
     }
 
     // ────────────────────────────────────────────────────────────
@@ -1488,25 +1555,43 @@ public sealed class InspectorPanel : EditorPanel
     {
         if (obj == null) return;
 
-        // Try to find the asset by its AssetPath property or name
         if (!EditorServices.TryGet<IAssetService>(out var assets) || !assets!.HasProject)
             return;
 
         string? assetRelPath = null;
 
-        // Check if the object has an AssetPath property
-        var assetPathProp = obj.GetType().GetProperty("AssetPath");
-        if (assetPathProp != null)
+        // AssetPath is a public field on EngineObject — use it directly.
+        // It may be a relative path or an absolute path depending on how the
+        // object was loaded.
+        string storedPath = obj.AssetPath;
+        if (!string.IsNullOrEmpty(storedPath))
         {
-            string? absPath = assetPathProp.GetValue(obj) as string;
-            if (!string.IsNullOrEmpty(absPath) && absPath.StartsWith(assets.AssetRootPath, StringComparison.OrdinalIgnoreCase))
+            // Strip any sub-resource fragment (e.g. "Models/cube.obj#Mesh:0" → "Models/cube.obj")
+            int hashIdx = storedPath.IndexOf('#');
+            string basePath = hashIdx >= 0 ? storedPath[..hashIdx] : storedPath;
+
+            if (Path.IsPathRooted(basePath) &&
+                basePath.StartsWith(assets.AssetRootPath, StringComparison.OrdinalIgnoreCase))
             {
                 try
                 {
-                    assetRelPath = Path.GetRelativePath(assets.AssetRootPath, absPath).Replace('\\', '/');
+                    assetRelPath = Path.GetRelativePath(assets.AssetRootPath, basePath).Replace('\\', '/');
                 }
                 catch { /* not a project path */ }
             }
+            else if (!Path.IsPathRooted(basePath))
+            {
+                // Already a relative path
+                assetRelPath = basePath.Replace('\\', '/');
+            }
+        }
+
+        // If AssetID is set, try resolving the path through the meta manager
+        if (assetRelPath == null && obj.AssetID != Guid.Empty)
+        {
+            string? resolvedPath = assets.GetAssetPathByGuid(obj.AssetID.ToString("N"));
+            if (resolvedPath != null)
+                assetRelPath = resolvedPath;
         }
 
         // Fall back to searching by name in the asset database

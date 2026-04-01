@@ -4,6 +4,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Security.Cryptography;
 
 using Prowl.Vector;
 
@@ -64,6 +65,62 @@ public class Model : EngineObject
     }
 
     /// <summary>
+    /// Generates a deterministic GUID for a sub-resource within a parent asset.
+    /// The same <paramref name="parentId"/> and <paramref name="subResourceKey"/> will
+    /// always produce the same GUID.
+    /// </summary>
+    public static Guid GenerateSubResourceId(Guid parentId, string subResourceKey)
+    {
+        byte[] parentBytes = parentId.ToByteArray();
+        byte[] keyBytes = System.Text.Encoding.UTF8.GetBytes(subResourceKey);
+        byte[] combined = new byte[parentBytes.Length + keyBytes.Length];
+        Buffer.BlockCopy(parentBytes, 0, combined, 0, parentBytes.Length);
+        Buffer.BlockCopy(keyBytes, 0, combined, parentBytes.Length, keyBytes.Length);
+
+        byte[] hash = SHA256.HashData(combined);
+        byte[] guidBytes = new byte[16];
+        Buffer.BlockCopy(hash, 0, guidBytes, 0, 16);
+
+        // Set version 5 (name-based) and variant bits
+        guidBytes[6] = (byte)((guidBytes[6] & 0x0F) | 0x50);
+        guidBytes[8] = (byte)((guidBytes[8] & 0x3F) | 0x80);
+
+        return new Guid(guidBytes);
+    }
+
+    /// <summary>
+    /// Stamps deterministic <see cref="EngineObject.AssetID"/> and
+    /// <see cref="EngineObject.AssetPath"/> values on all sub-resources
+    /// (meshes and materials) based on this Model's own <see cref="EngineObject.AssetID"/>.
+    /// Call this after the Model receives its AssetID from the asset database.
+    /// </summary>
+    public void StampSubResourceIds()
+    {
+        if (AssetID == Guid.Empty)
+            return;
+
+        for (int i = 0; i < Meshes.Count; i++)
+        {
+            var mesh = Meshes[i].Mesh;
+            if (mesh == null) continue;
+
+            string key = $"Mesh:{i}";
+            mesh.AssetID = GenerateSubResourceId(AssetID, key);
+            mesh.AssetPath = $"{AssetPath}#{key}";
+        }
+
+        for (int i = 0; i < Materials.Count; i++)
+        {
+            var mat = Materials[i];
+            if (mat == null) continue;
+
+            string key = $"Material:{i}";
+            mat.AssetID = GenerateSubResourceId(AssetID, key);
+            mat.AssetPath = $"{AssetPath}#{key}";
+        }
+    }
+
+    /// <summary>
     /// Creates a <see cref="GameObject"/> hierarchy that mirrors the imported
     /// scene graph, similar to how Unity interprets imported models.
     /// Each <see cref="ModelNode"/> becomes a child <see cref="GameObject"/>
@@ -71,6 +128,10 @@ public class Model : EngineObject
     /// </summary>
     public GameObject CreateGameObjectHierarchy()
     {
+        // Ensure sub-resources have AssetIDs if this model is a registered asset
+        if (AssetID != Guid.Empty)
+            StampSubResourceIds();
+
         var root = new GameObject(Name);
 
         if (RootNode != null)

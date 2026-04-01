@@ -91,7 +91,9 @@ public static class MaterialSerializer
 
             Material mat = new Material(shader);
             mat.Name = obj["name"]?.GetValue<string>() ?? Path.GetFileNameWithoutExtension(filePath);
-            mat.AssetPath = filePath;
+
+            // Prefer relative path for AssetPath so references are portable.
+            mat.AssetPath = ToRelativeAssetPath(filePath) ?? filePath;
 
             // Deserialize properties
             if (obj["properties"] is JsonObject propsObj)
@@ -120,6 +122,7 @@ public static class MaterialSerializer
     /// Resolves a shader from a path string. Supports:
     /// - "$Default:ShaderName" for built-in shaders
     /// - Absolute or relative .shader file paths
+    /// All loaded shaders have their AssetID stamped from the .meta system when possible.
     /// </summary>
     private static Shader? ResolveShader(string shaderPath, string materialFilePath)
     {
@@ -137,7 +140,7 @@ public static class MaterialSerializer
 
         // Try as absolute path first
         if (Path.IsPathRooted(shaderPath) && File.Exists(shaderPath))
-            return Shader.LoadFromFile(shaderPath);
+            return LoadShaderAndStamp(shaderPath);
 
         // Try relative to the material file's directory
         string? matDir = Path.GetDirectoryName(materialFilePath);
@@ -145,14 +148,25 @@ public static class MaterialSerializer
         {
             string resolved = Path.GetFullPath(Path.Combine(matDir, shaderPath));
             if (File.Exists(resolved))
-                return Shader.LoadFromFile(resolved);
+                return LoadShaderAndStamp(resolved);
         }
 
         // Try as-is (may be relative to working directory or asset root)
         if (File.Exists(shaderPath))
-            return Shader.LoadFromFile(shaderPath);
+            return LoadShaderAndStamp(shaderPath);
 
         return null;
+    }
+
+    /// <summary>
+    /// Loads a shader from disk and stamps its AssetID from the .meta system.
+    /// </summary>
+    private static Shader? LoadShaderAndStamp(string absolutePath)
+    {
+        Shader? s = Shader.LoadFromFile(absolutePath);
+        if (s != null)
+            StampAssetIdFromMeta(s, absolutePath);
+        return s;
     }
 
     private static JsonObject SerializeProperties(PropertyState props)
@@ -315,19 +329,87 @@ public static class MaterialSerializer
                     {
                         string? path = texRef["path"]?.GetValue<string>();
                         if (!string.IsNullOrEmpty(path) && File.Exists(path))
-                                tex = Texture2D.FromFile(path, generateMipmaps: true);
+                        {
+                            tex = Texture2D.FromFile(path, generateMipmaps: true);
+                            if (tex != null)
+                                StampAssetIdFromMeta(tex, path);
+                        }
                     }
                 }
                 else if (kvp.Value is JsonValue jv && jv.TryGetValue<string>(out string? legacyPath))
                 {
                     // Legacy format: plain path string
                     if (!string.IsNullOrEmpty(legacyPath) && File.Exists(legacyPath))
+                    {
                         tex = Texture2D.FromFile(legacyPath, generateMipmaps: true);
+                        if (tex != null)
+                            StampAssetIdFromMeta(tex, legacyPath);
+                    }
                 }
 
                 if (tex != null)
                     mat.SetTexture(kvp.Key, tex);
             }
+        }
+    }
+
+    // ── Asset ID helpers ─────────────────────────────────────────
+
+    /// <summary>
+    /// Stamps <see cref="EngineObject.AssetID"/> and
+    /// <see cref="EngineObject.AssetPath"/> on an object loaded from
+    /// <paramref name="absolutePath"/> by looking up the GUID in the
+    /// editor's .meta system.
+    /// </summary>
+    private static void StampAssetIdFromMeta(EngineObject obj, string absolutePath)
+    {
+        if (!EditorServices.TryGet<IAssetService>(out var assetSvc) || !assetSvc!.HasProject)
+            return;
+
+        string? relativePath = ToRelativeAssetPath(absolutePath, assetSvc);
+        if (relativePath == null)
+            return;
+
+        string? guidStr = assetSvc.GetGuidByPath(relativePath);
+        if (guidStr != null && Guid.TryParse(guidStr, out Guid assetId))
+        {
+            obj.AssetID = assetId;
+            obj.AssetPath = relativePath;
+        }
+        else
+        {
+            obj.AssetPath = relativePath;
+        }
+    }
+
+    /// <summary>
+    /// Converts an absolute path to a relative asset path.  Returns null
+    /// if the path is not under the asset root.
+    /// </summary>
+    private static string? ToRelativeAssetPath(string absolutePath, IAssetService? assetSvc = null)
+    {
+        if (assetSvc == null)
+        {
+            if (!EditorServices.TryGet<IAssetService>(out assetSvc) || !assetSvc!.HasProject)
+                return null;
+        }
+
+        if (!Path.IsPathRooted(absolutePath))
+            return absolutePath.Replace('\\', '/');
+
+        if (string.IsNullOrEmpty(assetSvc.AssetRootPath))
+            return null;
+
+        try
+        {
+            string rel = Path.GetRelativePath(assetSvc.AssetRootPath, absolutePath).Replace('\\', '/');
+            // Path.GetRelativePath returns the absolute path unchanged when it
+            // cannot compute a relative result (e.g. different drive).
+            return rel.StartsWith("..") ? null : rel;
+        }
+        catch
+        {
+            return null;
         }
     }
 }

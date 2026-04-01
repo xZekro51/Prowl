@@ -60,6 +60,10 @@ public sealed class EditorAssetDatabase : IAssetDatabase
             obj.AssetID = assetId;
             obj.AssetPath = relativePath;
             _cache[assetId] = obj;
+
+            // Cache sub-resources for Models so Get(subGuid) resolves later
+            if (obj is Model model)
+                CacheModelSubResources(model);
         }
 
         return obj;
@@ -81,6 +85,8 @@ public sealed class EditorAssetDatabase : IAssetDatabase
                 ".asset" => ScriptableObjectSerializer.Load(absolutePath),
                 ".png" or ".jpg" or ".jpeg" or ".bmp" or ".tga" =>
                     LoadTexture(absolutePath, relativePath),
+                ".obj" or ".fbx" or ".gltf" or ".glb" or ".dae" or ".3ds" or ".blend" or ".ply" or ".stl" =>
+                    Model.LoadFromFile(absolutePath),
                 _ => null,
             };
         }
@@ -134,5 +140,65 @@ public sealed class EditorAssetDatabase : IAssetDatabase
             return assetId;
 
         return Guid.Empty;
+    }
+
+    /// <inheritdoc />
+    public EngineObject? ResolveByPath(string assetPath)
+    {
+        if (string.IsNullOrEmpty(assetPath))
+            return null;
+
+        int hashIdx = assetPath.IndexOf('#');
+        if (hashIdx < 0)
+        {
+            // Not a sub-resource path — try normal resolution
+            Guid id = ResolveAssetId(assetPath);
+            return id != Guid.Empty ? Get(id) : null;
+        }
+
+        string parentPath = assetPath[..hashIdx];
+        string fragment = assetPath[(hashIdx + 1)..];
+
+        Guid parentGuid = ResolveAssetId(parentPath);
+        if (parentGuid == Guid.Empty)
+            return null;
+
+        // Load the parent model (this also caches sub-resources)
+        var parent = Get(parentGuid);
+        if (parent is not Model model)
+            return null;
+
+        return ResolveSubResource(model, fragment);
+    }
+
+    private void CacheModelSubResources(Model model)
+    {
+        model.StampSubResourceIds();
+
+        foreach (var mm in model.Meshes)
+        {
+            if (mm.Mesh is { AssetID: var id } && id != Guid.Empty)
+                _cache.TryAdd(id, mm.Mesh);
+        }
+
+        foreach (var mat in model.Materials)
+        {
+            if (mat is { AssetID: var id } && id != Guid.Empty)
+                _cache.TryAdd(id, mat);
+        }
+    }
+
+    private static EngineObject? ResolveSubResource(Model model, string fragment)
+    {
+        string[] parts = fragment.Split(':');
+        if (parts.Length != 2 || !int.TryParse(parts[1], out int index))
+            return null;
+
+        return parts[0] switch
+        {
+            "Mesh" when index >= 0 && index < model.Meshes.Count => model.Meshes[index].Mesh,
+            "Material" when index >= 0 && index < model.Materials.Count => model.Materials[index],
+            _ => null
+        };
     }
 }

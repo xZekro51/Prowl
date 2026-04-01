@@ -1347,7 +1347,9 @@ public class GameObject : EngineObject, ISerializable
 
             // Type is now available — deserialize with the resolved type
             // so Echo's fallback uses the correct user type.
-            MonoBehaviour? component = Serializer.Deserialize(data, oType, new SerializationContext()) as MonoBehaviour;
+            SerializationContext ctx = new SerializationContext();
+            AssetDatabase.ConfigureContext(ctx);
+            MonoBehaviour? component = Serializer.Deserialize(data, oType, ctx) as MonoBehaviour;
             if (component.IsValid())
             {
                 _components[i] = component;
