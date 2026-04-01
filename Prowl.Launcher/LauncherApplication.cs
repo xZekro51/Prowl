@@ -67,6 +67,21 @@ public sealed class LauncherApplication : Game
     private double _lastClickTime;
     private const double DoubleClickThreshold = 0.35;
 
+    // ── On-demand rendering ─────────────────────────────────────────
+    // The launcher is a mostly-static UI. We only need to render when
+    // input occurs or an animation (toast fade) is active.  Between
+    // those bursts the update loop sleeps to save CPU/GPU.
+    private int _renderFramesRemaining = 10;
+    private const int RepaintBurstFrames = 6;
+    private int _lastMouseX;
+    private int _lastMouseY;
+    private bool _lastMouseLeft;
+    private bool _lastMouseRight;
+    private bool _lastMouseMiddle;
+    private bool _imGuiWantsInput;
+    private IDisposable? _focusSub;
+    private IDisposable? _resizeSub;
+
     /// <summary>
     /// Resets the theme flag when DPI changes so that the launcher theme
     /// (including <c>ScaleAllSizes</c>) is reapplied on the next frame.
@@ -74,6 +89,44 @@ public sealed class LauncherApplication : Game
     public override void OnDpiChanged(float oldScale, float newScale)
     {
         _themeApplied = false;
+        RequestRepaint();
+    }
+
+    /// <summary>
+    /// Requests that the launcher renders for the next several frames.
+    /// Call whenever something visible has changed (input, toast, modal, etc.).
+    /// </summary>
+    private void RequestRepaint(int frames = RepaintBurstFrames)
+    {
+        _renderFramesRemaining = Math.Max(_renderFramesRemaining, frames);
+    }
+
+    /// <summary>
+    /// Detects whether any user input changed since the last frame.
+    /// </summary>
+    private bool DetectInputActivity()
+    {
+        var mousePos = Input.MousePosition;
+        bool mouseLeft = Input.GetMouseButton(0);
+        bool mouseRight = Input.GetMouseButton(1);
+        bool mouseMiddle = Input.GetMouseButton(2);
+        float scroll = Input.MouseWheelDelta;
+
+        bool changed = mousePos.X != _lastMouseX
+                    || mousePos.Y != _lastMouseY
+                    || mouseLeft != _lastMouseLeft
+                    || mouseRight != _lastMouseRight
+                    || mouseMiddle != _lastMouseMiddle
+                    || scroll != 0f
+                    || Input.AnyKey;
+
+        _lastMouseX = mousePos.X;
+        _lastMouseY = mousePos.Y;
+        _lastMouseLeft = mouseLeft;
+        _lastMouseRight = mouseRight;
+        _lastMouseMiddle = mouseMiddle;
+
+        return changed;
     }
 
     // ── Lightweight game-loop overrides ──────────────────────────────
@@ -84,7 +137,8 @@ public sealed class LauncherApplication : Game
     /// <summary>
     /// Replaces the full Game.WindowUpdate with a minimal version that
     /// only processes input and advances the frame counter.  No scenes,
-    /// physics, audio, or fixed-update loops.
+    /// physics, audio, or fixed-update loops.  When the UI is idle the
+    /// loop sleeps to avoid burning CPU.
     /// </summary>
     public override void WindowUpdate(float delta)
     {
@@ -92,19 +146,50 @@ public sealed class LauncherApplication : Game
         Time.TimeStack.Clear();
         Time.TimeStack.Push(time);
         Input.UpdateActions(delta);
+
+        // Wake up when any input state changes.
+        if (DetectInputActivity())
+            RequestRepaint();
+
+        // Keep rendering while ImGui has active or hovered widgets
+        // (text input focused, popup open, scrollbar dragged, etc.).
+        if (_imGuiWantsInput)
+            RequestRepaint();
+
+        // Keep rendering while a toast is fading or a folder picker is pending.
+        if (!string.IsNullOrEmpty(_toastMessage) || _folderPickerTask != null)
+            RequestRepaint(2);
+
+        // Keep rendering while a modal popup is open.
+        if (_showNewProjectModal || _showRemoveModal || _showDeleteFromDiskModal)
+            RequestRepaint(2);
+
+        if (_renderFramesRemaining <= 0)
+        {
+            // Idle — yield the thread briefly to save CPU while keeping
+            // the Silk.NET event loop responsive to new input.
+            Thread.Sleep(16);
+        }
+
         frameCounter++;
     }
 
     /// <summary>
     /// Replaces the full Game.WindowRender with a minimal version that
     /// only renders the ImGui overlay.  No shadow atlas, no scene rendering,
-    /// no Paper UI, no RenderTexture pool — just ImGui.
+    /// no Paper UI, no RenderTexture pool — just ImGui.  When the UI is
+    /// idle, rendering is skipped entirely (the previous frame stays on
+    /// screen via the swapchain).
     /// </summary>
     public override void WindowRender(float delta)
     {
         if (!Window.IsVisible)
             return;
 
+        if (_renderFramesRemaining <= 0)
+            return;
+
+        _renderFramesRemaining--;
         RenderOverlay(delta);
     }
 
@@ -134,6 +219,7 @@ public sealed class LauncherApplication : Game
         // Subscribe to OS file-drop events so users can drag project folders onto the window.
         _fileDropSub = WindowEvents.SubscribeOnFileDrop(args =>
         {
+            RequestRepaint();
             int added = 0;
             foreach (string file in args.Files)
             {
@@ -155,6 +241,10 @@ public sealed class LauncherApplication : Game
                 ShowToast("Dropped folder is not a valid Prowl project.", new Vector4(0.85f, 0.35f, 0.25f, 1f));
             }
         });
+
+        // Wake up rendering when the window gains/loses focus or is resized.
+        _focusSub = WindowEvents.SubscribeOnFocusChanged(_ => RequestRepaint());
+        _resizeSub = WindowEvents.SubscribeOnResize(_ => RequestRepaint(10));
     }
 
     // ── Main render ─────────────────────────────────────────────────
@@ -210,6 +300,14 @@ public sealed class LauncherApplication : Game
         DrawNewProjectPopup();
         DrawRemovePopup();
         DrawDeleteFromDiskPopup();
+
+        // Track whether ImGui needs continuous rendering (active text field,
+        // hovered item, popup open, etc.) so the next update keeps us awake.
+        var io = ImGui.GetIO();
+        _imGuiWantsInput = io.WantTextInput
+                        || io.WantCaptureKeyboard
+                        || ImGui.IsAnyItemActive()
+                        || ImGui.IsAnyItemHovered();
     }
 
     // ── Sidebar ──────────────────────────────────────────────────────
@@ -978,6 +1076,7 @@ public sealed class LauncherApplication : Game
         _toastMessage = message;
         _toastColor = color;
         _toastExpiry = (float)ImGui.GetTime() + durationSeconds;
+        RequestRepaint(10);
     }
 
     private void DrawToast(ImGuiViewportPtr vp)
