@@ -479,20 +479,28 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
         }
         _swapchainFormat = surfaceFormat.Format;
 
-        // Choose present mode (prefer Mailbox for low-latency, fall back to FIFO)
+        // Choose present mode.
+        // FIFO = true VSync (caps to monitor refresh, GPU idles between frames).
+        // Mailbox = low-latency triple buffering (GPU renders as fast as possible,
+        //           discards all but the latest frame — wastes GPU on static UIs).
+        // Only use Mailbox when VSync is explicitly disabled.
         uint presentModeCount = 0;
         _khrSurface.GetPhysicalDeviceSurfacePresentModes(PhysicalDevice, _surface, &presentModeCount, null);
         var presentModes = new PresentModeKHR[presentModeCount];
         fixed (PresentModeKHR* pModes = presentModes)
             _khrSurface.GetPhysicalDeviceSurfacePresentModes(PhysicalDevice, _surface, &presentModeCount, pModes);
 
-        var presentMode = PresentModeKHR.FifoKhr;
-        foreach (var mode in presentModes)
+        var presentMode = PresentModeKHR.FifoKhr; // Always available per spec
+        if (!Window.VSync)
         {
-            if (mode == PresentModeKHR.MailboxKhr)
+            // Prefer Mailbox (low-latency, no tearing) over Immediate (tearing)
+            foreach (var mode in presentModes)
             {
-                presentMode = mode;
-                break;
+                if (mode == PresentModeKHR.MailboxKhr)
+                {
+                    presentMode = mode;
+                    break;
+                }
             }
         }
 

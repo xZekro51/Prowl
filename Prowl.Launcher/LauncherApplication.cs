@@ -76,6 +76,38 @@ public sealed class LauncherApplication : Game
         _themeApplied = false;
     }
 
+    // ── Lightweight game-loop overrides ──────────────────────────────
+    // The base Game class runs the full engine loop: scenes, physics,
+    // audio, shadows, Paper UI, etc.  The launcher only needs ImGui,
+    // so we override the heavy-weight virtuals to be no-ops.
+
+    /// <summary>
+    /// Replaces the full Game.WindowUpdate with a minimal version that
+    /// only processes input and advances the frame counter.  No scenes,
+    /// physics, audio, or fixed-update loops.
+    /// </summary>
+    public override void WindowUpdate(float delta)
+    {
+        time.Update();
+        Time.TimeStack.Clear();
+        Time.TimeStack.Push(time);
+        Input.UpdateActions(delta);
+        frameCounter++;
+    }
+
+    /// <summary>
+    /// Replaces the full Game.WindowRender with a minimal version that
+    /// only renders the ImGui overlay.  No shadow atlas, no scene rendering,
+    /// no Paper UI, no RenderTexture pool — just ImGui.
+    /// </summary>
+    public override void WindowRender(float delta)
+    {
+        if (!Window.IsVisible)
+            return;
+
+        RenderOverlay(delta);
+    }
+
     // ── Lifecycle ────────────────────────────────────────────────────
 
     protected override IOverlayManager? CreateOverlayManager()

@@ -24,8 +24,11 @@ namespace Prowl.ImGuiIntegration;
 /// </summary>
 public sealed class ImGuiRendererGraphite : IDisposable
 {
-    // ── Shaders (GLSL 450, cross-compiled to SPIR-V for Vulkan) ─────
-    private const string VertexShaderSource = """
+    // ── Shaders ───────────────────────────────────────────────────────
+    // Vulkan uses GLSL 450 with explicit descriptor-set layout qualifiers.
+    // OpenGL uses GLSL 410 with plain uniforms (no set= qualifier).
+
+    private const string VertexShaderSource_Vulkan = """
         #version 450
         layout(set=0, binding=0) uniform Uniforms { mat4 projection; };
         layout(location=0) in vec2 aPos;
@@ -40,11 +43,37 @@ public sealed class ImGuiRendererGraphite : IDisposable
         }
         """;
 
-    private const string FragmentShaderSource = """
+    private const string FragmentShaderSource_Vulkan = """
         #version 450
         layout(set=1, binding=0) uniform sampler2D sTexture;
         layout(location=0) in vec2 vUV;
         layout(location=1) in vec4 vColor;
+        layout(location=0) out vec4 fragColor;
+        void main() {
+            fragColor = vColor * texture(sTexture, vUV);
+        }
+        """;
+
+    private const string VertexShaderSource_OpenGL = """
+        #version 410
+        layout(std140) uniform Uniforms { mat4 projection; };
+        layout(location=0) in vec2 aPos;
+        layout(location=1) in vec2 aUV;
+        layout(location=2) in vec4 aColor;
+        out vec2 vUV;
+        out vec4 vColor;
+        void main() {
+            vUV = aUV;
+            vColor = aColor;
+            gl_Position = projection * vec4(aPos, 0.0, 1.0);
+        }
+        """;
+
+    private const string FragmentShaderSource_OpenGL = """
+        #version 410
+        uniform sampler2D sTexture;
+        in vec2 vUV;
+        in vec4 vColor;
         layout(location=0) out vec4 fragColor;
         void main() {
             fragColor = vColor * texture(sTexture, vUV);
@@ -113,17 +142,17 @@ public sealed class ImGuiRendererGraphite : IDisposable
         if (Graphics.IsOpenGL)
         {
             _vertexShaderModule = device.CreateShaderModule(
-                ShaderModuleDescriptor.VertexGLSL(VertexShaderSource));
+                ShaderModuleDescriptor.VertexGLSL(VertexShaderSource_OpenGL));
             _fragmentShaderModule = device.CreateShaderModule(
-                ShaderModuleDescriptor.FragmentGLSL(FragmentShaderSource));
+                ShaderModuleDescriptor.FragmentGLSL(FragmentShaderSource_OpenGL));
         }
         else
         {
             // Vulkan requires SPIR-V — compile GLSL at runtime via shaderc.
             byte[] vertSpirv = ShaderCrossCompiler.CompileGLSLToSPIRV(
-                VertexShaderSource, ShaderStage.Vertex, "ImGui.vert");
+                VertexShaderSource_Vulkan, ShaderStage.Vertex, "ImGui.vert");
             byte[] fragSpirv = ShaderCrossCompiler.CompileGLSLToSPIRV(
-                FragmentShaderSource, ShaderStage.Fragment, "ImGui.frag");
+                FragmentShaderSource_Vulkan, ShaderStage.Fragment, "ImGui.frag");
 
             _vertexShaderModule = device.CreateShaderModule(
                 ShaderModuleDescriptor.VertexSPIRV(vertSpirv));
@@ -363,6 +392,11 @@ public sealed class ImGuiRendererGraphite : IDisposable
                 uint scissorH = (uint)Math.Min(fbHeight - scissorY, (int)(clipRect.W - clipRect.Y));
                 if (scissorW == 0 || scissorH == 0)
                     continue;
+
+                // OpenGL glScissor uses bottom-left origin; flip Y so the
+                // top-left ImGui clip rects map to the correct screen region.
+                if (Graphics.IsOpenGL)
+                    scissorY = fbHeight - scissorY - (int)scissorH;
 
                 cmd.SetScissor(scissorX, scissorY, scissorW, scissorH);
 

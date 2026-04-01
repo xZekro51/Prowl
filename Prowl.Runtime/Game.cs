@@ -360,153 +360,7 @@ public abstract class Game
         _windowUpdateSub = WindowEvents.SubscribeOnUpdate(args => WindowUpdate(args.DeltaTime));
 
         Debug.Log("[SetupWindowAndStart] Registering Render handler...");
-        _windowRenderSub = WindowEvents.SubscribeOnRender((args) =>
-        {
-            float delta = args.DeltaTime;
-            if (!Window.IsVisible)
-                return;
-            try
-            {
-                // === Start Graphics ===
-
-                if (Graphics.IsOpenGL)
-                {
-                    // Invalidate legacy caches that may be stale from Graphite
-                    // command execution in the previous frame (PaperRenderer, etc.).
-                    Graphics.InvalidateLegacyCaches();
-
-                    Graphics.UnbindFramebuffer();
-                    Graphics.Viewport(0, 0, (uint)Window.InternalWindow.FramebufferSize.X, (uint)Window.InternalWindow.FramebufferSize.Y);
-                    Graphics.SetState(new(), true);
-
-                    Graphics.BindVertexArray(null);
-                    Graphics.Clear(0, 0, 0, 1, ClearFlags.Color | ClearFlags.Depth | ClearFlags.Stencil);
-                }
-
-                // === End of Start Graphics ===
-
-                // Reset per-frame swapchain tracking so the first render pass
-                // targeting the swapchain knows to use Clear (Vulkan layout transition).
-                Graphics.SwapchainClearedThisFrame = false;
-
-                // Scene rendering is wrapped separately so that failures here
-                // (e.g. during the Graphite migration) do not prevent UI from rendering.
-                try
-                {
-                    using (Profiler.Section("Shadows"))
-                    {
-                        Rendering.ShadowAtlas.TryInitialize();
-                        Rendering.ShadowAtlas.Clear();
-                    }
-
-                    EventSystem.RenderingEvents.InvokeOnShadowsReady();
-
-                    using (Profiler.Section("BeginRender"))
-                        BeginRender();
-
-                    EventSystem.RenderingEvents.InvokeOnBeginRender();
-
-                    using (Profiler.Section("RenderScenes"))
-                        RenderScenes();
-
-                    using (Profiler.Section("EndRender"))
-                        EndRender();
-
-                    EventSystem.RenderingEvents.InvokeOnEndRender();
-                }
-                catch (Exception e)
-                {
-                    Debug.LogError("An exception occurred during scene rendering:");
-                    Debug.LogError(e.ToString());
-                    if (!HandleFrameException(e, "SceneRender"))
-                        throw;
-                }
-
-                // Reset GL state so Paper UI starts from a known-good state.
-                if (Graphics.IsOpenGL)
-                {
-                    Graphics.UnbindFramebuffer();
-                    Graphics.Viewport(0, 0, (uint)Window.InternalWindow.FramebufferSize.X, (uint)Window.InternalWindow.FramebufferSize.Y);
-                }
-
-                // Paper UI is also isolated so ImGui always gets a chance to render.
-                try
-                {
-                    using (Profiler.Section("PaperUI"))
-                    {
-                        _paper.BeginFrame(delta);
-
-                        BeginGui(_paper);
-
-                        // OnGui runs on all loaded scenes, or just the current scene
-                        RenderScenePaperGui(_paper);
-
-                        EndGui(_paper);
-
-                        PaperStatsMonitor.Draw(_paper);
-
-                        _paperRenderer.RenderTarget = null; // Render to swapchain
-                        _paper.EndFrame();
-                    }
-                }
-                catch (Exception e)
-                {
-                    Debug.LogError("An exception occurred during Paper UI rendering:");
-                    Debug.LogError(e.ToString());
-                    if (!HandleFrameException(e, "PaperUI"))
-                        throw;
-                }
-
-                // Reset GL state before ImGui so it always starts clean.
-                if (Graphics.IsOpenGL)
-                {
-                    // PaperRenderer submits Graphite command lists that change
-                    // the active GL program, VAO, and texture bindings directly.
-                    // Invalidate the legacy caches so ImGui and the next frame
-                    // start from a known-good state.
-                    Graphics.InvalidateLegacyCaches();
-
-                    Graphics.UnbindFramebuffer();
-                    Graphics.Viewport(0, 0, (uint)Window.InternalWindow.FramebufferSize.X, (uint)Window.InternalWindow.FramebufferSize.Y);
-                    Graphics.SetState(new(), true);
-                }
-
-                // Overlay UI frame (editor / launcher UI) — works on all backends via Graphite.
-                if (_overlayManager is { IsReady: true } overlay)
-                {
-                    using (Profiler.Section("ImGui"))
-                    {
-                        overlay.Update((float)delta);
-                        overlay.BeginFrame();
-
-                        BeginImGui(overlay.Renderer!);
-                        EndImGui(overlay.Renderer!);
-
-                        overlay.Render();
-                    }
-                }
-
-                // === End Graphics ===
-
-                RenderTexture.UpdatePool();
-
-                // === End of End Graphics ===
-
-                Debug.ClearGizmos();
-
-                Profiler.EndFrame();
-
-                EventSystem.GameLoopEvents.InvokeOnRenderComplete(
-                    new EventSystem.RenderCompleteArgs(frameCounter, delta));
-            }
-            catch (Exception e)
-            {
-                Debug.LogError("An exception occurred during the Render loop:");
-                Debug.LogError(e.ToString());
-                if (!HandleFrameException(e, "Render"))
-                    throw;
-            }
-        });
+        _windowRenderSub = WindowEvents.SubscribeOnRender((args) => WindowRender(args.DeltaTime));
 
         Debug.Log("[SetupWindowAndStart] Registering Resize handler...");
         _windowResizeSub = WindowEvents.SubscribeOnResize((args) =>
@@ -568,6 +422,161 @@ public abstract class Game
 
     public virtual void BeginUpdate() { }
     public virtual void EndUpdate() { }
+
+    /// <summary>
+    /// Called once per frame to render the scene, Paper UI, and overlay (ImGui).
+    /// Subclasses that need only a lightweight overlay (e.g. the launcher) can
+    /// override this to skip scene rendering, shadow atlas, Paper UI, etc.
+    /// </summary>
+    public virtual void WindowRender(float delta)
+    {
+        if (!Window.IsVisible)
+            return;
+        try
+        {
+            // === Start Graphics ===
+
+            if (Graphics.IsOpenGL)
+            {
+                Graphics.InvalidateLegacyCaches();
+                Graphics.UnbindFramebuffer();
+                Graphics.Viewport(0, 0, (uint)Window.InternalWindow.FramebufferSize.X, (uint)Window.InternalWindow.FramebufferSize.Y);
+                Graphics.SetState(new(), true);
+                Graphics.BindVertexArray(null);
+                Graphics.Clear(0, 0, 0, 1, ClearFlags.Color | ClearFlags.Depth | ClearFlags.Stencil);
+            }
+
+            // Reset per-frame swapchain tracking so the first render pass
+            // targeting the swapchain knows to use Clear (Vulkan layout transition).
+            Graphics.SwapchainClearedThisFrame = false;
+
+            // Scene rendering is wrapped separately so that failures here
+            // do not prevent UI from rendering.
+            try
+            {
+                using (Profiler.Section("Shadows"))
+                {
+                    Rendering.ShadowAtlas.TryInitialize();
+                    Rendering.ShadowAtlas.Clear();
+                }
+
+                EventSystem.RenderingEvents.InvokeOnShadowsReady();
+
+                using (Profiler.Section("BeginRender"))
+                    BeginRender();
+
+                EventSystem.RenderingEvents.InvokeOnBeginRender();
+
+                using (Profiler.Section("RenderScenes"))
+                    RenderScenes();
+
+                using (Profiler.Section("EndRender"))
+                    EndRender();
+
+                EventSystem.RenderingEvents.InvokeOnEndRender();
+            }
+            catch (Exception e)
+            {
+                Debug.LogError("An exception occurred during scene rendering:");
+                Debug.LogError(e.ToString());
+                if (!HandleFrameException(e, "SceneRender"))
+                    throw;
+            }
+
+            // Reset GL state so Paper UI starts from a known-good state.
+            if (Graphics.IsOpenGL)
+            {
+                Graphics.UnbindFramebuffer();
+                Graphics.Viewport(0, 0, (uint)Window.InternalWindow.FramebufferSize.X, (uint)Window.InternalWindow.FramebufferSize.Y);
+            }
+
+            // Paper UI is also isolated so ImGui always gets a chance to render.
+            try
+            {
+                using (Profiler.Section("PaperUI"))
+                {
+                    _paper.BeginFrame(delta);
+
+                    BeginGui(_paper);
+
+                    // OnGui runs on all loaded scenes, or just the current scene
+                    RenderScenePaperGui(_paper);
+
+                    EndGui(_paper);
+
+                    PaperStatsMonitor.Draw(_paper);
+
+                    _paperRenderer.RenderTarget = null; // Render to swapchain
+                    _paper.EndFrame();
+                }
+            }
+            catch (Exception e)
+            {
+                Debug.LogError("An exception occurred during Paper UI rendering:");
+                Debug.LogError(e.ToString());
+                if (!HandleFrameException(e, "PaperUI"))
+                    throw;
+            }
+
+            // Reset GL state before ImGui so it always starts clean.
+            if (Graphics.IsOpenGL)
+            {
+                Graphics.InvalidateLegacyCaches();
+                Graphics.UnbindFramebuffer();
+                Graphics.Viewport(0, 0, (uint)Window.InternalWindow.FramebufferSize.X, (uint)Window.InternalWindow.FramebufferSize.Y);
+                Graphics.SetState(new(), true);
+            }
+
+            // Overlay UI frame (editor / launcher UI) — works on all backends via Graphite.
+            RenderOverlay(delta);
+
+            // === End Graphics ===
+
+            RenderTexture.UpdatePool();
+
+            Debug.ClearGizmos();
+
+            Profiler.EndFrame();
+
+            EventSystem.GameLoopEvents.InvokeOnRenderComplete(
+                new EventSystem.RenderCompleteArgs(frameCounter, delta));
+        }
+        catch (Exception e)
+        {
+            Debug.LogError("An exception occurred during the Render loop:");
+            Debug.LogError(e.ToString());
+            if (!HandleFrameException(e, "Render"))
+                throw;
+        }
+    }
+
+    /// <summary>
+    /// Renders the ImGui overlay. Extracted so lightweight subclasses can call
+    /// this directly from an overridden <see cref="WindowRender"/> without
+    /// running the full scene/Paper UI pipeline.
+    /// </summary>
+    protected void RenderOverlay(float delta)
+    {
+        if (_overlayManager is { IsReady: true } overlay)
+        {
+            // Reset swapchain tracking so the overlay's render pass uses
+            // Clear (required for Vulkan layout transitions) when it is
+            // the first pass targeting the swapchain this frame.
+            Graphics.SwapchainClearedThisFrame = false;
+
+            using (Profiler.Section("ImGui"))
+            {
+                overlay.Update(delta);
+                overlay.BeginFrame();
+
+                BeginImGui(overlay.Renderer!);
+                EndImGui(overlay.Renderer!);
+
+                overlay.Render();
+            }
+        }
+    }
+
     public virtual void BeginRender() { }
     public virtual void RenderScenes()
     {

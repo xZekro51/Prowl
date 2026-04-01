@@ -40,7 +40,7 @@ public sealed class WindowManager
         InitialScaledHeight = (int)MathF.Round(logicalHeight * systemScale);
 
         Window.InitWindow(title, InitialScaledWidth, InitialScaledHeight,
-            Silk.NET.Windowing.WindowState.Normal, false, backend);
+            Silk.NET.Windowing.WindowState.Normal, true, backend);
 
         return systemScale;
     }
