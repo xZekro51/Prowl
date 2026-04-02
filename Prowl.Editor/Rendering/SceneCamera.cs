@@ -110,13 +110,26 @@ public sealed class SceneCamera
         // ── Fly-camera mode (RMB held, without Alt) ────────────
         if (rmb && !alt)
         {
+            // First-person look: rotate in place instead of orbiting the pivot
+            Float3 startPos = GetPosition();
+
             // Mouse look
             Yaw += delta.X * LookSpeed;
             Pitch += delta.Y * LookSpeed;
             Pitch = Math.Clamp(Pitch, -89f, 89f);
 
+            // Recompute pivot to keep camera at startPos
+            float yawRad = Yaw * (MathF.PI / 180f);
+            float pitchRad = Pitch * (MathF.PI / 180f);
+            Float3 newOffset = new(
+                MathF.Cos(pitchRad) * MathF.Sin(yawRad),
+                MathF.Sin(pitchRad),
+                MathF.Cos(pitchRad) * MathF.Cos(yawRad)
+            );
+            Pivot = startPos - newOffset * Distance;
+
             // Compute camera axes
-            Float3 pos = GetPosition();
+            Float3 pos = startPos;
             Float3 forward = Float3.Normalize(Pivot - pos);
             Float3 right = Float3.Normalize(Float3.Cross(forward, Float3.UnitY));
             Float3 up = Float3.UnitY;

@@ -397,6 +397,13 @@ public sealed class InspectorPanel : EditorPanel
     private static Vector2 _dragStartPos;
     private static bool _isDraggingLabel;
 
+    private static bool DrawVectorComponent(string letter, ref float value, float speed,
+        float fieldWidth, float buttonW,
+        Vector4 btnColor, Vector4 btnHover, Vector4 btnActive)
+    {
+        return DrawVectorComponent(letter, ref value, speed, fieldWidth, buttonW, btnColor, btnHover, btnActive, Vector4.One);
+    }
+
     /// <summary>
     /// Draws a single vector component in the Stride / S&amp;box style: a small colored
     /// label that can be dragged horizontally to scrub the value, flush with an
@@ -405,7 +412,7 @@ public sealed class InspectorPanel : EditorPanel
     /// </summary>
     private static bool DrawVectorComponent(string letter, ref float value, float speed,
         float fieldWidth, float buttonW,
-        Vector4 btnColor, Vector4 btnHover, Vector4 btnActive)
+        Vector4 btnColor, Vector4 btnHover, Vector4 btnActive, Vector4 labelColor)
     {
         bool changed = false;
         var style = ImGui.GetStyle();
@@ -417,7 +424,7 @@ public sealed class InspectorPanel : EditorPanel
         ImGui.PushStyleColor(ImGuiCol.Button, btnColor);
         ImGui.PushStyleColor(ImGuiCol.ButtonHovered, btnHover);
         ImGui.PushStyleColor(ImGuiCol.ButtonActive, btnActive);
-        ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(1f, 1f, 1f, 1f));
+        ImGui.PushStyleColor(ImGuiCol.Text, labelColor);
         ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 2f);
         ImGui.PushStyleVar(ImGuiStyleVar.ItemSpacing, new Vector2(0, style.ItemSpacing.Y));
 
@@ -511,28 +518,58 @@ public sealed class InspectorPanel : EditorPanel
 
             // X — Red
             if (DrawVectorComponent("X", ref x, speed, fieldWidth, buttonW,
-                new Vector4(0.80f, 0.15f, 0.15f, 1f),
-                new Vector4(0.90f, 0.20f, 0.20f, 1f),
-                new Vector4(1.00f, 0.25f, 0.25f, 1f)))
+                new Vector4(0.19f, 0.16f, 0.16f, 1f),//new Vector4(0.80f, 0.15f, 0.15f, 1f),
+                new Vector4(0.34f, 0.29f, 0.29f, 1f),
+                new Vector4(0.49f, 0.42f, 0.42f, 1f),
+                new Vector4(0.86f, 0.42f, 0.41f, 1f)))
             { value.X = x; changed = true; }
+            bool activeX = ImGui.IsItemFocused();
+
 
             ImGui.SameLine(0, spacing);
 
             // Y — Green
             if (DrawVectorComponent("Y", ref y, speed, fieldWidth, buttonW,
-                new Vector4(0.20f, 0.60f, 0.20f, 1f),
-                new Vector4(0.25f, 0.70f, 0.25f, 1f),
-                new Vector4(0.30f, 0.80f, 0.30f, 1f)))
+                new Vector4(0.16f, 0.17f, 0.15f, 1f),
+                new Vector4(0.31f, 0.32f, 0.28f, 1f),
+                new Vector4(0.45f, 0.47f, 0.41f, 1f),
+                new Vector4(0.56f, 0.72f, 0.35f, 1f)))
             { value.Y = y; changed = true; }
+            bool activeY = ImGui.IsItemFocused();
 
             ImGui.SameLine(0, spacing);
 
             // Z — Blue
             if (DrawVectorComponent("Z", ref z, speed, fieldWidth, buttonW,
-                new Vector4(0.15f, 0.25f, 0.80f, 1f),
-                new Vector4(0.20f, 0.30f, 0.90f, 1f),
-                new Vector4(0.25f, 0.35f, 1.00f, 1f)))
+                new Vector4(0.17f, 0.18f, 0.2f, 1f),
+                new Vector4(0.3f, 0.32f, 0.35f, 1f),
+                new Vector4(0.42f, 0.46f, 0.5f, 1f),
+                new Vector4(0.34f, 0.51f, 0.71f, 1f)))
             { value.Z = z; changed = true; }
+            bool activeZ = ImGui.IsItemFocused();
+
+            if ((activeX || activeY || activeZ) && ImGui.GetIO().KeyCtrl)
+            {
+                if (ImGui.IsKeyPressed(ImGuiKey.C))
+                {
+                    ImGui.SetClipboardText($"{value.X}, {value.Y}, {value.Z}");
+                }
+                else if (ImGui.IsKeyPressed(ImGuiKey.V))
+                {
+                    string cb = ImGui.GetClipboardText();
+                    if (!string.IsNullOrWhiteSpace(cb))
+                    {
+                        var parts = cb.Split(new[] { ',', ' ' }, StringSplitOptions.RemoveEmptyEntries);
+                        if (parts.Length >= 3)
+                        {
+                            if (float.TryParse(parts[0], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float px)) value.X = px;
+                            if (float.TryParse(parts[1], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float py)) value.Y = py;
+                            if (float.TryParse(parts[2], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float pz)) value.Z = pz;
+                            changed = true;
+                        }
+                    }
+                }
+            }
 
             ImGui.PopID();
             ImGui.EndTable();
@@ -577,6 +614,7 @@ public sealed class InspectorPanel : EditorPanel
                 new Vector4(0.90f, 0.20f, 0.20f, 1f),
                 new Vector4(1.00f, 0.25f, 0.25f, 1f)))
             { value.X = x; changed = true; }
+            bool activeX = ImGui.IsItemFocused();
 
             ImGui.SameLine(0, spacing);
 
@@ -586,6 +624,29 @@ public sealed class InspectorPanel : EditorPanel
                 new Vector4(0.25f, 0.70f, 0.25f, 1f),
                 new Vector4(0.30f, 0.80f, 0.30f, 1f)))
             { value.Y = y; changed = true; }
+            bool activeY = ImGui.IsItemFocused();
+
+            if ((activeX || activeY) && ImGui.GetIO().KeyCtrl)
+            {
+                if (ImGui.IsKeyPressed(ImGuiKey.C))
+                {
+                    ImGui.SetClipboardText($"{value.X}, {value.Y}");
+                }
+                else if (ImGui.IsKeyPressed(ImGuiKey.V))
+                {
+                    string cb = ImGui.GetClipboardText();
+                    if (!string.IsNullOrWhiteSpace(cb))
+                    {
+                        var parts = cb.Split(new[] { ',', ' ' }, StringSplitOptions.RemoveEmptyEntries);
+                        if (parts.Length >= 2)
+                        {
+                            if (float.TryParse(parts[0], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float px)) value.X = px;
+                            if (float.TryParse(parts[1], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float py)) value.Y = py;
+                            changed = true;
+                        }
+                    }
+                }
+            }
 
             ImGui.PopID();
             ImGui.EndTable();
@@ -630,6 +691,7 @@ public sealed class InspectorPanel : EditorPanel
                 new Vector4(0.90f, 0.20f, 0.20f, 1f),
                 new Vector4(1.00f, 0.25f, 0.25f, 1f)))
             { value.X = x; changed = true; }
+            bool activeX = ImGui.IsItemFocused();
 
             ImGui.SameLine(0, spacing);
 
@@ -639,6 +701,7 @@ public sealed class InspectorPanel : EditorPanel
                 new Vector4(0.25f, 0.70f, 0.25f, 1f),
                 new Vector4(0.30f, 0.80f, 0.30f, 1f)))
             { value.Y = y; changed = true; }
+            bool activeY = ImGui.IsItemFocused();
 
             ImGui.SameLine(0, spacing);
 
@@ -648,6 +711,7 @@ public sealed class InspectorPanel : EditorPanel
                 new Vector4(0.20f, 0.30f, 0.90f, 1f),
                 new Vector4(0.25f, 0.35f, 1.00f, 1f)))
             { value.Z = z; changed = true; }
+            bool activeZ = ImGui.IsItemFocused();
 
             ImGui.SameLine(0, spacing);
 
@@ -657,6 +721,31 @@ public sealed class InspectorPanel : EditorPanel
                 new Vector4(0.65f, 0.30f, 0.80f, 1f),
                 new Vector4(0.75f, 0.35f, 0.90f, 1f)))
             { value.W = w; changed = true; }
+            bool activeW = ImGui.IsItemFocused();
+
+            if ((activeX || activeY || activeZ || activeW) && ImGui.GetIO().KeyCtrl)
+            {
+                if (ImGui.IsKeyPressed(ImGuiKey.C))
+                {
+                    ImGui.SetClipboardText($"{value.X}, {value.Y}, {value.Z}, {value.W}");
+                }
+                else if (ImGui.IsKeyPressed(ImGuiKey.V))
+                {
+                    string cb = ImGui.GetClipboardText();
+                    if (!string.IsNullOrWhiteSpace(cb))
+                    {
+                        var parts = cb.Split(new[] { ',', ' ' }, StringSplitOptions.RemoveEmptyEntries);
+                        if (parts.Length >= 4)
+                        {
+                            if (float.TryParse(parts[0], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float px)) value.X = px;
+                            if (float.TryParse(parts[1], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float py)) value.Y = py;
+                            if (float.TryParse(parts[2], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float pz)) value.Z = pz;
+                            if (float.TryParse(parts[3], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float pw)) value.W = pw;
+                            changed = true;
+                        }
+                    }
+                }
+            }
 
             ImGui.PopID();
             ImGui.EndTable();
