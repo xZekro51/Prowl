@@ -10,13 +10,40 @@ using System.Reflection;
 using Prowl.Echo;
 using Prowl.PaperUI;
 using Prowl.Runtime.EventSystem;
+using Prowl.Runtime.Profiling;
 using Prowl.Runtime.Rendering;
 using Prowl.Vector;
 
 namespace Prowl.Runtime.Resources;
 
+/// <summary>
+/// Represents a game scene containing GameObjects and their components.
+/// <para>
+/// Use <see cref="Scene.Load"/> and <see cref="Scene.Current"/> for simple single-scene workflows.
+/// For advanced scenarios (multiplayer servers, editor previews), create and manage Scene instances
+/// directly or use <see cref="SceneManager"/> for additive loading.
+/// </para>
+/// </summary>
 public class Scene : EngineObject, ISerializationCallbackReceiver
 {
+    static Scene()
+    {
+#if PROWL_PROFILING
+        Profiler.RegisterSection("Scene.Enable", "Scene", "Enables a scene and triggers OnEnable for all components");
+        Profiler.RegisterSection("Scene.Disable", "Scene", "Disables a scene and triggers OnDisable for all components");
+        Profiler.RegisterSection("Scene.Update", "Scene", "Updates all active GameObjects and components");
+        Profiler.RegisterSection("PreUpdate", "Scene", "PreUpdate pass for all GameObjects");
+        Profiler.RegisterSection("Update", "Scene", "Update pass for all components");
+        Profiler.RegisterSection("LateUpdate", "Scene", "LateUpdate pass for all components");
+        Profiler.RegisterSection("Scene.FixedUpdate", "Scene", "Physics and FixedUpdate pass");
+        Profiler.RegisterSection("Physics.Update", "Scene", "Physics simulation step");
+        Profiler.RegisterSection("FixedUpdate", "Scene", "FixedUpdate pass for all components");
+        Profiler.RegisterSection("Scene.DrawGizmos", "Scene", "Draws gizmos for all components");
+        Profiler.RegisterSection("Scene.OnGui", "Scene", "GUI pass for all components");
+        Profiler.RegisterSection("Scene.Render", "Scene", "Renders all cameras in the scene");
+#endif
+    }
+
     #region Scene Manager
 
     /// <summary>
@@ -115,6 +142,12 @@ public class Scene : EngineObject, ISerializationCallbackReceiver
 
     #endregion
 
+    /// <summary>
+    /// Per-scene event manager for lifecycle notifications.
+    /// Subscribe to GameObject add/remove, enable/disable, and update/render events.
+    /// </summary>
+    public SceneEvents Events { get; } = new();
+
     [SerializeField]
     private GameObject[] serializeObj = null;
 
@@ -123,6 +156,9 @@ public class Scene : EngineObject, ISerializationCallbackReceiver
 
     private PhysicsWorld _physics = new();
 
+    /// <summary>
+    /// The physics simulation for this scene.
+    /// </summary>
     public PhysicsWorld Physics => _physics;
 
     // Rendering tracking - cleared each frame before Update, populated during Update
@@ -255,41 +291,46 @@ public class Scene : EngineObject, ISerializationCallbackReceiver
     /// </summary>
     public void Enable()
     {
-        if (_isActive)
+        using (Profiler.Section("Scene.Enable"))
         {
-            Debug.LogWarning("[Scene] Enable() called on an already-enabled scene — skipping.");
-            return;
-        }
-
-        _isActive = true;
-
-        // Create a copy to avoid collection modification during enumeration
-        List<GameObject> allObjectsCopy = [.. AllObjects];
-
-        // Trigger OnEnable for all enabled components in the scene
-        foreach (GameObject go in allObjectsCopy)
-        {
-            if (go.IsDisposed) continue;
-
-            if (go.EnabledInHierarchy)
+            if (_isActive)
             {
-                go.BeginComponentIteration();
-                try
+                Debug.LogWarning("[Scene] Enable() called on an already-enabled scene — skipping.");
+                return;
+            }
+
+            _isActive = true;
+
+            // Create a copy to avoid collection modification during enumeration
+            List<GameObject> allObjectsCopy = [.. AllObjects];
+
+            // Trigger OnEnable for all enabled components in the scene
+            foreach (GameObject go in allObjectsCopy)
+            {
+                if (go.IsDisposed) continue;
+
+                if (go.EnabledInHierarchy)
                 {
-                    int count = go._components.Count;
-                    for (int i = 0; i < count; i++)
+                    go.BeginComponentIteration();
+                    try
                     {
-                        MonoBehaviour component = go._components[i];
-                        if (component.IsDisposed) continue;
-                        if (component.Enabled && component.EnabledInHierarchy)
-                            component.InternalOnEnable();
+                        int count = go._components.Count;
+                        for (int i = 0; i < count; i++)
+                        {
+                            MonoBehaviour component = go._components[i];
+                            if (component.IsDisposed) continue;
+                            if (component.Enabled && component.EnabledInHierarchy)
+                                component.InternalOnEnable();
+                        }
+                    }
+                    finally
+                    {
+                        go.EndComponentIteration();
                     }
                 }
-                finally
-                {
-                    go.EndComponentIteration();
-                }
             }
+
+            Events.InvokeOnSceneEnabled();
         }
     }
 
@@ -299,42 +340,47 @@ public class Scene : EngineObject, ISerializationCallbackReceiver
     /// </summary>
     public void Disable()
     {
-        if (!_isActive)
+        using (Profiler.Section("Scene.Disable"))
         {
-            Debug.LogWarning("[Scene] Disable() called on an already-disabled scene — skipping.");
-            return;
-        }
-
-        // Create a copy to avoid collection modification during enumeration
-        List<GameObject> allObjectsCopy = [.. AllObjects];
-
-        // Trigger OnDisable for all enabled components in the scene
-        foreach (GameObject go in allObjectsCopy)
-        {
-            if (go.IsDisposed) continue;
-
-            if (go.EnabledInHierarchy)
+            if (!_isActive)
             {
-                go.BeginComponentIteration();
-                try
+                Debug.LogWarning("[Scene] Disable() called on an already-disabled scene — skipping.");
+                return;
+            }
+
+            // Create a copy to avoid collection modification during enumeration
+            List<GameObject> allObjectsCopy = [.. AllObjects];
+
+            // Trigger OnDisable for all enabled components in the scene
+            foreach (GameObject go in allObjectsCopy)
+            {
+                if (go.IsDisposed) continue;
+
+                if (go.EnabledInHierarchy)
                 {
-                    int count = go._components.Count;
-                    for (int i = 0; i < count; i++)
+                    go.BeginComponentIteration();
+                    try
                     {
-                        MonoBehaviour component = go._components[i];
-                        if (component.IsDisposed) continue;
-                        if (component.Enabled && component.EnabledInHierarchy)
-                            component.OnDisable();
+                        int count = go._components.Count;
+                        for (int i = 0; i < count; i++)
+                        {
+                            MonoBehaviour component = go._components[i];
+                            if (component.IsDisposed) continue;
+                            if (component.Enabled && component.EnabledInHierarchy)
+                                component.OnDisable();
+                        }
+                    }
+                    finally
+                    {
+                        go.EndComponentIteration();
                     }
                 }
-                finally
-                {
-                    go.EndComponentIteration();
-                }
             }
-        }
 
-        _isActive = false;
+            _isActive = false;
+
+            Events.InvokeOnSceneDisabled();
+        }
     }
 
     /// <summary>
@@ -458,6 +504,9 @@ public class Scene : EngineObject, ISerializationCallbackReceiver
             {
                 obj.EndComponentIteration();
             }
+
+            // Fire event after the GameObject is fully added
+            Events.InvokeOnGameObjectAdded(new GameObjectAddedArgs(obj));
         }
 
         // Create a copy to avoid modification during enumeration
@@ -518,6 +567,9 @@ public class Scene : EngineObject, ISerializationCallbackReceiver
             _identifierLookup.Remove(obj.Identifier);
 
             obj.Scene = null;
+
+            // Fire event after the GameObject is fully removed
+            Events.InvokeOnGameObjectRemoved(new GameObjectRemovedArgs(obj));
         }
     }
 
@@ -609,6 +661,9 @@ public class Scene : EngineObject, ISerializationCallbackReceiver
         _idLookup.Clear();
         _identifierLookup.Clear();
         _trackedCameras.Clear();
+
+        // Dispose the event manager to unregister from global tracking
+        Events.Manager.Dispose();
     }
 
     public void OnBeforeSerialize()
@@ -639,24 +694,45 @@ public class Scene : EngineObject, ISerializationCallbackReceiver
     /// </summary>
     public void Update()
     {
-        // Clear render tracking at the start of each update
-        ClearRenderTracking();
+        using (Profiler.Section("Scene.Update"))
+        {
+            // Clear render tracking at the start of each update
+            ClearRenderTracking();
 
-        bool editFilter = !IsPlayMode;
+            bool editFilter = !IsPlayMode;
 
-        List<GameObject> activeGOs = GetActiveObjectsNonAlloc();
-        foreach (GameObject go in activeGOs)
-            go.PreUpdate(editFilter ? ShouldRunInEditMode : null);
+            List<GameObject> activeGOs = GetActiveObjectsNonAlloc();
 
-        EventSystem.BaseEvents.InvokeOnBeforeUpdate();
-        ForeachComponent(activeGOs, s_updateAction, editFilter);
-        EventSystem.BaseEvents.InvokeOnAfterUpdate();
+            Events.InvokeOnBeforeUpdate();
 
-        EventSystem.BaseEvents.InvokeOnBeforeLateUpdate();
-        ForeachComponent(activeGOs, s_lateUpdateAction, editFilter);
-        EventSystem.BaseEvents.InvokeOnAfterLateUpdate();
+            using (Profiler.Section("PreUpdate"))
+            {
+                foreach (GameObject go in activeGOs)
+                    go.PreUpdate(editFilter ? ShouldRunInEditMode : null);
+            }
 
-        Flush();
+            EventSystem.BaseEvents.InvokeOnBeforeUpdate();
+
+            using (Profiler.Section("Update"))
+            {
+                ForeachComponent(activeGOs, s_updateAction, editFilter);
+            }
+
+            EventSystem.BaseEvents.InvokeOnAfterUpdate();
+
+            EventSystem.BaseEvents.InvokeOnBeforeLateUpdate();
+
+            using (Profiler.Section("LateUpdate"))
+            {
+                ForeachComponent(activeGOs, s_lateUpdateAction, editFilter);
+            }
+
+            EventSystem.BaseEvents.InvokeOnAfterLateUpdate();
+
+            Events.InvokeOnAfterUpdate();
+
+            Flush();
+        }
     }
 
     /// <summary>
@@ -712,15 +788,31 @@ public class Scene : EngineObject, ISerializationCallbackReceiver
     /// </summary>
     public void FixedUpdate()
     {
-        if (SimulatePhysics)
-            Physics.Update();
+        using (Profiler.Section("Scene.FixedUpdate"))
+        {
+            Events.InvokeOnBeforeFixedUpdate();
 
-        bool editFilter = !IsPlayMode;
+            if (SimulatePhysics)
+            {
+                using (Profiler.Section("Physics.Update"))
+                {
+                    Physics.Update();
+                }
+            }
 
-        List<GameObject> activeGOs = GetActiveObjectsNonAlloc();
-        ForeachComponent(activeGOs, s_fixedUpdateAction, editFilter);
+            bool editFilter = !IsPlayMode;
 
-        Flush();
+            List<GameObject> activeGOs = GetActiveObjectsNonAlloc();
+
+            using (Profiler.Section("FixedUpdate"))
+            {
+                ForeachComponent(activeGOs, s_fixedUpdateAction, editFilter);
+            }
+
+            Events.InvokeOnAfterFixedUpdate();
+
+            Flush();
+        }
     }
 
     /// <summary>
@@ -728,10 +820,13 @@ public class Scene : EngineObject, ISerializationCallbackReceiver
     /// </summary>
     public void DrawGizmos()
     {
-        List<GameObject> activeGOs = GetActiveObjectsNonAlloc();
-        ForeachComponent(activeGOs, s_drawGizmosAction);
+        using (Profiler.Section("Scene.DrawGizmos"))
+        {
+            List<GameObject> activeGOs = GetActiveObjectsNonAlloc();
+            ForeachComponent(activeGOs, s_drawGizmosAction);
 
-        Flush();
+            Flush();
+        }
     }
 
     // Cached delegate + thread-static Paper reference for OnGui to avoid per-frame closure allocation.
@@ -744,12 +839,15 @@ public class Scene : EngineObject, ISerializationCallbackReceiver
     /// </summary>
     public void OnGui(Paper paper)
     {
-        t_guiPaper = paper;
-        List<GameObject> activeGOs = GetActiveObjectsNonAlloc();
-        ForeachComponent(activeGOs, s_onGuiAction);
-        t_guiPaper = null;
+        using (Profiler.Section("Scene.OnGui"))
+        {
+            t_guiPaper = paper;
+            List<GameObject> activeGOs = GetActiveObjectsNonAlloc();
+            ForeachComponent(activeGOs, s_onGuiAction);
+            t_guiPaper = null;
 
-        Flush();
+            Flush();
+        }
     }
 
     /// <summary>
@@ -759,59 +857,68 @@ public class Scene : EngineObject, ISerializationCallbackReceiver
     /// <returns>True if any cameras were rendered, false otherwise</returns>
     public bool Render(RenderTexture? target = null)
     {
-        _cameraBuffer.Clear();
-
-        // Use tracked camera set — O(cameras) instead of O(all GameObjects × children).
-        foreach (Camera cam in _trackedCameras)
+        using (Profiler.Section("Scene.Render"))
         {
-            if (!cam.IsDisposed && cam.EnabledInHierarchy)
-                _cameraBuffer.Add(cam);
-        }
+            _cameraBuffer.Clear();
 
-        _cameraBuffer.Sort(s_cameraDepthComparison);
-
-        if (_cameraBuffer.Count == 0)
-            return false;
-
-        // Pre-identify the highest-priority (highest Depth) camera without its
-        // own target.  Only this camera renders into the provided target; all
-        // other cameras without their own target are skipped to prevent
-        // multiple cameras fighting over the same render texture.
-        int targetCameraIndex = -1;
-        if (target.IsValid())
-        {
-            for (int i = _cameraBuffer.Count - 1; i >= 0; i--)
+            // Use tracked camera set — O(cameras) instead of O(all GameObjects × children).
+            foreach (Camera cam in _trackedCameras)
             {
-                if (_cameraBuffer[i].Target.IsNotValid())
+                if (!cam.IsDisposed && cam.EnabledInHierarchy)
+                    _cameraBuffer.Add(cam);
+            }
+
+            _cameraBuffer.Sort(s_cameraDepthComparison);
+
+            int cameraCount = _cameraBuffer.Count;
+
+            if (cameraCount == 0)
+                return false;
+
+            Events.InvokeOnBeforeRender(new RenderingArgs(cameraCount, false));
+
+            // Pre-identify the highest-priority (highest Depth) camera without its
+            // own target.  Only this camera renders into the provided target; all
+            // other cameras without their own target are skipped to prevent
+            // multiple cameras fighting over the same render texture.
+            int targetCameraIndex = -1;
+            if (target.IsValid())
+            {
+                for (int i = _cameraBuffer.Count - 1; i >= 0; i--)
                 {
-                    targetCameraIndex = i;
-                    break;
+                    if (_cameraBuffer[i].Target.IsNotValid())
+                    {
+                        targetCameraIndex = i;
+                        break;
+                    }
                 }
             }
-        }
 
-        for (int i = 0; i < _cameraBuffer.Count; i++)
-        {
-            Camera cam = _cameraBuffer[i];
-            RenderPipeline pipeline = RenderPipeline.Resolve(cam);
-
-            if (target.IsValid() && cam.Target.IsNotValid())
+            for (int i = 0; i < _cameraBuffer.Count; i++)
             {
-                if (i != targetCameraIndex)
-                    continue;
+                Camera cam = _cameraBuffer[i];
+                RenderPipeline pipeline = RenderPipeline.Resolve(cam);
 
-                cam.Target = target;
-                pipeline.Render(cam, new());
-                cam.Target = null;
+                if (target.IsValid() && cam.Target.IsNotValid())
+                {
+                    if (i != targetCameraIndex)
+                        continue;
+
+                    cam.Target = target;
+                    pipeline.Render(cam, new());
+                    cam.Target = null;
+                }
+                else
+                {
+                    // Have no target or the camera has its own target
+                    pipeline.Render(cam, new());
+                }
             }
-            else
-            {
-                // Have no target or the camera has its own target
-                pipeline.Render(cam, new());
-            }
+
+            Events.InvokeOnAfterRender(new RenderingArgs(cameraCount, true));
+
+            return true;
         }
-
-        return true;
     }
 
     // Cached static delegates to avoid per-frame Action<MonoBehaviour> allocation.

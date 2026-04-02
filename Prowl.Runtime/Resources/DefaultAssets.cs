@@ -32,7 +32,8 @@ public enum DefaultShader
     GTAO,
     SSPT,
     DebugView,
-    SelectionOutline
+    SelectionOutline,
+    SDF
 }
 
 /// <summary>
