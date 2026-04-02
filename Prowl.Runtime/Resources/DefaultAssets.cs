@@ -33,7 +33,8 @@ public enum DefaultShader
     SSPT,
     DebugView,
     SelectionOutline,
-    SDF
+    SDF,
+    SDFUI
 }
 
 /// <summary>

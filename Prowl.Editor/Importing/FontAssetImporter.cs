@@ -371,10 +371,10 @@ public static class FontAssetImporter
                 BearingX: g.BearingX,
                 BearingY: g.BearingY,
                 Advance: g.Advance,
-                AtlasX: atlasX / atlasSize,
-                AtlasY: atlasY / atlasSize,
-                AtlasWidth: cellW / atlasSize,
-                AtlasHeight: cellH / atlasSize,
+                AtlasX: atlasX,
+                AtlasY: atlasY,
+                AtlasWidth: cellW,
+                AtlasHeight: cellH,
                 Scale: 1f / pointSize
             );
 

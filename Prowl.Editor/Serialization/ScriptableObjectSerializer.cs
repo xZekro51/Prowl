@@ -30,6 +30,20 @@ public static class ScriptableObjectSerializer
         var ctx = new SerializationContext();
         AssetDatabase.ConfigureContext(ctx);
 
+        // The configured context intercepts every EngineObject and converts it
+        // into an $assetId reference.  That is correct for *child* references
+        // (e.g. a Texture2D field inside a FontAsset), but the root object being
+        // saved here must be serialized in full — its fields need to be written
+        // out, not replaced by a (likely empty) asset reference.
+        // Wrap the callback so the root object is excluded from interception.
+        var innerOnSerialize = ctx.OnSerialize;
+        ctx.OnSerialize = (obj, c) =>
+        {
+            if (ReferenceEquals(obj, so))
+                return null; // let the root object serialize normally
+            return innerOnSerialize?.Invoke(obj, c);
+        };
+
         EchoObject echoData = Serializer.Serialize(so.GetType(), so, ctx);
 
         var envelope = EchoObject.NewCompound();

@@ -253,13 +253,12 @@ public class FontImportSettingsTests
 /// </summary>
 public class FontAssetImporterTests
 {
-    private static string? FindInterFont()
+    private static string? FindFont(string relativePath)
     {
-        // Search for Inter-Regular.ttf in the repo
         string[] candidates =
         [
-            Path.GetFullPath(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "..", "..", "..", "..", "Prowl.Runtime", "Assets", "Defaults", "Inter-Regular.ttf")),
-            Path.GetFullPath(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "..", "..", "..", "..", "..", "Prowl.Runtime", "Assets", "Defaults", "Inter-Regular.ttf")),
+            Path.GetFullPath(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "..", "..", "..", "..", relativePath)),
+            Path.GetFullPath(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "..", "..", "..", "..", "..", relativePath)),
         ];
 
         foreach (string path in candidates)
@@ -270,6 +269,12 @@ public class FontAssetImporterTests
 
         return null;
     }
+
+    private static string? FindInterFont()
+        => FindFont(Path.Combine("Prowl.Runtime", "Assets", "Defaults", "Inter-Regular.ttf"));
+
+    private static string? FindGrowYearFont()
+        => FindFont(Path.Combine("Prowl.Runtime", "Text", "Grow Year.ttf"));
 
     [Fact]
     public void IsFontFile_RecognizesFontExtensions()
@@ -361,6 +366,214 @@ public class FontAssetImporterTests
         Assert.Equal(AtlasType.Bitmap, fontAsset!.AtlasType);
         Assert.True(fontAsset.GlyphTable.Count > 50);
         Assert.True(fontAsset.TryGetGlyph((uint)'Z', out _));
+
+        fontAsset.AtlasTexture?.Dispose();
+        fontAsset.Dispose();
+    }
+
+    [Fact]
+    public void Import_GlyphAtlasCoordinates_AreInPixelSpace()
+    {
+        string? fontPath = FindInterFont();
+        if (fontPath == null)
+            return; // Skip: Inter-Regular.ttf not found in workspace
+
+        FontImportSettings settings = new()
+        {
+            AtlasType = AtlasType.SDF,
+            PointSize = 32,
+            AtlasResolution = 512,
+            PxRange = 4f,
+            Padding = 2,
+            CharacterSet = "ASCII",
+            SdfOversample = 2,
+        };
+
+        var fontAsset = FontAssetImporter.Import(fontPath!, settings);
+        Assert.NotNull(fontAsset);
+
+        // Atlas coordinates must be in pixel space (not normalized 0-1).
+        // TextMeshBuilder normalizes them by dividing by AtlasWidth/AtlasHeight.
+        Assert.True(fontAsset!.TryGetGlyph((uint)'A', out var glyphA));
+        Assert.True(glyphA.AtlasX >= 0f, "AtlasX should be >= 0 pixels");
+        Assert.True(glyphA.AtlasY >= 0f, "AtlasY should be >= 0 pixels");
+
+        // For a 512px atlas, pixel-space coordinates of visible glyphs
+        // should be > 1 (unless the glyph happens to be at the origin).
+        // Critically, they must NOT be in 0-1 normalized range.
+        Assert.True(glyphA.AtlasWidth >= 1f,
+            $"AtlasWidth should be in pixel space (>=1px), got {glyphA.AtlasWidth}");
+        Assert.True(glyphA.AtlasHeight >= 1f,
+            $"AtlasHeight should be in pixel space (>=1px), got {glyphA.AtlasHeight}");
+
+        // Verify coordinates don't exceed the atlas bounds
+        Assert.True(glyphA.AtlasX + glyphA.AtlasWidth <= fontAsset.AtlasWidth,
+            "Glyph atlas rect should fit within atlas width");
+        Assert.True(glyphA.AtlasY + glyphA.AtlasHeight <= fontAsset.AtlasHeight,
+            "Glyph atlas rect should fit within atlas height");
+
+        fontAsset.AtlasTexture?.Dispose();
+        fontAsset.Dispose();
+    }
+
+    [Fact]
+    public void Import_GrowYear_SDF_ProducesValidFontAsset()
+    {
+        string? fontPath = FindGrowYearFont();
+        if (fontPath == null)
+            return; // Skip: Grow Year.ttf not found in workspace
+
+        FontImportSettings settings = new()
+        {
+            AtlasType = AtlasType.SDF,
+            PointSize = 48,
+            AtlasResolution = 1024,
+            PxRange = 6f,
+            Padding = 2,
+            CharacterSet = "ASCII",
+            SdfOversample = 4,
+        };
+
+        var fontAsset = FontAssetImporter.Import(fontPath!, settings);
+
+        Assert.NotNull(fontAsset);
+        Assert.Equal("Grow Year", fontAsset!.Name);
+        Assert.NotNull(fontAsset.AtlasTexture);
+        Assert.Equal(AtlasType.SDF, fontAsset.AtlasType);
+        Assert.True(fontAsset.AtlasWidth > 0);
+
+        // Metrics
+        Assert.Equal(48f, fontAsset.PointSize);
+        Assert.True(fontAsset.LineHeight > 0);
+        Assert.True(fontAsset.Ascender > 0);
+
+        // Glyph lookup for printable ASCII
+        Assert.True(fontAsset.TryGetGlyph((uint)'A', out var glyphA));
+        Assert.True(glyphA.Width > 0);
+        Assert.True(glyphA.Advance > 0);
+
+        // Atlas coordinates must be pixel-space
+        Assert.True(glyphA.AtlasWidth >= 1f,
+            $"AtlasWidth should be in pixel space, got {glyphA.AtlasWidth}");
+        Assert.True(glyphA.AtlasHeight >= 1f,
+            $"AtlasHeight should be in pixel space, got {glyphA.AtlasHeight}");
+        Assert.True(glyphA.AtlasX + glyphA.AtlasWidth <= fontAsset.AtlasWidth,
+            "Glyph should fit within atlas");
+
+        fontAsset.AtlasTexture?.Dispose();
+        fontAsset.Dispose();
+    }
+
+    [Fact]
+    public void Import_GrowYear_MSDF_AtlasCoordinatesArePixelSpace()
+    {
+        string? fontPath = FindGrowYearFont();
+        if (fontPath == null)
+            return; // Skip: Grow Year.ttf not found in workspace
+
+        FontImportSettings settings = new()
+        {
+            AtlasType = AtlasType.MSDF,
+            PointSize = 32,
+            AtlasResolution = 512,
+            PxRange = 4f,
+            Padding = 2,
+            CharacterSet = "ASCII",
+        };
+
+        var fontAsset = FontAssetImporter.Import(fontPath!, settings);
+
+        Assert.NotNull(fontAsset);
+        Assert.Equal(AtlasType.MSDF, fontAsset!.AtlasType);
+
+        Assert.True(fontAsset.TryGetGlyph((uint)'H', out var glyphH));
+        Assert.True(glyphH.AtlasWidth >= 1f,
+            $"MSDF AtlasWidth should be pixel-space, got {glyphH.AtlasWidth}");
+        Assert.True(glyphH.AtlasHeight >= 1f,
+            $"MSDF AtlasHeight should be pixel-space, got {glyphH.AtlasHeight}");
+
+        // Normalized UV would be AtlasX/AtlasWidth < 1 for typical glyphs,
+        // but pixel values are integer-like and larger than 1
+        Assert.True(glyphH.AtlasX + glyphH.AtlasWidth <= fontAsset.AtlasWidth);
+
+        fontAsset.AtlasTexture?.Dispose();
+        fontAsset.Dispose();
+    }
+
+    [Fact]
+    public void Import_GrowYear_Bitmap_AtlasCoordinatesArePixelSpace()
+    {
+        string? fontPath = FindGrowYearFont();
+        if (fontPath == null)
+            return; // Skip: Grow Year.ttf not found in workspace
+
+        FontImportSettings settings = new()
+        {
+            AtlasType = AtlasType.Bitmap,
+            PointSize = 24,
+            AtlasResolution = 512,
+            Padding = 1,
+            CharacterSet = "ASCII",
+        };
+
+        var fontAsset = FontAssetImporter.Import(fontPath!, settings);
+
+        Assert.NotNull(fontAsset);
+        Assert.Equal(AtlasType.Bitmap, fontAsset!.AtlasType);
+
+        Assert.True(fontAsset.TryGetGlyph((uint)'W', out var glyphW));
+        Assert.True(glyphW.AtlasWidth >= 1f,
+            $"Bitmap AtlasWidth should be pixel-space, got {glyphW.AtlasWidth}");
+        Assert.True(glyphW.AtlasHeight >= 1f,
+            $"Bitmap AtlasHeight should be pixel-space, got {glyphW.AtlasHeight}");
+
+        fontAsset.AtlasTexture?.Dispose();
+        fontAsset.Dispose();
+    }
+
+    [Fact]
+    public void Import_AllVisibleGlyphs_HaveValidAtlasRects()
+    {
+        string? fontPath = FindGrowYearFont();
+        if (fontPath == null)
+            return; // Skip: Grow Year.ttf not found in workspace
+
+        FontImportSettings settings = new()
+        {
+            AtlasType = AtlasType.SDF,
+            PointSize = 32,
+            AtlasResolution = 1024,
+            PxRange = 4f,
+            Padding = 2,
+            CharacterSet = "ASCII",
+            SdfOversample = 2,
+        };
+
+        var fontAsset = FontAssetImporter.Import(fontPath!, settings);
+        Assert.NotNull(fontAsset);
+
+        int atlasW = fontAsset!.AtlasWidth;
+        int atlasH = fontAsset.AtlasHeight;
+
+        // Check every printable ASCII character
+        for (uint c = 33; c < 127; c++)
+        {
+            if (!fontAsset.TryGetGlyph(c, out var glyph))
+                continue; // Font may not have all glyphs
+
+            // Visible glyphs must have atlas rect in pixel space
+            if (glyph.Width > 0 && glyph.Height > 0)
+            {
+                Assert.True(glyph.AtlasWidth >= 1f,
+                    $"Glyph '{(char)c}' (U+{c:X4}): AtlasWidth={glyph.AtlasWidth} should be >=1px");
+                Assert.True(glyph.AtlasHeight >= 1f,
+                    $"Glyph '{(char)c}' (U+{c:X4}): AtlasHeight={glyph.AtlasHeight} should be >=1px");
+                Assert.True(glyph.AtlasX >= 0f && glyph.AtlasX + glyph.AtlasWidth <= atlasW,
+                    $"Glyph '{(char)c}' (U+{c:X4}): AtlasX={glyph.AtlasX} + AtlasWidth={glyph.AtlasWidth} exceeds atlas width {atlasW}");
+                Assert.True(glyph.AtlasY >= 0f && glyph.AtlasY + glyph.AtlasHeight <= atlasH,
+                    $"Glyph '{(char)c}' (U+{c:X4}): AtlasY={glyph.AtlasY} + AtlasHeight={glyph.AtlasHeight} exceeds atlas height {atlasH}");
+            }
+        }
 
         fontAsset.AtlasTexture?.Dispose();
         fontAsset.Dispose();

@@ -54,9 +54,20 @@ internal static class EmbeddedResources
 
         string[] resourceNames = RuntimeAssembly.GetManifestResourceNames();
 
-        // Try exact match first
-        resourceName = resourceNames.FirstOrDefault(r => r.Replace('\\', '/').EndsWith(resourcePath, StringComparison.OrdinalIgnoreCase))
-                    ?? resourceNames.FirstOrDefault(r => r.EndsWith(Path.GetFileName(resourcePath), StringComparison.OrdinalIgnoreCase));
+        // Convert path separators to '.' to match embedded resource naming convention
+        // e.g., "Assets/Defaults/UI.shader" -> ".Assets.Defaults.UI.shader"
+        string dotPath = "." + resourcePath.Replace('/', '.');
+
+        // Try matching by dotted path suffix (handles namespace prefix)
+        resourceName = resourceNames.FirstOrDefault(r => r.EndsWith(dotPath, StringComparison.OrdinalIgnoreCase));
+
+        if (resourceName != null)
+            return true;
+
+        // Fallback: match by filename with a '.' boundary to avoid "SDFUI.shader" matching "UI.shader"
+        string fileName = Path.GetFileName(resourcePath);
+        string boundedFileName = "." + fileName;
+        resourceName = resourceNames.FirstOrDefault(r => r.EndsWith(boundedFileName, StringComparison.OrdinalIgnoreCase));
 
         return resourceName != null;
     }

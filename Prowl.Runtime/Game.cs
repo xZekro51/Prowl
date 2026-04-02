@@ -519,6 +519,9 @@ public abstract class Game
 
                     _paperRenderer.RenderTarget = null; // Render to swapchain
                     _paper.EndFrame();
+
+                    // Flush deferred SDF text renders on top of the Paper UI
+                    Prowl.Runtime.UI.UITextRenderer.FlushPendingRenders();
                 }
             }
             catch (Exception e)

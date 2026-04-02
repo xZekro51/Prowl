@@ -1,0 +1,1 @@
+using System; using System.Reflection; using FreeTypeSharp; foreach (var f in typeof(FT_LOAD).GetFields(BindingFlags.Public | BindingFlags.Static)) Console.WriteLine(f.Name + " = " + f.GetRawConstantValue());
