@@ -97,6 +97,7 @@ public class FontAsset : ScriptableObject
     public float Baseline => _baseline;
     public IReadOnlyList<GlyphData> GlyphTable => _glyphTable;
     public IReadOnlyDictionary<uint, int> CharacterTable => _characterTable;
+    public IReadOnlyDictionary<ulong, float> KerningPairs => _kerningPairs;
     public IReadOnlyList<FontAsset> FallbackFonts => _fallbackFonts;
 
     // ── Lookup API ────────────────────────────────────────────
@@ -228,6 +229,30 @@ public class FontAsset : ScriptableObject
         _characterTable = characterTable ?? [];
         _kerningPairs = kerningPairs ?? [];
         RebuildAsciiLookup();
+    }
+
+    /// <summary>
+    /// Sets or updates a single kerning pair. Intended for editor kerning pair editing.
+    /// </summary>
+    /// <param name="leftGlyphIndex">Glyph index of the left character.</param>
+    /// <param name="rightGlyphIndex">Glyph index of the right character.</param>
+    /// <param name="kerning">The kerning advance value.</param>
+    public void SetKerningPair(uint leftGlyphIndex, uint rightGlyphIndex, float kerning)
+    {
+        ulong key = ((ulong)leftGlyphIndex << 32) | rightGlyphIndex;
+        _kerningPairs[key] = kerning;
+    }
+
+    /// <summary>
+    /// Removes a single kerning pair.
+    /// </summary>
+    /// <param name="leftGlyphIndex">Glyph index of the left character.</param>
+    /// <param name="rightGlyphIndex">Glyph index of the right character.</param>
+    /// <returns><c>true</c> if the pair was found and removed.</returns>
+    public bool RemoveKerningPair(uint leftGlyphIndex, uint rightGlyphIndex)
+    {
+        ulong key = ((ulong)leftGlyphIndex << 32) | rightGlyphIndex;
+        return _kerningPairs.Remove(key);
     }
 
     /// <summary>

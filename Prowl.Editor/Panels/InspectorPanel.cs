@@ -74,6 +74,7 @@ public sealed class InspectorPanel : EditorPanel
             {
                 _cachedFontAsset = null;
                 _cachedFontAssetPath = null;
+                _glyphIndexToCodepoint = null;
             }
         });
 
@@ -2099,6 +2100,10 @@ public sealed class InspectorPanel : EditorPanel
     private static string? _cachedFontAssetPath;
     private static string? _cachedFontAssetError;
     private static string _fontCustomCharsBuffer = string.Empty;
+    private static string _kernLeftBuffer = string.Empty;
+    private static string _kernRightBuffer = string.Empty;
+    private static float _kernNewValue = 0f;
+    private static Dictionary<uint, uint>? _glyphIndexToCodepoint;
 
     // ── TextRenderer inspector state ──────────────────────────
     private static string _textRendererTextBuffer = string.Empty;
@@ -2353,6 +2358,7 @@ public sealed class InspectorPanel : EditorPanel
             _cachedFontAsset = null;
             _cachedFontAssetError = null;
             _cachedFontAssetPath = asset.FullPath;
+            _glyphIndexToCodepoint = null;
             try
             {
                 _cachedFontAsset = Importing.FontAssetImporter.Import(asset.FullPath);
@@ -2394,6 +2400,106 @@ public sealed class InspectorPanel : EditorPanel
                     ImGui.BulletText($"{ch}{charStr}  W:{glyph.Width:F0} H:{glyph.Height:F0} Adv:{glyph.Advance:F1}");
                     shown++;
                 }
+                ImGui.TreePop();
+            }
+
+            // Kerning pairs
+            int kerningCount = _cachedFontAsset.KerningPairs.Count;
+            DrawAssetFieldRow("Kerning Pairs", kerningCount.ToString());
+
+            if (kerningCount > 0 && ImGui.TreeNodeEx("Kerning Pair Table", ImGuiTreeNodeFlags.None))
+            {
+                // Build reverse lookup: FreeType glyph index → first matching codepoint
+                if (_glyphIndexToCodepoint == null)
+                {
+                    _glyphIndexToCodepoint = [];
+                    foreach (var entry in _cachedFontAsset.CharacterTable)
+                    {
+                        int tableIdx = entry.Value;
+                        if (tableIdx >= 0 && tableIdx < _cachedFontAsset.GlyphTable.Count)
+                        {
+                            uint ftIdx = _cachedFontAsset.GlyphTable[tableIdx].GlyphIndex;
+                            _glyphIndexToCodepoint.TryAdd(ftIdx, entry.Key);
+                        }
+                    }
+                }
+
+                ulong? pairToRemove = null;
+                int kernShown = 0;
+                foreach (var pair in _cachedFontAsset.KerningPairs)
+                {
+                    if (kernShown >= 200)
+                    {
+                        ImGui.TextDisabled($"... ({kerningCount - kernShown} more)");
+                        break;
+                    }
+
+                    uint leftIdx = (uint)(pair.Key >> 32);
+                    uint rightIdx = (uint)(pair.Key & 0xFFFFFFFF);
+
+                    string leftLabel = FormatGlyphLabel(leftIdx, _glyphIndexToCodepoint);
+                    string rightLabel = FormatGlyphLabel(rightIdx, _glyphIndexToCodepoint);
+
+                    ImGui.PushID(kernShown);
+
+                    float value = pair.Value;
+                    ImGui.AlignTextToFramePadding();
+                    ImGui.Text($"{leftLabel} \u2194 {rightLabel}");
+                    ImGui.SameLine(ImGui.GetContentRegionAvail().X * 0.55f);
+                    ImGui.SetNextItemWidth(80f);
+                    if (ImGui.DragFloat("##kv", ref value, 0.01f, -100f, 100f, "%.2f"))
+                    {
+                        _cachedFontAsset.SetKerningPair(leftIdx, rightIdx, value);
+                    }
+                    ImGui.SameLine();
+                    if (ImGui.SmallButton("X"))
+                    {
+                        pairToRemove = pair.Key;
+                    }
+
+                    ImGui.PopID();
+                    kernShown++;
+                }
+
+                if (pairToRemove.HasValue)
+                {
+                    uint removeLeft = (uint)(pairToRemove.Value >> 32);
+                    uint removeRight = (uint)(pairToRemove.Value & 0xFFFFFFFF);
+                    _cachedFontAsset.RemoveKerningPair(removeLeft, removeRight);
+                }
+
+                // Add new kerning pair
+                ImGui.Separator();
+                ImGui.TextDisabled("Add Kerning Pair (chars):");
+                ImGui.SetNextItemWidth(40f);
+                ImGui.InputText("##kernL", ref _kernLeftBuffer, 4);
+                ImGui.SameLine();
+                ImGui.SetNextItemWidth(40f);
+                ImGui.InputText("##kernR", ref _kernRightBuffer, 4);
+                ImGui.SameLine();
+                ImGui.SetNextItemWidth(80f);
+                ImGui.DragFloat("##kernNV", ref _kernNewValue, 0.01f, -100f, 100f, "%.2f");
+                ImGui.SameLine();
+                if (ImGui.SmallButton("+") && _kernLeftBuffer.Length > 0 && _kernRightBuffer.Length > 0)
+                {
+                    uint leftCp = (uint)char.ConvertToUtf32(_kernLeftBuffer, 0);
+                    uint rightCp = (uint)char.ConvertToUtf32(_kernRightBuffer, 0);
+                    // Find the FreeType glyph indices for these codepoints
+                    uint? leftFt = FindGlyphIndexForCodepoint(_cachedFontAsset, leftCp);
+                    uint? rightFt = FindGlyphIndexForCodepoint(_cachedFontAsset, rightCp);
+                    if (leftFt.HasValue && rightFt.HasValue)
+                    {
+                        _cachedFontAsset.SetKerningPair(leftFt.Value, rightFt.Value, _kernNewValue);
+                        _kernLeftBuffer = string.Empty;
+                        _kernRightBuffer = string.Empty;
+                        _kernNewValue = 0f;
+                    }
+                    else
+                    {
+                        Runtime.Debug.LogWarning("[Inspector] One or both characters not found in the font's glyph table.");
+                    }
+                }
+
                 ImGui.TreePop();
             }
         }
@@ -2551,6 +2657,7 @@ public sealed class InspectorPanel : EditorPanel
             _cachedFontAsset?.Dispose();
             _cachedFontAsset = null;
             _cachedFontAssetPath = null;
+            _glyphIndexToCodepoint = null;
             Runtime.Debug.Log($"[Inspector] Saved font import settings for: {asset.Name}");
         }
         ImGui.SameLine();
@@ -2559,6 +2666,33 @@ public sealed class InspectorPanel : EditorPanel
             _fontImportSettings = Importing.FontAssetImporter.LoadSettings(asset.FullPath);
             _fontCustomCharsBuffer = _fontImportSettings.CustomCharacters;
         }
+    }
+
+    /// <summary>
+    /// Formats a FreeType glyph index as a human-readable label (e.g. "'A' (65)" or "GID 42").
+    /// </summary>
+    private static string FormatGlyphLabel(uint ftGlyphIndex, Dictionary<uint, uint>? glyphIndexToCodepoint)
+    {
+        if (glyphIndexToCodepoint != null && glyphIndexToCodepoint.TryGetValue(ftGlyphIndex, out uint cp))
+        {
+            if (cp < 0x10000 && !char.IsControl((char)cp))
+                return $"'{(char)cp}' ({cp})";
+            return $"U+{cp:X4}";
+        }
+        return $"GID {ftGlyphIndex}";
+    }
+
+    /// <summary>
+    /// Finds the FreeType glyph index for a Unicode codepoint in a FontAsset.
+    /// </summary>
+    private static uint? FindGlyphIndexForCodepoint(Runtime.Resources.FontAsset font, uint codepoint)
+    {
+        if (font.CharacterTable.TryGetValue(codepoint, out int tableIdx)
+            && tableIdx >= 0 && tableIdx < font.GlyphTable.Count)
+        {
+            return font.GlyphTable[tableIdx].GlyphIndex;
+        }
+        return null;
     }
 
     // ── Model inspector cached state ─────────────────────────
