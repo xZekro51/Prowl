@@ -537,8 +537,8 @@ public class UITextRenderer : UIBehaviour
     // ── Static Rendering API ──────────────────────────────────
 
     /// <summary>
-    /// Flushes all pending UI text render requests. Called after Paper's
-    /// <c>EndFrame()</c> to overlay SDF text on top of the UI canvas.
+    /// Flushes all pending UI text render requests to the swapchain.
+    /// Called after Paper's <c>EndFrame()</c> to overlay SDF text on top of the UI canvas.
     /// </summary>
     /// <remarks>
     /// The caller is responsible for invoking this at the correct point in the
@@ -546,6 +546,21 @@ public class UITextRenderer : UIBehaviour
     /// class calls this automatically.
     /// </remarks>
     public static void FlushPendingRenders()
+    {
+        FlushPendingRenders(null);
+    }
+
+    /// <summary>
+    /// Flushes all pending UI text render requests into the given render target.
+    /// When <paramref name="target"/> is <c>null</c>, renders to the swapchain.
+    /// </summary>
+    /// <param name="target">
+    /// An optional <see cref="RenderTexture"/> to render into. Pass <c>null</c>
+    /// to render directly to the swapchain (standalone game default).
+    /// The editor passes the game-view render texture here so the SDF text
+    /// composites correctly inside the game panel.
+    /// </param>
+    public static void FlushPendingRenders(RenderTexture? target)
     {
         if (s_pendingRenders.Count == 0)
             return;
@@ -556,21 +571,34 @@ public class UITextRenderer : UIBehaviour
             return;
         }
 
-        // Build a screen-space orthographic projection matching the window size
-        float screenW = Window.InternalWindow.FramebufferSize.X;
-        float screenH = Window.InternalWindow.FramebufferSize.Y;
+        // Determine render target and dimensions
+        Graphite.Texture colorTarget;
+        float screenW, screenH;
+
+        if (target != null && target.MainTexture.IsValid() &&
+            target.MainTexture.Handle?.GraphiteTexture != null)
+        {
+            colorTarget = target.MainTexture.Handle.GraphiteTexture;
+            screenW = target.Width;
+            screenH = target.Height;
+        }
+        else
+        {
+            colorTarget = Graphics.Graphite.GetSwapchainTexture();
+            screenW = Window.InternalWindow.FramebufferSize.X;
+            screenH = Window.InternalWindow.FramebufferSize.Y;
+        }
+
         Float4x4 projection = Float4x4.CreateOrthoOffCenter(0, screenW, screenH, 0, -1, 1);
 
         using RenderCommandBuffer cmd = new("UITextRenderer");
 
-        // Render to swapchain
-        Graphite.Texture swapchainTex = Graphics.Graphite.GetSwapchainTexture();
-        Graphite.RenderPassColorAttachment colorAtt = Graphite.RenderPassColorAttachment.Load(swapchainTex);
+        Graphite.RenderPassColorAttachment colorAtt = Graphite.RenderPassColorAttachment.Load(colorTarget);
         Graphite.RenderPassDescriptor desc = new()
         {
             ColorAttachments = [colorAtt],
         };
-        RenderPassLayout passLayout = new([swapchainTex.Format]);
+        RenderPassLayout passLayout = new([colorTarget.Format]);
         cmd.BeginRenderPass(in desc, passLayout);
         cmd.SetViewportRaw(0, 0, screenW, screenH);
 

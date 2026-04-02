@@ -377,6 +377,9 @@ public sealed class StubEditorRendering : IEditorRendering
             scene.OnGui(paper);
             paper.EndFrame();
 
+            // Flush deferred SDF text renders into the game/scene RT
+            Runtime.UI.UITextRenderer.FlushPendingRenders(rt);
+
             rt.End();
         }
         finally
