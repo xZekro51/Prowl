@@ -52,7 +52,6 @@ public enum RenderMode
 /// For world-space canvases, use <see cref="WorldCanvas"/>.
 /// </para>
 /// </remarks>
-[RequireComponent(typeof(RectTransform))]
 public class Canvas : MonoBehaviour
 {
     /// <summary>
@@ -78,6 +77,16 @@ public class Canvas : MonoBehaviour
     public int SortOrder;
 
     /// <summary>
+    /// Ensures this Canvas's own GameObject and all child GameObjects
+    /// have a <see cref="RectTransform"/> instead of a plain Transform.
+    /// </summary>
+    public override void OnAddedToScene()
+    {
+        GameObject.EnsureRectTransform();
+        EnsureChildRectTransforms(GameObject);
+    }
+
+    /// <summary>
     /// Called every frame by the Scene's OnGui pipeline.
     /// Builds the full Paper UI tree from the child hierarchy.
     /// </summary>
@@ -97,7 +106,7 @@ public class Canvas : MonoBehaviour
         Rect rootRect = new(0, 0, screenW, screenH);
 
         // Compute layout for the root RectTransform
-        RectTransform? rootRt = GetComponent<RectTransform>();
+        RectTransform? rootRt = GameObject.RectTransform;
         if (rootRt != null)
         {
             rootRt.AnchorMin = Float2.Zero;
@@ -146,9 +155,9 @@ public class Canvas : MonoBehaviour
             if (group != null && group.EnabledInHierarchy)
                 childContext = group.ApplyTo(context);
 
-            // Compute layout if a RectTransform is present
+            // Compute layout if the child has a RectTransform
             Rect childRect = parentRect;
-            RectTransform? rt = child.GetComponent<RectTransform>();
+            RectTransform? rt = child.RectTransform;
             if (rt != null)
                 childRect = rt.ComputeRect(parentRect);
 
@@ -161,6 +170,18 @@ public class Canvas : MonoBehaviour
 
             // Recurse into grandchildren
             BuildChildren(paper, child, childRect, childContext);
+        }
+    }
+
+    /// <summary>
+    /// Recursively ensures all child GameObjects under a Canvas use RectTransform.
+    /// </summary>
+    private static void EnsureChildRectTransforms(GameObject parent)
+    {
+        foreach (GameObject child in parent.Children)
+        {
+            child.EnsureRectTransform();
+            EnsureChildRectTransforms(child);
         }
     }
 }

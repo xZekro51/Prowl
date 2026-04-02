@@ -201,10 +201,15 @@ public sealed class InspectorPanel : EditorPanel
         DrawPrefabBar(go);
 
         // ── Transform section ──────────────────────────────────
-        if (ImGui.CollapsingHeader("     Transform", ImGuiTreeNodeFlags.DefaultOpen))
+        bool isRect = go.Transform is Prowl.Vector.RectTransform;
+        string headerLabel = isRect ? "     Rect Transform" : "     Transform";
+        if (ImGui.CollapsingHeader(headerLabel, ImGuiTreeNodeFlags.DefaultOpen))
         {
             IconManager.DrawIconOverLastItem("Transform");
-            DrawTransform(go.Transform);
+            if (isRect)
+                DrawRectTransform((Prowl.Vector.RectTransform)go.Transform);
+            else
+                DrawTransform(go.Transform);
         }
         else
         {
@@ -417,6 +422,439 @@ public sealed class InspectorPanel : EditorPanel
             t.LocalScale = FromNumerics(scl);
     }
 
+    // ────────────────────────────────────────────────────────────
+    // RectTransform editing (Unity-like inspector)
+    // ────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Anchor preset definition for the anchor preset picker grid.
+    /// </summary>
+    private readonly record struct AnchorPreset(
+        string Name,
+        Prowl.Vector.Float2 AnchorMin,
+        Prowl.Vector.Float2 AnchorMax,
+        Prowl.Vector.Float2 Pivot);
+
+    private static readonly AnchorPreset[] s_anchorPresets =
+    [
+        // Row 0 — point anchors
+        new("Top-Left",       new(0, 0),   new(0, 0),   new(0, 0)),
+        new("Top-Center",     new(0.5f, 0), new(0.5f, 0), new(0.5f, 0)),
+        new("Top-Right",      new(1, 0),   new(1, 0),   new(1, 0)),
+        new("Top-Stretch",    new(0, 0),   new(1, 0),   new(0.5f, 0)),
+
+        // Row 1 — middle
+        new("Mid-Left",       new(0, 0.5f), new(0, 0.5f), new(0, 0.5f)),
+        new("Center",         new(0.5f, 0.5f), new(0.5f, 0.5f), new(0.5f, 0.5f)),
+        new("Mid-Right",      new(1, 0.5f), new(1, 0.5f), new(1, 0.5f)),
+        new("Mid-Stretch-H",  new(0, 0.5f), new(1, 0.5f), new(0.5f, 0.5f)),
+
+        // Row 2 — bottom
+        new("Bot-Left",       new(0, 1),   new(0, 1),   new(0, 1)),
+        new("Bot-Center",     new(0.5f, 1), new(0.5f, 1), new(0.5f, 1)),
+        new("Bot-Right",      new(1, 1),   new(1, 1),   new(1, 1)),
+        new("Bot-Stretch",    new(0, 1),   new(1, 1),   new(0.5f, 1)),
+
+        // Row 3 — vertical stretch
+        new("Stretch-Top",    new(0, 0),   new(0, 1),   new(0, 0.5f)),
+        new("Stretch-Center", new(0.5f, 0), new(0.5f, 1), new(0.5f, 0.5f)),
+        new("Stretch-Right",  new(1, 0),   new(1, 1),   new(1, 0.5f)),
+        new("Stretch-All",    new(0, 0),   new(1, 1),   new(0.5f, 0.5f)),
+    ];
+
+    private static void DrawRectTransform(Prowl.Vector.RectTransform rt)
+    {
+        float totalW = ImGui.GetContentRegionAvail().X;
+        float anchorBtnSize = 48 * Game.DpiScale;
+        float spacing = ImGui.GetStyle().ItemSpacing.X;
+
+        // ── Row: Anchor preset button + Position/Size fields ───
+        if (ImGui.BeginTable("##rt_top", 2, ImGuiTableFlags.None))
+        {
+            ImGui.TableSetupColumn("anchor", ImGuiTableColumnFlags.WidthFixed, anchorBtnSize + spacing);
+            ImGui.TableSetupColumn("fields", ImGuiTableColumnFlags.WidthStretch);
+            ImGui.TableNextRow();
+
+            // Anchor preset button (visual icon)
+            ImGui.TableSetColumnIndex(0);
+            DrawAnchorPresetButton(rt, anchorBtnSize);
+
+            // Position / Size fields on the right
+            ImGui.TableSetColumnIndex(1);
+            DrawRectPositionAndSize(rt);
+
+            ImGui.EndTable();
+        }
+
+        // ── Anchors (collapsible) ──────────────────────────────
+        if (ImGui.TreeNodeEx("Anchors", ImGuiTreeNodeFlags.None))
+        {
+            DrawLabeledFloat2("Min", ref rt.AnchorMin, 0.01f);
+            DrawLabeledFloat2("Max", ref rt.AnchorMax, 0.01f);
+            ImGui.TreePop();
+        }
+
+        // ── Pivot ──────────────────────────────────────────────
+        DrawLabeledFloat2("Pivot", ref rt.Pivot, 0.01f);
+
+        // ── Rotation ───────────────────────────────────────────
+        var rot = ToNumerics(rt.LocalEulerAngles);
+        if (DrawLabeledFloat3("Rotation", ref rot, 0.5f))
+            rt.LocalEulerAngles = FromNumerics(rot);
+
+        // ── Scale ──────────────────────────────────────────────
+        var scl = ToNumerics(rt.LocalScale);
+        if (DrawLabeledFloat3("Scale", ref scl, 0.05f))
+            rt.LocalScale = FromNumerics(scl);
+    }
+
+    /// <summary>
+    /// Draws the position / size area on the right side of the anchor icon.
+    /// Adapts labels based on whether anchors are together or apart on each axis.
+    /// </summary>
+    private static void DrawRectPositionAndSize(Prowl.Vector.RectTransform rt)
+    {
+        bool stretchH = MathF.Abs(rt.AnchorMin.X - rt.AnchorMax.X) > 1e-6f;
+        bool stretchV = MathF.Abs(rt.AnchorMin.Y - rt.AnchorMax.Y) > 1e-6f;
+
+        // Row 1: Position
+        {
+            string labelX = stretchH ? "Left" : "Pos X";
+            string labelY = stretchV ? "Top" : "Pos Y";
+
+            float posX = rt.AnchoredPosition.X;
+            float posY = rt.AnchoredPosition.Y;
+            float posZ = rt.LocalPosition.Z;
+
+            float avail = ImGui.GetContentRegionAvail().X;
+            float fieldW = (avail - ImGui.GetStyle().ItemSpacing.X * 2) / 3f;
+
+            bool changed = false;
+
+            ImGui.PushID("rt_pos");
+            ImGui.BeginGroup();
+            ImGui.TextColored(new Vector4(0.6f, 0.6f, 0.6f, 1f), labelX);
+            ImGui.SameLine(0, 0);
+            ImGui.SetNextItemWidth(fieldW - ImGui.CalcTextSize(labelX).X - 4 * Game.DpiScale);
+            ImGui.SameLine();
+            if (ImGui.DragFloat("##px", ref posX, 0.5f)) changed = true;
+            ImGui.SameLine();
+
+            ImGui.TextColored(new Vector4(0.6f, 0.6f, 0.6f, 1f), labelY);
+            ImGui.SameLine(0, 0);
+            ImGui.SetNextItemWidth(fieldW - ImGui.CalcTextSize(labelY).X - 4 * Game.DpiScale);
+            ImGui.SameLine();
+            if (ImGui.DragFloat("##py", ref posY, 0.5f)) changed = true;
+            ImGui.SameLine();
+
+            ImGui.TextColored(new Vector4(0.6f, 0.6f, 0.6f, 1f), "Pos Z");
+            ImGui.SameLine(0, 0);
+            ImGui.SetNextItemWidth(MathF.Max(20 * Game.DpiScale, ImGui.GetContentRegionAvail().X));
+            ImGui.SameLine();
+            if (ImGui.DragFloat("##pz", ref posZ, 0.05f)) changed = true;
+            ImGui.EndGroup();
+            ImGui.PopID();
+
+            if (changed)
+            {
+                rt.AnchoredPosition = new Prowl.Vector.Float2(posX, posY);
+                Prowl.Vector.Float3 lp = rt.LocalPosition;
+                lp.Z = posZ;
+                rt.LocalPosition = lp;
+            }
+        }
+
+        // Row 2: Width / Height (or Right / Bottom for stretch)
+        {
+            string labelW = stretchH ? "Right" : "Width";
+            string labelH = stretchV ? "Bottom" : "Height";
+
+            float valW = rt.SizeDelta.X;
+            float valH = rt.SizeDelta.Y;
+
+            float avail = ImGui.GetContentRegionAvail().X;
+            float fieldW = (avail - ImGui.GetStyle().ItemSpacing.X) / 2f;
+
+            bool changed = false;
+
+            ImGui.PushID("rt_size");
+            ImGui.BeginGroup();
+            ImGui.TextColored(new Vector4(0.6f, 0.6f, 0.6f, 1f), labelW);
+            ImGui.SameLine(0, 0);
+            ImGui.SetNextItemWidth(fieldW - ImGui.CalcTextSize(labelW).X - 4 * Game.DpiScale);
+            ImGui.SameLine();
+            if (ImGui.DragFloat("##sw", ref valW, 0.5f)) changed = true;
+            ImGui.SameLine();
+
+            ImGui.TextColored(new Vector4(0.6f, 0.6f, 0.6f, 1f), labelH);
+            ImGui.SameLine(0, 0);
+            ImGui.SetNextItemWidth(MathF.Max(20 * Game.DpiScale, ImGui.GetContentRegionAvail().X));
+            ImGui.SameLine();
+            if (ImGui.DragFloat("##sh", ref valH, 0.5f)) changed = true;
+            ImGui.EndGroup();
+            ImGui.PopID();
+
+            if (changed)
+                rt.SizeDelta = new Prowl.Vector.Float2(valW, valH);
+        }
+    }
+
+    /// <summary>
+    /// Draws the anchor preset button. Clicking opens the anchor preset popup grid.
+    /// The button displays a visual representation of the current anchor configuration.
+    /// </summary>
+    private static void DrawAnchorPresetButton(Prowl.Vector.RectTransform rt, float size)
+    {
+        Vector2 pos = ImGui.GetCursorScreenPos();
+        var drawList = ImGui.GetWindowDrawList();
+
+        // Button background
+        if (ImGui.InvisibleButton("##anchorPreset", new Vector2(size, size)))
+            ImGui.OpenPopup("##AnchorPresetPopup");
+
+        // Draw button background
+        uint bgColor = ImGui.IsItemHovered()
+            ? ImGui.GetColorU32(ImGuiCol.ButtonHovered)
+            : ImGui.GetColorU32(ImGuiCol.Button);
+        drawList.AddRectFilled(pos, pos + new Vector2(size, size), bgColor, 4f);
+
+        // Draw border
+        drawList.AddRect(pos, pos + new Vector2(size, size),
+            ImGui.GetColorU32(ImGuiCol.Border), 4f);
+
+        // Draw anchor visualization inside the button
+        float pad = 6 * Game.DpiScale;
+        float innerW = size - pad * 2;
+        float innerH = size - pad * 2;
+        Vector2 innerMin = pos + new Vector2(pad, pad);
+
+        // Draw a rect representing the parent
+        drawList.AddRect(innerMin, innerMin + new Vector2(innerW, innerH),
+            ImGui.GetColorU32(new Vector4(0.4f, 0.4f, 0.4f, 0.6f)));
+
+        // Anchor min/max points
+        float ax0 = innerMin.X + rt.AnchorMin.X * innerW;
+        float ay0 = innerMin.Y + rt.AnchorMin.Y * innerH;
+        float ax1 = innerMin.X + rt.AnchorMax.X * innerW;
+        float ay1 = innerMin.Y + rt.AnchorMax.Y * innerH;
+
+        uint anchorColor = ImGui.GetColorU32(new Vector4(1f, 0.55f, 0.15f, 1f));
+
+        if (MathF.Abs(ax1 - ax0) < 2 && MathF.Abs(ay1 - ay0) < 2)
+        {
+            // Point anchor — draw crosshair
+            float cx = (ax0 + ax1) * 0.5f;
+            float cy = (ay0 + ay1) * 0.5f;
+            float armLen = 5 * Game.DpiScale;
+            drawList.AddLine(new Vector2(cx - armLen, cy), new Vector2(cx + armLen, cy), anchorColor, 2f);
+            drawList.AddLine(new Vector2(cx, cy - armLen), new Vector2(cx, cy + armLen), anchorColor, 2f);
+        }
+        else
+        {
+            // Stretch anchor — draw anchor rect area
+            drawList.AddRectFilled(
+                new Vector2(ax0, ay0), new Vector2(ax1, ay1),
+                ImGui.GetColorU32(new Vector4(1f, 0.55f, 0.15f, 0.2f)));
+            drawList.AddRect(
+                new Vector2(ax0, ay0), new Vector2(ax1, ay1),
+                anchorColor, 0f, ImDrawFlags.None, 1.5f);
+
+            // Draw corner triangles at the four anchor corners
+            float triSize = 3 * Game.DpiScale;
+            DrawAnchorTriangle(drawList, new Vector2(ax0, ay0), triSize, anchorColor, 0);
+            DrawAnchorTriangle(drawList, new Vector2(ax1, ay0), triSize, anchorColor, 1);
+            DrawAnchorTriangle(drawList, new Vector2(ax0, ay1), triSize, anchorColor, 2);
+            DrawAnchorTriangle(drawList, new Vector2(ax1, ay1), triSize, anchorColor, 3);
+        }
+
+        // Anchor preset popup
+        DrawAnchorPresetPopup(rt);
+    }
+
+    /// <summary>
+    /// Draws a small triangle at an anchor corner.
+    /// </summary>
+    private static void DrawAnchorTriangle(ImDrawListPtr drawList, Vector2 center,
+        float triSize, uint color, int corner)
+    {
+        // corner: 0=TL, 1=TR, 2=BL, 3=BR
+        float dx = (corner % 2 == 0) ? 1 : -1;
+        float dy = (corner < 2) ? 1 : -1;
+        Vector2 a = center;
+        Vector2 b = center + new Vector2(dx * triSize, 0);
+        Vector2 c = center + new Vector2(0, dy * triSize);
+        drawList.AddTriangleFilled(a, b, c, color);
+    }
+
+    /// <summary>
+    /// Draws the anchor preset popup grid (4×4 of common presets).
+    /// </summary>
+    private static void DrawAnchorPresetPopup(Prowl.Vector.RectTransform rt)
+    {
+        if (!ImGui.BeginPopup("##AnchorPresetPopup"))
+            return;
+
+        ImGui.TextUnformatted("Anchor Presets");
+        ImGui.Separator();
+
+        float btnSize = 32 * Game.DpiScale;
+        float spacing = 4 * Game.DpiScale;
+
+        for (int row = 0; row < 4; row++)
+        {
+            for (int col = 0; col < 4; col++)
+            {
+                int idx = row * 4 + col;
+                AnchorPreset preset = s_anchorPresets[idx];
+
+                if (col > 0) ImGui.SameLine(0, spacing);
+
+                ImGui.PushID(idx);
+                Vector2 btnPos = ImGui.GetCursorScreenPos();
+
+                // Check if this preset matches the current state
+                bool isActive =
+                    MathF.Abs(rt.AnchorMin.X - preset.AnchorMin.X) < 0.01f &&
+                    MathF.Abs(rt.AnchorMin.Y - preset.AnchorMin.Y) < 0.01f &&
+                    MathF.Abs(rt.AnchorMax.X - preset.AnchorMax.X) < 0.01f &&
+                    MathF.Abs(rt.AnchorMax.Y - preset.AnchorMax.Y) < 0.01f;
+
+                if (isActive)
+                    ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.3f, 0.5f, 0.8f, 0.6f));
+
+                if (ImGui.Button("##preset", new Vector2(btnSize, btnSize)))
+                {
+                    rt.AnchorMin = preset.AnchorMin;
+                    rt.AnchorMax = preset.AnchorMax;
+                    rt.Pivot = preset.Pivot;
+                    ImGui.CloseCurrentPopup();
+                }
+
+                if (isActive)
+                    ImGui.PopStyleColor();
+
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip(preset.Name);
+
+                // Draw preset visualization inside the button
+                var dl = ImGui.GetWindowDrawList();
+                float pad = 4 * Game.DpiScale;
+                float innerW = btnSize - pad * 2;
+                float innerH = btnSize - pad * 2;
+                Vector2 innerMin = btnPos + new Vector2(pad, pad);
+
+                // Parent rect outline
+                dl.AddRect(innerMin, innerMin + new Vector2(innerW, innerH),
+                    ImGui.GetColorU32(new Vector4(0.5f, 0.5f, 0.5f, 0.5f)));
+
+                // Anchor area
+                float pax0 = innerMin.X + preset.AnchorMin.X * innerW;
+                float pay0 = innerMin.Y + preset.AnchorMin.Y * innerH;
+                float pax1 = innerMin.X + preset.AnchorMax.X * innerW;
+                float pay1 = innerMin.Y + preset.AnchorMax.Y * innerH;
+
+                uint presetColor = ImGui.GetColorU32(new Vector4(1f, 0.55f, 0.15f, 1f));
+
+                if (MathF.Abs(pax1 - pax0) < 2 && MathF.Abs(pay1 - pay0) < 2)
+                {
+                    // Point anchor — crosshair
+                    float cx = (pax0 + pax1) * 0.5f;
+                    float cy = (pay0 + pay1) * 0.5f;
+                    float arm = 3 * Game.DpiScale;
+                    dl.AddLine(new Vector2(cx - arm, cy), new Vector2(cx + arm, cy), presetColor, 1.5f);
+                    dl.AddLine(new Vector2(cx, cy - arm), new Vector2(cx, cy + arm), presetColor, 1.5f);
+                }
+                else
+                {
+                    // Stretch — draw area
+                    float lineW = MathF.Max(pax1 - pax0, 1);
+                    float lineH = MathF.Max(pay1 - pay0, 1);
+                    dl.AddRectFilled(
+                        new Vector2(pax0, pay0),
+                        new Vector2(pax0 + lineW, pay0 + lineH),
+                        ImGui.GetColorU32(new Vector4(1f, 0.55f, 0.15f, 0.3f)));
+                    dl.AddRect(
+                        new Vector2(pax0, pay0),
+                        new Vector2(pax0 + lineW, pay0 + lineH),
+                        presetColor);
+                }
+
+                ImGui.PopID();
+            }
+        }
+
+        ImGui.Separator();
+
+        // Manual anchor input
+        ImGui.TextUnformatted("Custom:");
+        float inputW = 60 * Game.DpiScale;
+        ImGui.SetNextItemWidth(inputW);
+        ImGui.DragFloat("Min X", ref rt.AnchorMin.X, 0.01f, 0f, 1f, "%.2f");
+        ImGui.SameLine();
+        ImGui.SetNextItemWidth(inputW);
+        ImGui.DragFloat("Min Y", ref rt.AnchorMin.Y, 0.01f, 0f, 1f, "%.2f");
+        ImGui.SetNextItemWidth(inputW);
+        ImGui.DragFloat("Max X", ref rt.AnchorMax.X, 0.01f, 0f, 1f, "%.2f");
+        ImGui.SameLine();
+        ImGui.SetNextItemWidth(inputW);
+        ImGui.DragFloat("Max Y", ref rt.AnchorMax.Y, 0.01f, 0f, 1f, "%.2f");
+
+        ImGui.EndPopup();
+    }
+
+    /// <summary>
+    /// Draws a two-component Float2 row (X, Y) with a label.
+    /// </summary>
+    private static bool DrawLabeledFloat2(string label, ref Prowl.Vector.Float2 value, float speed)
+    {
+        bool changed = false;
+
+        if (ImGui.BeginTable("##v2_" + label, 2, ImGuiTableFlags.None))
+        {
+            float w = ImGui.GetContentRegionAvail().X;
+            ImGui.TableSetupColumn("lbl", ImGuiTableColumnFlags.WidthFixed, w * LabelRatio);
+            ImGui.TableSetupColumn("val", ImGuiTableColumnFlags.WidthStretch);
+            ImGui.TableNextRow();
+
+            ImGui.TableSetColumnIndex(0);
+            ImGui.AlignTextToFramePadding();
+            ImGui.TextUnformatted(label);
+
+            ImGui.TableSetColumnIndex(1);
+            ImGui.PushID(label);
+
+            float itemSpacing = ImGui.GetStyle().ItemSpacing.X;
+            float buttonW = ImGui.GetFrameHeight();
+            float avail = ImGui.GetContentRegionAvail().X;
+            float fieldWidth = (avail - buttonW * 2 - itemSpacing) / 2f;
+            if (fieldWidth < 20 * Game.DpiScale) fieldWidth = 20 * Game.DpiScale;
+
+            float x = value.X, y = value.Y;
+
+            // X
+            if (DrawVectorComponent("X", ref x, speed, fieldWidth, buttonW,
+                new Vector4(0.19f, 0.16f, 0.16f, 1f),
+                new Vector4(0.34f, 0.29f, 0.29f, 1f),
+                new Vector4(0.49f, 0.42f, 0.42f, 1f),
+                new Vector4(0.86f, 0.42f, 0.41f, 1f)))
+            { value.X = x; changed = true; }
+
+            ImGui.SameLine(0, itemSpacing);
+
+            // Y
+            if (DrawVectorComponent("Y", ref y, speed, fieldWidth, buttonW,
+                new Vector4(0.16f, 0.17f, 0.15f, 1f),
+                new Vector4(0.31f, 0.32f, 0.28f, 1f),
+                new Vector4(0.45f, 0.47f, 0.41f, 1f),
+                new Vector4(0.56f, 0.72f, 0.35f, 1f)))
+            { value.Y = y; changed = true; }
+
+            ImGui.PopID();
+            ImGui.EndTable();
+        }
+
+        return changed;
+    }
 
     // Per-component drag state for the letter-label drag interaction
     private static uint _dragId;
@@ -890,7 +1328,13 @@ public sealed class InspectorPanel : EditorPanel
                 float v = (float)(value ?? 0f);
                 DrawFieldRow(label, () =>
                 {
-                    if (ImGui.DragFloat("##val", ref v, 0.01f))
+                    float buttonW = ImGui.GetFrameHeight();
+                    float fieldWidth = ImGui.GetContentRegionAvail().X - buttonW;
+                    if (DrawVectorComponent("f", ref v, 0.01f, fieldWidth, buttonW,
+                        new Vector4(0.19f, 0.16f, 0.16f, 1f),
+                        new Vector4(0.34f, 0.29f, 0.29f, 1f),
+                        new Vector4(0.49f, 0.42f, 0.42f, 1f),
+                        new Vector4(0.86f, 0.42f, 0.41f, 1f)))
                         SetFieldWithUndo(target, field, value, v);
                 });
             }
@@ -899,7 +1343,13 @@ public sealed class InspectorPanel : EditorPanel
                 float v = (float)(double)(value ?? 0.0);
                 DrawFieldRow(label, () =>
                 {
-                    if (ImGui.DragFloat("##val", ref v, 0.01f))
+                    float buttonW = ImGui.GetFrameHeight();
+                    float fieldWidth = ImGui.GetContentRegionAvail().X - buttonW;
+                    if (DrawVectorComponent("f", ref v, 0.01f, fieldWidth, buttonW,
+                        new Vector4(0.19f, 0.16f, 0.16f, 1f),
+                        new Vector4(0.34f, 0.29f, 0.29f, 1f),
+                        new Vector4(0.49f, 0.42f, 0.42f, 1f),
+                        new Vector4(0.86f, 0.42f, 0.41f, 1f)))
                         SetFieldWithUndo(target, field, value, (double)v);
                 });
             }
@@ -1072,7 +1522,13 @@ public sealed class InspectorPanel : EditorPanel
                     float v = (float)(elem ?? 0f);
                     DrawFieldRow(elemLabel, () =>
                     {
-                        if (ImGui.DragFloat("##val", ref v, 0.01f))
+                        float buttonW = ImGui.GetFrameHeight();
+                        float fieldWidth = ImGui.GetContentRegionAvail().X - buttonW;
+                        if (DrawVectorComponent("f", ref v, 0.01f, fieldWidth, buttonW,
+                            new Vector4(0.19f, 0.16f, 0.16f, 1f),
+                            new Vector4(0.34f, 0.29f, 0.29f, 1f),
+                            new Vector4(0.49f, 0.42f, 0.42f, 1f),
+                            new Vector4(0.86f, 0.42f, 0.41f, 1f)))
                         { items[i] = v; changed = true; }
                     });
                 }
@@ -1081,7 +1537,13 @@ public sealed class InspectorPanel : EditorPanel
                     float v = (float)(double)(elem ?? 0.0);
                     DrawFieldRow(elemLabel, () =>
                     {
-                        if (ImGui.DragFloat("##val", ref v, 0.01f))
+                        float buttonW = ImGui.GetFrameHeight();
+                        float fieldWidth = ImGui.GetContentRegionAvail().X - buttonW;
+                        if (DrawVectorComponent("f", ref v, 0.01f, fieldWidth, buttonW,
+                            new Vector4(0.19f, 0.16f, 0.16f, 1f),
+                            new Vector4(0.34f, 0.29f, 0.29f, 1f),
+                            new Vector4(0.49f, 0.42f, 0.42f, 1f),
+                            new Vector4(0.86f, 0.42f, 0.41f, 1f)))
                         { items[i] = (double)v; changed = true; }
                     });
                 }
@@ -1331,10 +1793,12 @@ public sealed class InspectorPanel : EditorPanel
                 ImGui.EndTooltip();
             }
 
-            // Single-click on reference button → ping asset in project view
-            if (ImGui.IsItemClicked(ImGuiMouseButton.Left) && !EditorDragDrop.IsDragging && current != null)
+            // Single-click on reference button → open asset picker
+            if (ImGui.IsItemClicked(ImGuiMouseButton.Left) && !EditorDragDrop.IsDragging)
             {
-                PingReferencedAsset(current);
+                _activePickerFieldId = fieldId;
+                _assetPickerFilter = string.Empty;
+                ImGui.OpenPopup(popupId);
             }
 
             // Drag-drop target: accept EditorDragDrop payloads
@@ -1407,9 +1871,11 @@ public sealed class InspectorPanel : EditorPanel
                 ImGui.EndDragDropTarget();
             }
 
-            // Context menu: clear reference
+            // Context menu: ping in project, clear reference
             if (ImGui.BeginPopupContextItem("##refctx"))
             {
+                if (current != null && ImGui.MenuItem("Ping in Project"))
+                    PingReferencedAsset(current);
                 if (ImGui.MenuItem("Clear"))
                     SetFieldWithUndo(target, field, current, null);
                 ImGui.EndPopup();
@@ -1510,6 +1976,9 @@ public sealed class InspectorPanel : EditorPanel
                             ImGui.CloseCurrentPopup();
                         }
                     }
+
+                    // Sub-assets from model files (meshes and materials embedded in .fbx/.gltf/etc.)
+                    DrawModelSubAssetPickerItems(assetDb, field, target, current);
                 }
 
                 ImGui.EndChild();
@@ -1541,6 +2010,133 @@ public sealed class InspectorPanel : EditorPanel
 
         foreach (var child in go.Children)
             DrawGameObjectPickerItem(child, target, field, current);
+    }
+
+    // ────────────────────────────────────────────────────────────
+    // Model sub-asset picker (meshes & materials from model files)
+    // ────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Cached sub-asset metadata per model file path, shared across picker invocations.
+    /// Cleared whenever the asset service refreshes.
+    /// </summary>
+    private readonly Dictionary<string, List<PickerSubAsset>?> _pickerSubAssetCache = new();
+
+    private sealed record PickerSubAsset(string Name, string Category, int Index);
+
+    /// <summary>
+    /// For Mesh and Material fields, lists sub-assets embedded in model files
+    /// (e.g. meshes and materials inside .fbx/.gltf files).
+    /// </summary>
+    private void DrawModelSubAssetPickerItems(IAssetService assets, FieldInfo field, object target, EngineObject? current)
+    {
+        bool wantsMesh = field.FieldType == typeof(Prowl.Runtime.Resources.Mesh) ||
+                         field.FieldType.IsSubclassOf(typeof(Prowl.Runtime.Resources.Mesh));
+        bool wantsMaterial = field.FieldType == typeof(Prowl.Runtime.Resources.Material) ||
+                             field.FieldType.IsSubclassOf(typeof(Prowl.Runtime.Resources.Material));
+
+        if (!wantsMesh && !wantsMaterial)
+            return;
+
+        var allEntries = assets.GetAllEntriesRecursive();
+        bool headerDrawn = false;
+
+        foreach (AssetEntry entry in allEntries)
+        {
+            if (entry.IsDirectory) continue;
+            if (!MeshExtensions.Contains(entry.Extension)) continue;
+
+            List<PickerSubAsset>? subs = GetOrLoadPickerSubAssets(entry, assets);
+            if (subs == null) continue;
+
+            foreach (PickerSubAsset sub in subs)
+            {
+                if (wantsMesh && sub.Category != "Mesh") continue;
+                if (wantsMaterial && sub.Category != "Material") continue;
+
+                string displayName = $"{entry.Name} \u25B8 {sub.Name}";
+                if (!string.IsNullOrEmpty(_assetPickerFilter) &&
+                    !displayName.Contains(_assetPickerFilter, StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                if (!headerDrawn)
+                {
+                    ImGui.Spacing();
+                    ImGui.TextColored(new Vector4(0.55f, 0.55f, 0.55f, 1f), "Model Sub-Assets:");
+                    headerDrawn = true;
+                }
+
+                if (ImGui.Selectable(displayName))
+                {
+                    EngineObject? loaded = LoadModelSubAsset(entry, sub, assets);
+                    if (loaded != null)
+                        SetFieldWithUndo(target, field, current, loaded);
+                    _activePickerFieldId = null;
+                    ImGui.CloseCurrentPopup();
+                }
+            }
+        }
+    }
+
+    private List<PickerSubAsset>? GetOrLoadPickerSubAssets(AssetEntry entry, IAssetService assets)
+    {
+        if (_pickerSubAssetCache.TryGetValue(entry.RelativePath, out List<PickerSubAsset>? cached))
+            return cached;
+
+        try
+        {
+            string? guid = assets.GetGuidByPath(entry.RelativePath);
+            if (guid == null || !Guid.TryParse(guid, out Guid parentGuid))
+            {
+                _pickerSubAssetCache[entry.RelativePath] = null;
+                return null;
+            }
+
+            EngineObject? parentObj = AssetDatabase.Get(parentGuid);
+            if (parentObj is not Prowl.Runtime.Resources.Model model)
+            {
+                _pickerSubAssetCache[entry.RelativePath] = null;
+                return null;
+            }
+
+            List<PickerSubAsset> subAssets = [];
+
+            for (int i = 0; i < model.Meshes.Count; i++)
+                subAssets.Add(new PickerSubAsset(model.Meshes[i].Name ?? $"Mesh_{i}", "Mesh", i));
+
+            for (int i = 0; i < model.Materials.Count; i++)
+                subAssets.Add(new PickerSubAsset(model.Materials[i]?.Name ?? $"Material_{i}", "Material", i));
+
+            cached = subAssets.Count > 0 ? subAssets : null;
+        }
+        catch (Exception ex)
+        {
+            Debug.LogWarning($"[Inspector] Failed to read model sub-assets for '{entry.Name}': {ex.Message}");
+            cached = null;
+        }
+
+        _pickerSubAssetCache[entry.RelativePath] = cached;
+        return cached;
+    }
+
+    private static EngineObject? LoadModelSubAsset(AssetEntry parentEntry, PickerSubAsset sub, IAssetService assets)
+    {
+        string? guid = assets.GetGuidByPath(parentEntry.RelativePath);
+        if (guid == null || !Guid.TryParse(guid, out Guid parentGuid))
+            return null;
+
+        EngineObject? parentObj = AssetDatabase.Get(parentGuid);
+        if (parentObj is not Prowl.Runtime.Resources.Model model)
+            return null;
+
+        model.StampSubResourceIds();
+
+        return sub.Category switch
+        {
+            "Mesh" when sub.Index >= 0 && sub.Index < model.Meshes.Count => model.Meshes[sub.Index].Mesh,
+            "Material" when sub.Index >= 0 && sub.Index < model.Materials.Count => model.Materials[sub.Index],
+            _ => null
+        };
     }
 
     // ────────────────────────────────────────────────────────────

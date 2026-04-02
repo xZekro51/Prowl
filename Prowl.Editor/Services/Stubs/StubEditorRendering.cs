@@ -42,14 +42,10 @@ public sealed class StubEditorRendering : IEditorRendering
     // Selection outline effect
     private readonly OutlineEffect _outlineEffect = new();
 
-    // Paper UI rendering for game view / scene view
+    // Paper UI rendering for game view
     private PaperRenderer? _gamePaperRenderer;
     private Paper? _gamePaper;
     private int _gamePaperW, _gamePaperH;
-
-    private PaperRenderer? _scenePaperRenderer;
-    private Paper? _scenePaper;
-    private int _scenePaperW, _scenePaperH;
 
     public RenderTexture? SceneViewRT => _sceneRT;
     public RenderTexture? GameViewRT => _gameRT;
@@ -114,13 +110,9 @@ public sealed class StubEditorRendering : IEditorRendering
                 break;
         }
 
-        // ── Render screen-space UI (Canvas) for Lit mode ──
-        if (viewMode == SceneViewMode.Lit)
-        {
-            RenderOnGuiIntoRT(scene, _sceneRT!, width, height,
-                ref _scenePaperRenderer, ref _scenePaper,
-                ref _scenePaperW, ref _scenePaperH);
-        }
+        // Screen-space Canvas overlays are intentionally skipped in the
+        // Scene View because they obscure the 3D content and make editing
+        // difficult. They are only rendered into the Game View.
 
         _editorCam.Target = null;
     }
@@ -340,10 +332,6 @@ public sealed class StubEditorRendering : IEditorRendering
         _gamePaperRenderer?.Dispose();
         _gamePaperRenderer = null;
         _gamePaper = null;
-
-        _scenePaperRenderer?.Dispose();
-        _scenePaperRenderer = null;
-        _scenePaper = null;
 
         if (_editorCamGO != null && !_editorCamGO.IsDisposed)
         {

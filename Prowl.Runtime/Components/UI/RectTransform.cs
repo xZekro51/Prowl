@@ -2,19 +2,17 @@
 // Licensed under the MIT License. See the LICENSE file in the project root for details.
 
 using Prowl.Echo;
-using Prowl.PaperUI;
-using Prowl.Vector;
 
-namespace Prowl.Runtime.UI;
+namespace Prowl.Vector;
 
 /// <summary>
-/// Stores anchor, pivot, and size information for 2D UI layout,
-/// analogous to Unity's <c>RectTransform</c>.
+/// A <see cref="Transform"/> subclass that stores anchor, pivot, and size
+/// information for 2D UI layout, analogous to Unity's <c>RectTransform</c>.
 /// </summary>
 /// <remarks>
 /// <para>
 /// <b>Anchors</b> define how the element's edges attach to its parent rect.
-/// Values are normalized (0–1): (0,0) is bottom-left, (1,1) is top-right.
+/// Values are normalized (0–1): (0,0) is top-left, (1,1) is bottom-right.
 /// When <see cref="AnchorMin"/> == <see cref="AnchorMax"/>, the element has a
 /// fixed size controlled by <see cref="SizeDelta"/>. When they differ, the
 /// element stretches to fill the anchor range and <see cref="SizeDelta"/>
@@ -24,48 +22,53 @@ namespace Prowl.Runtime.UI;
 /// <b>Pivot</b> is the local origin of the element (0–1). (0.5, 0.5) is center.
 /// </para>
 /// </remarks>
-public class RectTransform : UIBehaviour
+public class RectTransform : Transform
 {
     /// <summary>
     /// The minimum anchor point (lower-left corner of the anchor rectangle).
     /// </summary>
+    [SerializeField]
     public Float2 AnchorMin = new(0.5f, 0.5f);
 
     /// <summary>
     /// The maximum anchor point (upper-right corner of the anchor rectangle).
     /// </summary>
+    [SerializeField]
     public Float2 AnchorMax = new(0.5f, 0.5f);
 
     /// <summary>
     /// The pivot point of the element, in normalized coordinates (0–1).
     /// (0.5, 0.5) means the center.
     /// </summary>
+    [SerializeField]
     public Float2 Pivot = new(0.5f, 0.5f);
 
     /// <summary>
     /// When the anchors are together, this represents the width and height of the rect.
     /// When the anchors are apart, this is the amount added to the anchor-defined size.
     /// </summary>
+    [SerializeField]
     public Float2 SizeDelta = new(100f, 100f);
 
     /// <summary>
     /// The position of the pivot relative to the anchor reference point, in pixels.
     /// </summary>
+    [SerializeField]
     public Float2 AnchoredPosition = Float2.Zero;
 
     /// <summary>
-    /// The computed screen-space rect after layout, set by the <see cref="Canvas"/> during tree construction.
+    /// The computed screen-space rect after layout, set by the Canvas during tree construction.
     /// </summary>
     [SerializeIgnore]
     public Rect ComputedRect;
+
+    private static bool Approximately(float a, float b) => Maths.Abs(a - b) < 1e-6f;
 
     /// <summary>
     /// Computes the pixel rect of this element given the parent's pixel rect.
     /// </summary>
     /// <param name="parentRect">The parent's screen-space rect.</param>
     /// <returns>The computed rect in screen-space pixels.</returns>
-    private static bool Approximately(float a, float b) => Maths.Abs(a - b) < 1e-6f;
-
     public Rect ComputeRect(Rect parentRect)
     {
         float parentX = parentRect.Min.X;
@@ -117,14 +120,5 @@ public class RectTransform : UIBehaviour
 
         ComputedRect = new Rect(posX, posY, posX + width, posY + height);
         return ComputedRect;
-    }
-
-    /// <summary>
-    /// <see cref="UIBehaviour.BuildUI"/> — RectTransform itself does not emit visual
-    /// elements; it only computes layout for sibling / child visual components.
-    /// </summary>
-    public override void BuildUI(Paper paper, UIContext context)
-    {
-        // RectTransform is a data-only component consumed by the Canvas during layout.
     }
 }

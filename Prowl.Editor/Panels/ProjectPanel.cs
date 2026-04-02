@@ -15,6 +15,7 @@ using Prowl.Editor.Services;
 using Prowl.Editor.Undo;
 
 using Material = Prowl.Runtime.Resources.Material;
+using Model = Prowl.Runtime.Resources.Model;
 using Shader = Prowl.Runtime.Resources.Shader;
 
 namespace Prowl.Editor.Panels;
@@ -57,6 +58,21 @@ public sealed class ProjectPanel : EditorPanel
     private string? _pingPath;
     private float _pingTimer;
     private const float PingDuration = 2.0f;
+
+    // Sub-asset expansion state (Unity-style expand for models)
+    private readonly HashSet<string> _expandedAssets = new();
+    private readonly Dictionary<string, List<SubAssetInfo>?> _subAssetCache = new();
+    private string? _selectedSubAsset; // e.g., "Models/cube.fbx#Mesh:0"
+
+    private static readonly HashSet<string> s_modelExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".obj", ".fbx", ".gltf", ".glb", ".dae", ".3ds", ".blend", ".ply", ".stl"
+    };
+
+    /// <summary>
+    /// Lightweight record describing a sub-asset inside a parent asset (e.g. a Mesh inside a Model).
+    /// </summary>
+    private sealed record SubAssetInfo(string Name, string Category, int Index);
 
     public ProjectPanel() : base("Project")
     {
@@ -210,7 +226,10 @@ public sealed class ProjectPanel : EditorPanel
         ImGui.SameLine();
 
         if (EditorIcons.ImageButtonWithLabel("ProjRefresh", EditorIconType.Refresh, "Refresh"))
+        {
+            _subAssetCache.Clear();
             assets.Refresh();
+        }
 
         ImGui.SameLine();
 
@@ -365,6 +384,7 @@ public sealed class ProjectPanel : EditorPanel
         if (ImGui.IsItemClicked(ImGuiMouseButton.Left))
         {
             _selectedEntry = entry.RelativePath;
+            _selectedSubAsset = null;
         }
 
         // Double-click to navigate into folder
@@ -400,12 +420,29 @@ public sealed class ProjectPanel : EditorPanel
         }
 
         bool isSelected = _selectedEntry == entry.RelativePath;
+        bool isModel = s_modelExtensions.Contains(entry.Extension);
+        bool treeOpen = false;
 
-        var flags = ImGuiTreeNodeFlags.Leaf | ImGuiTreeNodeFlags.NoTreePushOnOpen | ImGuiTreeNodeFlags.SpanAvailWidth;
-        if (isSelected) flags |= ImGuiTreeNodeFlags.Selected;
+        if (isModel)
+        {
+            // Model files can expand to show sub-assets (meshes, materials, animations)
+            ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags.OpenOnArrow | ImGuiTreeNodeFlags.SpanAvailWidth;
+            if (isSelected) flags |= ImGuiTreeNodeFlags.Selected;
+            if (_expandedAssets.Contains(entry.RelativePath)) flags |= ImGuiTreeNodeFlags.DefaultOpen;
 
-        // Draw with spacing for icon, then overlay it
-        ImGui.TreeNodeEx(entry.RelativePath, flags, $"     {entry.Name}");
+            treeOpen = ImGui.TreeNodeEx(entry.RelativePath, flags, $"     {entry.Name}");
+
+            // Track expansion state
+            if (treeOpen) _expandedAssets.Add(entry.RelativePath);
+            else _expandedAssets.Remove(entry.RelativePath);
+        }
+        else
+        {
+            ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags.Leaf | ImGuiTreeNodeFlags.NoTreePushOnOpen | ImGuiTreeNodeFlags.SpanAvailWidth;
+            if (isSelected) flags |= ImGuiTreeNodeFlags.Selected;
+
+            ImGui.TreeNodeEx(entry.RelativePath, flags, $"     {entry.Name}");
+        }
 
         // Overlay the icon based on file extension via IconManager
         {
@@ -430,6 +467,7 @@ public sealed class ProjectPanel : EditorPanel
         if (ImGui.IsItemClicked(ImGuiMouseButton.Left))
         {
             _selectedEntry = entry.RelativePath;
+            _selectedSubAsset = null;
             _pendingSelectPath = entry.RelativePath;
             _dragOccurred = false;
         }
@@ -610,7 +648,142 @@ public sealed class ProjectPanel : EditorPanel
             ImGui.EndPopup();
         }
 
+        // Draw sub-assets when model is expanded
+        if (treeOpen)
+        {
+            DrawSubAssets(entry, assets);
+            ImGui.TreePop();
         }
+    }
+
+    // ── Sub-asset viewing ─────────────────────────────────────
+
+    /// <summary>
+    /// Loads sub-asset metadata (names, categories, indices) for a model file.
+    /// Results are cached per relative path so the model is only loaded once.
+    /// </summary>
+    private List<SubAssetInfo>? GetOrLoadSubAssets(AssetEntry entry, IAssetService assets)
+    {
+        if (_subAssetCache.TryGetValue(entry.RelativePath, out List<SubAssetInfo>? cached))
+            return cached;
+
+        try
+        {
+            string? guid = assets.GetGuidByPath(entry.RelativePath);
+            if (guid == null || !Guid.TryParse(guid, out Guid parentGuid))
+            {
+                _subAssetCache[entry.RelativePath] = null;
+                return null;
+            }
+
+            EngineObject? parentObj = AssetDatabase.Get(parentGuid);
+            if (parentObj is not Model model)
+            {
+                _subAssetCache[entry.RelativePath] = null;
+                return null;
+            }
+
+            List<SubAssetInfo> subAssets = [];
+
+            for (int i = 0; i < model.Meshes.Count; i++)
+                subAssets.Add(new SubAssetInfo(model.Meshes[i].Name ?? $"Mesh_{i}", "Mesh", i));
+
+            for (int i = 0; i < model.Materials.Count; i++)
+                subAssets.Add(new SubAssetInfo(model.Materials[i]?.Name ?? $"Material_{i}", "Material", i));
+
+            for (int i = 0; i < model.Animations.Count; i++)
+                subAssets.Add(new SubAssetInfo(model.Animations[i]?.Name ?? $"Animation_{i}", "Animation", i));
+
+            cached = subAssets.Count > 0 ? subAssets : null;
+        }
+        catch (Exception ex)
+        {
+            Runtime.Debug.LogWarning($"[Project] Failed to read sub-assets for '{entry.Name}': {ex.Message}");
+            cached = null;
+        }
+
+        _subAssetCache[entry.RelativePath] = cached;
+        return cached;
+    }
+
+    private void DrawSubAssets(AssetEntry parentEntry, IAssetService assets)
+    {
+        List<SubAssetInfo>? subAssets = GetOrLoadSubAssets(parentEntry, assets);
+        if (subAssets == null || subAssets.Count == 0)
+        {
+            ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.5f, 0.5f, 0.5f, 1f));
+            ImGui.TreeNodeEx("##NoSub", ImGuiTreeNodeFlags.Leaf | ImGuiTreeNodeFlags.NoTreePushOnOpen, "  (no sub-assets)");
+            ImGui.PopStyleColor();
+            return;
+        }
+
+        foreach (SubAssetInfo sub in subAssets)
+            DrawSubAssetItem(parentEntry, sub, assets);
+    }
+
+    private void DrawSubAssetItem(AssetEntry parentEntry, SubAssetInfo sub, IAssetService assets)
+    {
+        string subId = $"{parentEntry.RelativePath}#{sub.Category}:{sub.Index}";
+        bool isSelected = _selectedSubAsset == subId;
+
+        ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags.Leaf | ImGuiTreeNodeFlags.NoTreePushOnOpen | ImGuiTreeNodeFlags.SpanAvailWidth;
+        if (isSelected) flags |= ImGuiTreeNodeFlags.Selected;
+
+        ImGui.TreeNodeEx(subId, flags, $"     {sub.Name}");
+
+        // Overlay icon based on sub-asset category
+        string iconName = sub.Category switch
+        {
+            "Mesh" => "Mesh",
+            "Material" => "Material",
+            "Animation" => "Animation",
+            _ => "File",
+        };
+        IconManager.DrawIconOverLastItem(iconName, useTreeIndent: false);
+
+        if (ImGui.IsItemClicked(ImGuiMouseButton.Left))
+        {
+            _selectedSubAsset = subId;
+            _selectedEntry = parentEntry.RelativePath;
+            SelectSubAsset(parentEntry, sub, assets);
+        }
+
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip($"{parentEntry.RelativePath}#{sub.Category}:{sub.Index}");
+        }
+    }
+
+    /// <summary>
+    /// Loads the parent model via the asset database and selects the
+    /// specific sub-resource (Mesh, Material, Animation) in the inspector.
+    /// </summary>
+    private static void SelectSubAsset(AssetEntry parentEntry, SubAssetInfo sub, IAssetService assets)
+    {
+        if (!EditorServices.TryGet<ISelectionService>(out var sel))
+            return;
+
+        string? guid = assets.GetGuidByPath(parentEntry.RelativePath);
+        if (guid == null || !Guid.TryParse(guid, out Guid parentGuid))
+            return;
+
+        EngineObject? parentObj = AssetDatabase.Get(parentGuid);
+        if (parentObj is not Model model)
+            return;
+
+        model.StampSubResourceIds();
+
+        EngineObject? subAsset = sub.Category switch
+        {
+            "Mesh" when sub.Index >= 0 && sub.Index < model.Meshes.Count => model.Meshes[sub.Index].Mesh,
+            "Material" when sub.Index >= 0 && sub.Index < model.Materials.Count => model.Materials[sub.Index],
+            "Animation" when sub.Index >= 0 && sub.Index < model.Animations.Count => model.Animations[sub.Index],
+            _ => null
+        };
+
+        if (subAsset != null)
+            sel!.ActiveObject = subAsset;
+    }
 
     // ── Hierarchy → Project drop (create prefab) ──────────────
 

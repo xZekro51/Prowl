@@ -15,11 +15,10 @@ namespace Prowl.Runtime.UI;
 /// Analogous to Unity's <c>Image</c> component.
 /// </summary>
 /// <remarks>
-/// Requires a <see cref="RectTransform"/> on the same GameObject.
+/// Expects the parent GameObject to have a <see cref="RectTransform"/>.
 /// The image fills the rect computed by the <see cref="RectTransform"/>.
 /// Alpha from the parent <see cref="CanvasGroup"/> is multiplied into <see cref="Color"/>.
 /// </remarks>
-[RequireComponent(typeof(RectTransform))]
 public class UIImage : UIBehaviour
 {
     /// <summary>
@@ -49,7 +48,7 @@ public class UIImage : UIBehaviour
 
     public override void BuildUI(Paper paper, UIContext context)
     {
-        RectTransform? rt = GetComponent<RectTransform>();
+        RectTransform? rt = GameObject.RectTransform;
         if (rt == null) return;
 
         Rect rect = rt.ComputedRect;

@@ -25,12 +25,11 @@ public enum ButtonTransition
 /// Analogous to Unity's <c>Button</c> component.
 /// </summary>
 /// <remarks>
-/// Requires a <see cref="RectTransform"/> on the same GameObject.
+/// Expects the parent GameObject to have a <see cref="RectTransform"/>.
 /// Optionally works with a sibling <see cref="UIImage"/> for visuals.
 /// When <see cref="CanvasGroup.Interactable"/> is <c>false</c>,
 /// the button is shown in its disabled state and does not fire click events.
 /// </remarks>
-[RequireComponent(typeof(RectTransform))]
 public class UIButton : UIBehaviour
 {
     /// <summary>
@@ -85,7 +84,7 @@ public class UIButton : UIBehaviour
 
     public override void BuildUI(Paper paper, UIContext context)
     {
-        RectTransform? rt = GetComponent<RectTransform>();
+        RectTransform? rt = GameObject.RectTransform;
         if (rt == null) return;
 
         Rect rect = rt.ComputedRect;
