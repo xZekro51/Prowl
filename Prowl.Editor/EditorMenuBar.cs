@@ -32,6 +32,7 @@ public sealed class EditorMenuBar
     public Action? OnToggleProjectSettings { get; set; }
     public Action? OnToggleBuildWindow { get; set; }
     public Action? OnToggleProfiler { get; set; }
+    public Action? OnToggleFontCreator { get; set; }
 
     // Cached scene file list for the "Load Scene" popup
     private string[] _sceneFiles = [];
@@ -83,6 +84,8 @@ public sealed class EditorMenuBar
             if (ImGui.MenuItem("Game View"))       OnToggleGameView?.Invoke();
             if (ImGui.MenuItem("Console"))         OnToggleConsole?.Invoke();
             if (ImGui.MenuItem("Profiler"))        OnToggleProfiler?.Invoke();
+            ImGui.Separator();
+            if (ImGui.MenuItem("Font Asset Creator")) OnToggleFontCreator?.Invoke();
             ImGui.EndMenu();
         }
 

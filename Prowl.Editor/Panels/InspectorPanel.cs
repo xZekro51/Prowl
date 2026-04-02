@@ -10,6 +10,8 @@ using Prowl.Runtime;
 using Prowl.Runtime.Prefabs;
 using Prowl.Runtime.Utils;
 using Prowl.Runtime.Resources;
+using Prowl.Runtime.Text;
+using Prowl.Runtime.EventSystem;
 using Prowl.Editor.Core;
 using Prowl.Editor.Docking;
 using Prowl.Editor.Icons;
@@ -64,6 +66,24 @@ public sealed class InspectorPanel : EditorPanel
     {
         // Invalidate cached component list when user scripts are recompiled
         EditorEvents.SubscribeOnAssemblyChanged(InvalidateComponentCache);
+
+        // Refresh font inspector when a font atlas is rebuilt
+        TextEvents.SubscribeOnFontAtlasChanged(args =>
+        {
+            if (_cachedFontAsset != null && args.FontAsset == _cachedFontAsset)
+            {
+                _cachedFontAsset = null;
+                _cachedFontAssetPath = null;
+            }
+        });
+
+        // Refresh text renderer inspector layout info when a mesh is rebuilt
+        TextEvents.SubscribeOnTextMeshRebuilt(_ =>
+        {
+            // The layout info in DrawTextRendererInspector reads directly
+            // from the TextRenderer each frame, so no cache invalidation needed.
+            // This subscription exists as the documented integration point.
+        });
     }
 
     /// <summary>
@@ -274,6 +294,12 @@ public sealed class InspectorPanel : EditorPanel
                             ImGui.TreePop();
                         }
                     }
+                }
+
+                // TextRenderer custom inspector section
+                if (comp is TextRenderer textRenderer)
+                {
+                    DrawTextRendererInspector(textRenderer);
                 }
             }
 
@@ -1931,6 +1957,9 @@ public sealed class InspectorPanel : EditorPanel
             case ".obj" or ".fbx" or ".gltf" or ".glb" or ".dae" or ".blend" or ".3ds" or ".ply" or ".stl":
                 DrawModelAssetInfo(asset);
                 break;
+            case ".ttf" or ".otf":
+                DrawFontAssetInfo(asset);
+                break;
         }
     }
 
@@ -2063,6 +2092,18 @@ public sealed class InspectorPanel : EditorPanel
     private static Importing.TextureImportSettings? _texImportSettings;
     private static string? _texImportSettingsPath;
 
+    // ── Font import settings editing state ────────────────────
+    private static Importing.FontImportSettings? _fontImportSettings;
+    private static string? _fontImportSettingsPath;
+    private static Runtime.Resources.FontAsset? _cachedFontAsset;
+    private static string? _cachedFontAssetPath;
+    private static string? _cachedFontAssetError;
+    private static string _fontCustomCharsBuffer = string.Empty;
+
+    // ── TextRenderer inspector state ──────────────────────────
+    private static string _textRendererTextBuffer = string.Empty;
+    private static int _textRendererTextOwnerId;
+
     private static void DrawTextureAssetInfo(AssetEntry asset)
     {
         if (!ImGui.CollapsingHeader("Texture", ImGuiTreeNodeFlags.DefaultOpen))
@@ -2194,6 +2235,329 @@ public sealed class InspectorPanel : EditorPanel
         if (ImGui.Button("Revert"))
         {
             _texImportSettings = Importing.TextureImporter.LoadSettings(asset.FullPath);
+        }
+    }
+
+    // ────────────────────────────────────────────────────────────
+    // TextRenderer custom inspector
+    // ────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Draws additional inspector UI for <see cref="TextRenderer"/> components:
+    /// a multiline text editor, layout info, and quick style controls.
+    /// </summary>
+    private static void DrawTextRendererInspector(TextRenderer textRenderer)
+    {
+        ImGui.Spacing();
+
+        // ── Multiline text editor ──────────────────────────────
+        if (ImGui.TreeNodeEx("Text Editor", ImGuiTreeNodeFlags.DefaultOpen))
+        {
+            // Keep the buffer in sync with the component
+            if (_textRendererTextOwnerId != textRenderer.InstanceID)
+            {
+                _textRendererTextBuffer = textRenderer.Text ?? string.Empty;
+                _textRendererTextOwnerId = textRenderer.InstanceID;
+            }
+
+            ImGui.TextColored(new Vector4(0.55f, 0.55f, 0.55f, 1f),
+                "Multiline text input (rich text tags supported):");
+
+            float height = Math.Max(80f * Game.DpiScale, ImGui.GetTextLineHeight() * 5);
+            if (ImGui.InputTextMultiline("##TextEditorInput", ref _textRendererTextBuffer, 16384,
+                new Vector2(-1, height)))
+            {
+                textRenderer.Text = _textRendererTextBuffer;
+            }
+
+            // Also apply on deactivation
+            if (ImGui.IsItemDeactivatedAfterEdit())
+            {
+                textRenderer.Text = _textRendererTextBuffer;
+            }
+
+            ImGui.TreePop();
+        }
+
+        // ── Layout Info ────────────────────────────────────────
+        TextLayout layout = textRenderer.GetTextLayout();
+        if (layout.Glyphs != null && layout.Glyphs.Length > 0)
+        {
+            if (ImGui.TreeNodeEx("Layout Info", ImGuiTreeNodeFlags.None))
+            {
+                DrawAssetFieldRow("Characters", layout.Glyphs.Length.ToString());
+                DrawAssetFieldRow("Lines", (layout.Lines?.Length ?? 0).ToString());
+                DrawAssetFieldRow("Text Bounds",
+                    $"{layout.TextBounds.X:F1} x {layout.TextBounds.Y:F1}");
+                DrawAssetFieldRow("Preferred Size",
+                    $"{layout.PreferredSize.X:F1} x {layout.PreferredSize.Y:F1}");
+
+                // Per-line info
+                if (layout.Lines != null && layout.Lines.Length > 0 &&
+                    ImGui.TreeNodeEx("Lines", ImGuiTreeNodeFlags.None))
+                {
+                    for (int i = 0; i < layout.Lines.Length; i++)
+                    {
+                        LineInfo line = layout.Lines[i];
+                        ImGui.BulletText(
+                            $"Line {i}: {line.GlyphCount} glyphs, W:{line.Width:F1}");
+                    }
+                    ImGui.TreePop();
+                }
+
+                ImGui.TreePop();
+            }
+        }
+
+        // ── Mesh Info ──────────────────────────────────────────
+        Prowl.Runtime.Resources.Mesh? mesh = textRenderer.GetMesh();
+        if (mesh != null && mesh.IsValid())
+        {
+            if (ImGui.TreeNodeEx("Mesh Info", ImGuiTreeNodeFlags.None))
+            {
+                DrawAssetFieldRow("Vertices", mesh.VertexCount.ToString());
+                DrawAssetFieldRow("Indices", mesh.IndexCount.ToString());
+                DrawAssetFieldRow("Sub-Meshes", mesh.SubMeshCount.ToString());
+                ImGui.TreePop();
+            }
+        }
+
+        // ── Quick Actions ──────────────────────────────────────
+        ImGui.Spacing();
+        float avail = ImGui.GetContentRegionAvail().X;
+        float btnW = 120 * Game.DpiScale;
+        ImGui.SetCursorPosX(ImGui.GetCursorPosX() + (avail - btnW) * 0.5f);
+        if (ImGui.Button("Force Rebuild", new Vector2(btnW, 0)))
+        {
+            textRenderer.ForceMeshUpdate();
+        }
+    }
+
+    private static void DrawFontAssetInfo(AssetEntry asset)
+    {
+        if (!ImGui.CollapsingHeader("Font", ImGuiTreeNodeFlags.DefaultOpen))
+            return;
+
+        if (!File.Exists(asset.FullPath))
+        {
+            ImGui.TextDisabled("(file not found)");
+            return;
+        }
+
+        // Show basic file info
+        DrawAssetFieldRow("Type", asset.Extension.ToUpperInvariant().TrimStart('.') + " Font");
+
+        // Load the font asset once and cache it
+        if (_cachedFontAsset == null || _cachedFontAssetPath != asset.FullPath)
+        {
+            _cachedFontAsset = null;
+            _cachedFontAssetError = null;
+            _cachedFontAssetPath = asset.FullPath;
+            try
+            {
+                _cachedFontAsset = Importing.FontAssetImporter.Import(asset.FullPath);
+            }
+            catch (Exception ex)
+            {
+                _cachedFontAssetError = ex.Message;
+            }
+        }
+
+        if (_cachedFontAssetError != null)
+        {
+            ImGui.TextDisabled($"(error: {_cachedFontAssetError})");
+        }
+        else if (_cachedFontAsset != null)
+        {
+            DrawAssetFieldRow("Glyphs", _cachedFontAsset.GlyphTable.Count.ToString());
+            DrawAssetFieldRow("Atlas Type", _cachedFontAsset.AtlasType.ToString());
+            DrawAssetFieldRow("Atlas Size", $"{_cachedFontAsset.AtlasWidth} x {_cachedFontAsset.AtlasHeight}");
+            DrawAssetFieldRow("Point Size", _cachedFontAsset.PointSize.ToString("F0"));
+            DrawAssetFieldRow("Line Height", _cachedFontAsset.LineHeight.ToString("F1"));
+            DrawAssetFieldRow("Ascender", _cachedFontAsset.Ascender.ToString("F1"));
+            DrawAssetFieldRow("Descender", _cachedFontAsset.Descender.ToString("F1"));
+            DrawAssetFieldRow("Px Range", _cachedFontAsset.AtlasPxRange.ToString("F1"));
+
+            // Glyph list
+            if (_cachedFontAsset.GlyphTable.Count > 0 && ImGui.TreeNodeEx("Glyph Table", ImGuiTreeNodeFlags.None))
+            {
+                int shown = 0;
+                foreach (var glyph in _cachedFontAsset.GlyphTable)
+                {
+                    if (shown >= 200)
+                    {
+                        ImGui.TextDisabled($"... ({_cachedFontAsset.GlyphTable.Count - shown} more)");
+                        break;
+                    }
+                    string ch = glyph.GlyphIndex < 0x10000 ? $"U+{glyph.GlyphIndex:X4}" : $"U+{glyph.GlyphIndex:X6}";
+                    string charStr = char.IsControl((char)glyph.GlyphIndex) ? "" : $" '{(char)glyph.GlyphIndex}'";
+                    ImGui.BulletText($"{ch}{charStr}  W:{glyph.Width:F0} H:{glyph.Height:F0} Adv:{glyph.Advance:F1}");
+                    shown++;
+                }
+                ImGui.TreePop();
+            }
+        }
+        else
+        {
+            ImGui.TextDisabled("(failed to load font)");
+        }
+
+        // ── Import Settings ──
+        if (!ImGui.CollapsingHeader("Import Settings", ImGuiTreeNodeFlags.DefaultOpen))
+            return;
+
+        // Load settings lazily or when the asset path changes
+        if (_fontImportSettings == null || _fontImportSettingsPath != asset.FullPath)
+        {
+            _fontImportSettings = Importing.FontAssetImporter.LoadSettings(asset.FullPath);
+            _fontImportSettingsPath = asset.FullPath;
+            _fontCustomCharsBuffer = _fontImportSettings.CustomCharacters;
+        }
+
+        bool changed = false;
+
+        // Atlas Type
+        DrawFieldRow("Atlas Type", () =>
+        {
+            string[] atlasTypes = ["SDF", "MSDF", "Bitmap"];
+            int atlasIdx = (int)_fontImportSettings.AtlasType;
+            if (ImGui.Combo("##fontAtlasType", ref atlasIdx, atlasTypes, atlasTypes.Length))
+            {
+                _fontImportSettings.AtlasType = (Runtime.Text.AtlasType)atlasIdx;
+                changed = true;
+            }
+        });
+
+        // Point Size
+        DrawFieldRow("Point Size", () =>
+        {
+            int pointSize = _fontImportSettings.PointSize;
+            if (ImGui.DragInt("##fontPointSize", ref pointSize, 1f, 8, 200))
+            {
+                _fontImportSettings.PointSize = pointSize;
+                changed = true;
+            }
+        });
+
+        // Atlas Resolution
+        DrawFieldRow("Atlas Resolution", () =>
+        {
+            string[] resOptions = ["Auto", "256", "512", "1024", "2048", "4096"];
+            int[] resValues = [0, 256, 512, 1024, 2048, 4096];
+            int currentIdx = Array.IndexOf(resValues, _fontImportSettings.AtlasResolution);
+            if (currentIdx < 0) currentIdx = 0;
+            if (ImGui.Combo("##fontAtlasRes", ref currentIdx, resOptions, resOptions.Length))
+            {
+                _fontImportSettings.AtlasResolution = resValues[currentIdx];
+                changed = true;
+            }
+        });
+
+        // SDF Pixel Range
+        DrawFieldRow("Px Range", () =>
+        {
+            float pxRange = _fontImportSettings.PxRange;
+            if (ImGui.DragFloat("##fontPxRange", ref pxRange, 0.5f, 1f, 32f, "%.1f"))
+            {
+                _fontImportSettings.PxRange = pxRange;
+                changed = true;
+            }
+        });
+
+        // Padding
+        DrawFieldRow("Padding", () =>
+        {
+            int padding = _fontImportSettings.Padding;
+            if (ImGui.DragInt("##fontPadding", ref padding, 1f, 0, 16))
+            {
+                _fontImportSettings.Padding = padding;
+                changed = true;
+            }
+        });
+
+        // Character Set
+        DrawFieldRow("Character Set", () =>
+        {
+            string[] presets = ["ASCII", "LatinExtended", "Custom"];
+            int presetIdx = _fontImportSettings.CharacterSet switch
+            {
+                "LatinExtended" => 1,
+                "Custom" => 2,
+                _ => 0,
+            };
+            if (ImGui.Combo("##fontCharSet", ref presetIdx, presets, presets.Length))
+            {
+                _fontImportSettings.CharacterSet = presets[presetIdx];
+                changed = true;
+            }
+        });
+
+        // Custom Characters (only shown when Character Set is "Custom")
+        if (_fontImportSettings.CharacterSet == "Custom")
+        {
+            DrawFieldRow("Characters", () =>
+            {
+                if (ImGui.InputText("##fontCustomChars", ref _fontCustomCharsBuffer, 4096))
+                {
+                    _fontImportSettings.CustomCharacters = _fontCustomCharsBuffer;
+                    changed = true;
+                }
+            });
+        }
+
+        // SDF Oversample (only shown for SDF type)
+        if (_fontImportSettings.AtlasType == Runtime.Text.AtlasType.SDF)
+        {
+            DrawFieldRow("SDF Oversample", () =>
+            {
+                int oversample = _fontImportSettings.SdfOversample;
+                if (ImGui.DragInt("##fontOversample", ref oversample, 1f, 1, 8))
+                {
+                    _fontImportSettings.SdfOversample = oversample;
+                    changed = true;
+                }
+            });
+        }
+
+        // Generate Mipmaps
+        DrawFieldRow("Mipmaps", () =>
+        {
+            bool mipmaps = _fontImportSettings.GenerateMipmaps;
+            if (ImGui.Checkbox("##fontMipmaps", ref mipmaps))
+            {
+                _fontImportSettings.GenerateMipmaps = mipmaps;
+                changed = true;
+            }
+            ImGui.SameLine();
+            ImGui.TextDisabled(_fontImportSettings.AtlasType == Runtime.Text.AtlasType.Bitmap
+                ? "(recommended for Bitmap)"
+                : "(not recommended for SDF/MSDF)");
+        });
+
+        // Character count preview
+        {
+            int codepointCount = _fontImportSettings.GetCodepoints().Count;
+            ImGui.Spacing();
+            ImGui.TextDisabled($"Character set contains {codepointCount} codepoints");
+        }
+
+        // Apply / Revert buttons
+        ImGui.Spacing();
+        if (ImGui.Button("Apply & Reimport"))
+        {
+            Importing.FontAssetImporter.SaveSettings(asset.FullPath, _fontImportSettings!);
+            // Invalidate cached font so it reloads with new settings
+            _cachedFontAsset?.AtlasTexture?.Dispose();
+            _cachedFontAsset?.Dispose();
+            _cachedFontAsset = null;
+            _cachedFontAssetPath = null;
+            Runtime.Debug.Log($"[Inspector] Saved font import settings for: {asset.Name}");
+        }
+        ImGui.SameLine();
+        if (ImGui.Button("Revert"))
+        {
+            _fontImportSettings = Importing.FontAssetImporter.LoadSettings(asset.FullPath);
+            _fontCustomCharsBuffer = _fontImportSettings.CustomCharacters;
         }
     }
 

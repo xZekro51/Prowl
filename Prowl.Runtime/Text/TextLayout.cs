@@ -50,6 +50,9 @@ public struct GlyphPlacement
     /// <summary> Background highlight color from mark tag, or <c>null</c>. </summary>
     public Color? MarkColor;
 
+    /// <summary> Link identifier from <c>&lt;link&gt;</c> tag, or <c>null</c>. </summary>
+    public string? LinkId;
+
     /// <summary> Which line this glyph belongs to. </summary>
     public int LineIndex;
 
@@ -79,4 +82,7 @@ public struct LineInfo
 
     /// <summary> Y position of the baseline for this line. </summary>
     public float Baseline;
+
+    /// <summary> Per-line alignment override from <c>&lt;align&gt;</c> tag, or <c>null</c> to use global alignment. </summary>
+    public TextAlignment? AlignmentOverride;
 }

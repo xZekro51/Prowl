@@ -697,4 +697,95 @@ public class TextRenderer : MonoBehaviour, IRenderable
 
         return Float2.Zero;
     }
+
+    /// <summary>
+    /// Returns the link ID at the given local-space position, or <c>null</c> if the
+    /// closest glyph is not part of a <c>&lt;link&gt;</c> region.
+    /// </summary>
+    public string? GetLinkAtPosition(Float2 localPos)
+    {
+        if (_layout.Glyphs == null || _layout.Glyphs.Length == 0 || _font.IsNotValid())
+            return null;
+
+        float closestDist = float.MaxValue;
+        string? closestLinkId = null;
+
+        for (int i = 0; i < _layout.Glyphs.Length; i++)
+        {
+            GlyphPlacement g = _layout.Glyphs[i];
+            float dx = localPos.X - g.Position.X;
+            float dy = localPos.Y - g.Position.Y;
+            float dist = dx * dx + dy * dy;
+
+            if (dist < closestDist)
+            {
+                closestDist = dist;
+                closestLinkId = g.LinkId;
+            }
+        }
+
+        return closestLinkId;
+    }
+
+    // ── Style Presets ─────────────────────────────────────────
+
+    /// <summary>
+    /// Applies all formatting properties from a <see cref="TextStyle"/> preset to this renderer.
+    /// The text string is not changed.
+    /// </summary>
+    public void ApplyStyle(TextStyle style)
+    {
+        if (style.IsNotValid())
+            return;
+
+        if (style.Font.IsValid())
+            _font = style.Font;
+
+        _fontSize = style.FontSize;
+        _color = style.Color;
+        _alignment = style.Alignment;
+        _verticalAlignment = style.VerticalAlign;
+        _overflow = style.Overflow;
+        _richText = style.RichText;
+        _characterSpacing = style.CharacterSpacing;
+        _lineSpacing = style.LineSpacing;
+        _wordSpacing = style.WordSpacing;
+        _paragraphSpacing = style.ParagraphSpacing;
+        _outlineWidth = style.OutlineWidth;
+        _outlineColor = style.OutlineColor;
+        _softness = style.Softness;
+        _underlayColor = style.UnderlayColor;
+        _underlayOffset = style.UnderlayOffset;
+        _underlayDilate = style.UnderlayDilate;
+        _underlaySoftness = style.UnderlaySoftness;
+
+        _isDirty = true;
+    }
+
+    /// <summary>
+    /// Captures the current formatting properties of this renderer into a <see cref="TextStyle"/>.
+    /// </summary>
+    public TextStyle CaptureStyle()
+    {
+        TextStyle style = ScriptableObject.CreateInstance<TextStyle>();
+        style.Font = _font;
+        style.FontSize = _fontSize;
+        style.Color = _color;
+        style.Alignment = _alignment;
+        style.VerticalAlign = _verticalAlignment;
+        style.Overflow = _overflow;
+        style.RichText = _richText;
+        style.CharacterSpacing = _characterSpacing;
+        style.LineSpacing = _lineSpacing;
+        style.WordSpacing = _wordSpacing;
+        style.ParagraphSpacing = _paragraphSpacing;
+        style.OutlineWidth = _outlineWidth;
+        style.OutlineColor = _outlineColor;
+        style.Softness = _softness;
+        style.UnderlayColor = _underlayColor;
+        style.UnderlayOffset = _underlayOffset;
+        style.UnderlayDilate = _underlayDilate;
+        style.UnderlaySoftness = _underlaySoftness;
+        return style;
+    }
 }

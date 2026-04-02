@@ -450,7 +450,8 @@ public static class TextMeshBuilder
                     float xStart = glyphs[runStart].Position.X;
                     float xEnd = glyphs[runEnd].Position.X;
                     // Approximate the right edge of the last glyph
-                    IReadOnlyList<GlyphData> gt = font.GlyphTable;
+                    FontAsset? decoFont = font.GetFontByIndex(glyphs[runEnd].FontAssetIndex);
+                    IReadOnlyList<GlyphData> gt = decoFont.IsValid() ? decoFont.GlyphTable : font.GlyphTable;
                     if (glyphs[runEnd].GlyphIndex >= 0 && glyphs[runEnd].GlyphIndex < gt.Count)
                         xEnd += gt[glyphs[runEnd].GlyphIndex].Advance * glyphs[runEnd].Scale.X;
 

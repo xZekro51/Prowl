@@ -85,6 +85,9 @@ public static class TextShaper
 
         uint prevGlyphIndex = 0;
         int styleRunIndex = 0;
+        float currentIndent = 0f;
+        float currentLineHeight = scaledLineHeight;
+        TextAlignment? currentAlignmentOverride = null;
 
         for (int i = 0; i < text.Length; i++)
         {
@@ -93,12 +96,14 @@ public static class TextShaper
             // Handle newlines
             if (c == '\n')
             {
-                FinishLine(lines, glyphs, lineStartGlyph, penX, scaledAscender, scaledDescender, penY);
+                FinishLine(lines, glyphs, lineStartGlyph, penX, scaledAscender, scaledDescender, penY, currentAlignmentOverride);
                 lineStartGlyph = glyphs.Count;
-                penX = 0f;
-                penY -= scaledLineHeight + paragraphSpacing;
+                penX = currentIndent;
+                penY -= currentLineHeight + paragraphSpacing;
                 prevGlyphIndex = 0;
                 lastWordBreak = -1;
+                currentLineHeight = scaledLineHeight;
+                currentAlignmentOverride = null; // reset for next line
                 continue;
             }
 
@@ -113,6 +118,7 @@ public static class TextShaper
             float charCharSpacing = characterSpacing;
             float charMonoSpace = -1f;
             Color? charMarkColor = null;
+            string? charLinkId = null;
 
             if (styleRuns != null)
             {
@@ -139,11 +145,36 @@ public static class TextShaper
                         if (run.MonoSpaceOverride.HasValue)
                             charMonoSpace = run.MonoSpaceOverride.Value;
                         charMarkColor = run.MarkColor;
+                        charLinkId = run.LinkId;
+                        if (run.IndentOverride.HasValue)
+                        {
+                            currentIndent = run.IndentOverride.Value * (fontSize / font.PointSize);
+                            // Apply indent immediately if we're at the start of a line
+                            if (glyphs.Count == lineStartGlyph)
+                                penX = currentIndent;
+                        }
+                        if (run.LineHeightOverride.HasValue)
+                            currentLineHeight = Maths.Max(currentLineHeight, run.LineHeightOverride.Value * (fontSize / font.PointSize));
+                        if (run.AlignmentOverride.HasValue)
+                            currentAlignmentOverride = run.AlignmentOverride;
                     }
                 }
             }
 
             float charScale = sizeOverride / font.PointSize;
+
+            // Apply superscript/subscript scaling and vertical offset
+            float superSubOffset = 0f;
+            if ((flags & TextStyleFlags.Superscript) != 0)
+            {
+                charScale *= 0.65f;
+                superSubOffset = scaledAscender * 0.4f;
+            }
+            else if ((flags & TextStyleFlags.Subscript) != 0)
+            {
+                charScale *= 0.65f;
+                superSubOffset = scaledDescender * 0.4f;
+            }
 
             // Track word boundaries for wrapping
             if (c == ' ' || c == '\t')
@@ -186,7 +217,7 @@ public static class TextShaper
                 if (overflow == TextOverflowMode.Truncate)
                 {
                     // Hard truncation — stop placing glyphs immediately
-                    FinishLine(lines, glyphs, lineStartGlyph, penX, scaledAscender, scaledDescender, penY);
+                    FinishLine(lines, glyphs, lineStartGlyph, penX, scaledAscender, scaledDescender, penY, currentAlignmentOverride);
                     goto LayoutComplete;
                 }
 
@@ -194,28 +225,30 @@ public static class TextShaper
                 {
                     // Truncate and add ellipsis
                     TryAddEllipsis(glyphs, font, charScale, penX, penY, charColor, lines.Count);
-                    FinishLine(lines, glyphs, lineStartGlyph, penX, scaledAscender, scaledDescender, penY);
+                    FinishLine(lines, glyphs, lineStartGlyph, penX, scaledAscender, scaledDescender, penY, currentAlignmentOverride);
                     goto LayoutComplete;
                 }
 
                 if (overflow == TextOverflowMode.WordWrap && lastWordBreak > lineStartGlyph)
                 {
-                    // Move glyphs after word break to new line
-                    int moveStart = lastWordBreak;
-                    FinishLine(lines, glyphs, lineStartGlyph, lineWidthAtWordBreak, scaledAscender, scaledDescender, penY);
+                    // Skip the trailing space at the word break — it stays on the current line
+                    int moveStart = lastWordBreak + 1;
+                    FinishLine(lines, glyphs, lineStartGlyph, lineWidthAtWordBreak, scaledAscender, scaledDescender, penY, currentAlignmentOverride, endGlyphIndex: moveStart);
 
-                    penY -= scaledLineHeight;
-                    penX = ReflowGlyphs(glyphs, moveStart, penY, font);
+                    penY -= currentLineHeight;
+                    currentLineHeight = scaledLineHeight;
+                    penX = ReflowGlyphs(glyphs, moveStart, penY, font, currentIndent, scaledAscender, scaledDescender, characterSpacing, wordSpacing, text);
                     lineStartGlyph = moveStart;
                     lastWordBreak = -1;
                 }
                 else
                 {
                     // Character wrap
-                    FinishLine(lines, glyphs, lineStartGlyph, penX, scaledAscender, scaledDescender, penY);
+                    FinishLine(lines, glyphs, lineStartGlyph, penX, scaledAscender, scaledDescender, penY, currentAlignmentOverride);
                     lineStartGlyph = glyphs.Count;
-                    penX = 0f;
-                    penY -= scaledLineHeight;
+                    penX = currentIndent;
+                    penY -= currentLineHeight;
+                    currentLineHeight = scaledLineHeight;
                     lastWordBreak = -1;
                 }
             }
@@ -225,11 +258,12 @@ public static class TextShaper
             {
                 GlyphIndex = (int)glyph.GlyphIndex,
                 FontAssetIndex = fontIndex,
-                Position = new Float2(penX + glyph.BearingX * charScale, penY + glyph.BearingY * charScale),
+                Position = new Float2(penX + glyph.BearingX * charScale, penY + glyph.BearingY * charScale + superSubOffset),
                 Scale = new Float2(charScale, charScale),
                 Color = charColor,
                 StyleFlags = flags,
                 MarkColor = charMarkColor,
+                LinkId = charLinkId,
                 LineIndex = lines.Count,
                 CharacterIndex = i
             };
@@ -242,7 +276,7 @@ public static class TextShaper
         // Finish last line
         if (glyphs.Count > lineStartGlyph || lines.Count == 0)
         {
-            FinishLine(lines, glyphs, lineStartGlyph, penX, scaledAscender, scaledDescender, penY);
+            FinishLine(lines, glyphs, lineStartGlyph, penX, scaledAscender, scaledDescender, penY, currentAlignmentOverride);
         }
 
     LayoutComplete:
@@ -254,7 +288,15 @@ public static class TextShaper
         ApplyAlignment(glyphArray, lineArray, alignment, maxWidth, text);
 
         // Compute bounds
-        float totalHeight = lineArray.Length * scaledLineHeight;
+        float totalHeight = 0f;
+        if (lineArray.Length > 0)
+        {
+            // Top edge: first line baseline + ascender
+            // Bottom edge: last line baseline + descender (descender is negative)
+            float topEdge = lineArray[0].Baseline + lineArray[0].Ascender;
+            float bottomEdge = lineArray[lineArray.Length - 1].Baseline + lineArray[lineArray.Length - 1].Descender;
+            totalHeight = topEdge - bottomEdge;
+        }
         float maxLineWidth = 0f;
         for (int i = 0; i < lineArray.Length; i++)
         {
@@ -298,25 +340,33 @@ public static class TextShaper
         float lineWidth,
         float ascender,
         float descender,
-        float baseline)
+        float baseline,
+        TextAlignment? alignmentOverride = null,
+        int endGlyphIndex = -1)
     {
+        int count = endGlyphIndex >= 0 ? endGlyphIndex - lineStartGlyph : glyphs.Count - lineStartGlyph;
         lines.Add(new LineInfo
         {
             StartGlyphIndex = lineStartGlyph,
-            GlyphCount = glyphs.Count - lineStartGlyph,
+            GlyphCount = count,
             Width = lineWidth,
             Ascender = ascender,
             Descender = descender,
-            Baseline = baseline
+            Baseline = baseline,
+            AlignmentOverride = alignmentOverride
         });
     }
 
-    private static float ReflowGlyphs(List<GlyphPlacement> glyphs, int startIndex, float newBaseline, FontAsset font)
+    private static float ReflowGlyphs(
+        List<GlyphPlacement> glyphs, int startIndex, float newBaseline,
+        FontAsset font, float indent, float scaledAscender, float scaledDescender,
+        float characterSpacing, float wordSpacing, string text)
     {
         if (startIndex >= glyphs.Count)
-            return 0f;
+            return indent;
 
-        float penX = 0f;
+        float penX = indent;
+        uint prevGlyphIndex = 0;
 
         for (int i = startIndex; i < glyphs.Count; i++)
         {
@@ -332,11 +382,32 @@ public static class TextShaper
                 continue;
 
             GlyphData gd = glyphTable[g.GlyphIndex];
-            g.Position = new Float2(penX + gd.BearingX * charScale, newBaseline + gd.BearingY * charScale);
+
+            // Apply kerning between consecutive reflowed glyphs
+            if (prevGlyphIndex != 0 && font.TryGetKerning(prevGlyphIndex, gd.GlyphIndex, out float kern))
+            {
+                penX += kern * charScale;
+            }
+
+            // Recompute super/subscript offset to preserve vertical shift
+            float superSubOffset = 0f;
+            if ((g.StyleFlags & TextStyleFlags.Superscript) != 0)
+                superSubOffset = scaledAscender * 0.4f;
+            else if ((g.StyleFlags & TextStyleFlags.Subscript) != 0)
+                superSubOffset = scaledDescender * 0.4f;
+
+            g.Position = new Float2(penX + gd.BearingX * charScale, newBaseline + gd.BearingY * charScale + superSubOffset);
             g.LineIndex++;
             glyphs[i] = g;
 
-            penX += gd.Advance * charScale;
+            // Preserve character spacing and word spacing that were applied during initial placement
+            float advance = gd.Advance * charScale + characterSpacing;
+            int ci = g.CharacterIndex;
+            if (ci >= 0 && ci < text.Length && (text[ci] == ' ' || text[ci] == '\t'))
+                advance += wordSpacing;
+
+            penX += advance;
+            prevGlyphIndex = gd.GlyphIndex;
         }
 
         return penX;
@@ -344,17 +415,19 @@ public static class TextShaper
 
     private static void ApplyAlignment(GlyphPlacement[] glyphs, LineInfo[] lines, TextAlignment alignment, float maxWidth, string text)
     {
-        if (alignment == TextAlignment.Left)
-            return;
-
         for (int l = 0; l < lines.Length; l++)
         {
             LineInfo line = lines[l];
+            TextAlignment lineAlignment = line.AlignmentOverride ?? alignment;
+
+            if (lineAlignment == TextAlignment.Left)
+                continue;
+
             float offset = 0f;
             float availableWidth = maxWidth < float.MaxValue ? maxWidth : line.Width;
             int end = line.StartGlyphIndex + line.GlyphCount;
 
-            switch (alignment)
+            switch (lineAlignment)
             {
                 case TextAlignment.Center:
                     offset = (availableWidth - line.Width) * 0.5f;

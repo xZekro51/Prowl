@@ -56,13 +56,14 @@ public sealed class EditorApplication : Game
     private ProjectSettingsPanel? _projectSettingsPanel;
     private BuildPanel? _buildPanel;
     private ProfilerPanel? _profilerPanel;
+    private FontAssetCreatorPanel? _fontCreatorPanel;
 
     // Window event subscription
     private IDisposable? _fileDropSub;
 
     // Maximize state for scene panel
     private bool _sceneMaximized;
-    private bool[] _savedOpenStates = new bool[9]; // hierarchy, inspector, project, game, prefs, console, projSettings, build, profiler
+    private bool[] _savedOpenStates = new bool[10]; // hierarchy, inspector, project, game, prefs, console, projSettings, build, profiler, fontCreator
 
     /// <summary> The project folder path passed via --project, or null. </summary>
     public static string? ProjectPath { get; private set; }
@@ -289,6 +290,7 @@ public sealed class EditorApplication : Game
         _projectSettingsPanel = new ProjectSettingsPanel();
         _buildPanel = new BuildPanel();
         _profilerPanel = new ProfilerPanel();
+        _fontCreatorPanel = new FontAssetCreatorPanel();
 
         // Register ProjectPanel so other panels can find it for cross-panel features
         EditorServices.Register<ProjectPanel>(_projectPanel);
@@ -307,6 +309,7 @@ public sealed class EditorApplication : Game
         _menuBar.OnToggleProjectSettings = () => _projectSettingsPanel.IsOpen = !_projectSettingsPanel.IsOpen;
         _menuBar.OnToggleBuildWindow = () => _buildPanel.IsOpen = !_buildPanel.IsOpen;
         _menuBar.OnToggleProfiler = () => _profilerPanel!.IsOpen = !_profilerPanel.IsOpen;
+        _menuBar.OnToggleFontCreator = () => _fontCreatorPanel!.IsOpen = !_fontCreatorPanel.IsOpen;
 
         // Initialise the icon system (registers all built-in icons)
         IconManager.Load();
@@ -561,6 +564,7 @@ public sealed class EditorApplication : Game
                 _savedOpenStates[6] = _projectSettingsPanel?.IsOpen ?? false;
                 _savedOpenStates[7] = _buildPanel?.IsOpen ?? false;
                 _savedOpenStates[8] = _profilerPanel?.IsOpen ?? false;
+                _savedOpenStates[9] = _fontCreatorPanel?.IsOpen ?? false;
 
                 if (_hierarchyPanel != null) _hierarchyPanel.IsOpen = false;
                 if (_inspectorPanel != null) _inspectorPanel.IsOpen = false;
@@ -571,6 +575,7 @@ public sealed class EditorApplication : Game
                 if (_projectSettingsPanel != null) _projectSettingsPanel.IsOpen = false;
                 if (_buildPanel != null) _buildPanel.IsOpen = false;
                 if (_profilerPanel != null) _profilerPanel.IsOpen = false;
+                if (_fontCreatorPanel != null) _fontCreatorPanel.IsOpen = false;
             }
             else if (!wantMax && _sceneMaximized)
             {
@@ -585,6 +590,7 @@ public sealed class EditorApplication : Game
                 if (_projectSettingsPanel != null) _projectSettingsPanel.IsOpen = _savedOpenStates[6];
                 if (_buildPanel != null) _buildPanel.IsOpen = _savedOpenStates[7];
                 if (_profilerPanel != null) _profilerPanel.IsOpen = _savedOpenStates[8];
+                if (_fontCreatorPanel != null) _fontCreatorPanel.IsOpen = _savedOpenStates[9];
             }
         }
 
@@ -598,6 +604,7 @@ public sealed class EditorApplication : Game
         _projectSettingsPanel?.Draw();
         _buildPanel?.Draw();
         _profilerPanel?.Draw();
+        _fontCreatorPanel?.Draw();
 
         // Persist layout whenever ImGui marks it dirty
         if (ImGui.GetIO().WantSaveIniSettings)

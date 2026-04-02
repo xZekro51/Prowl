@@ -87,6 +87,8 @@ public sealed class EditorAssetDatabase : IAssetDatabase
                     LoadTexture(absolutePath, relativePath),
                 ".obj" or ".fbx" or ".gltf" or ".glb" or ".dae" or ".3ds" or ".blend" or ".ply" or ".stl" =>
                     Model.LoadFromFile(absolutePath),
+                ".ttf" or ".otf" =>
+                    Importing.FontAssetImporter.Import(absolutePath),
                 _ => null,
             };
         }
