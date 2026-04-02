@@ -44,6 +44,7 @@ public static class TextShaper
         float characterSpacing = 0f,
         float lineSpacing = 0f,
         float wordSpacing = 0f,
+        float paragraphSpacing = 0f,
         StyleRun[]? styleRuns = null)
     {
         if (string.IsNullOrEmpty(text) || font.IsNotValid())
@@ -79,7 +80,8 @@ public static class TextShaper
 
         bool shouldWrap = overflow == TextOverflowMode.WordWrap ||
                           overflow == TextOverflowMode.CharacterWrap ||
-                          overflow == TextOverflowMode.Ellipsis;
+                          overflow == TextOverflowMode.Ellipsis ||
+                          overflow == TextOverflowMode.Truncate;
 
         uint prevGlyphIndex = 0;
         int styleRunIndex = 0;
@@ -94,7 +96,7 @@ public static class TextShaper
                 FinishLine(lines, glyphs, lineStartGlyph, penX, scaledAscender, scaledDescender, penY);
                 lineStartGlyph = glyphs.Count;
                 penX = 0f;
-                penY -= scaledLineHeight;
+                penY -= scaledLineHeight + paragraphSpacing;
                 prevGlyphIndex = 0;
                 lastWordBreak = -1;
                 continue;
@@ -181,6 +183,13 @@ public static class TextShaper
 
             if (shouldWrap && penX + glyph.BearingX * charScale + glyph.Width * charScale > maxWidth && penX > 0)
             {
+                if (overflow == TextOverflowMode.Truncate)
+                {
+                    // Hard truncation — stop placing glyphs immediately
+                    FinishLine(lines, glyphs, lineStartGlyph, penX, scaledAscender, scaledDescender, penY);
+                    goto LayoutComplete;
+                }
+
                 if (overflow == TextOverflowMode.Ellipsis)
                 {
                     // Truncate and add ellipsis
@@ -196,7 +205,7 @@ public static class TextShaper
                     FinishLine(lines, glyphs, lineStartGlyph, lineWidthAtWordBreak, scaledAscender, scaledDescender, penY);
 
                     penY -= scaledLineHeight;
-                    penX = ReflowGlyphs(glyphs, moveStart, penY);
+                    penX = ReflowGlyphs(glyphs, moveStart, penY, font);
                     lineStartGlyph = moveStart;
                     lastWordBreak = -1;
                 }
@@ -302,20 +311,34 @@ public static class TextShaper
         });
     }
 
-    private static float ReflowGlyphs(List<GlyphPlacement> glyphs, int startIndex, float newBaseline)
+    private static float ReflowGlyphs(List<GlyphPlacement> glyphs, int startIndex, float newBaseline, FontAsset font)
     {
+        if (startIndex >= glyphs.Count)
+            return 0f;
+
         float penX = 0f;
+
         for (int i = startIndex; i < glyphs.Count; i++)
         {
             GlyphPlacement g = glyphs[i];
-            float offsetX = g.Position.X - (i > startIndex ? glyphs[startIndex].Position.X : g.Position.X);
-            g.Position = new Float2(offsetX, newBaseline + (g.Position.Y - glyphs[i].Position.Y));
+            float charScale = g.Scale.X;
+
+            FontAsset? glyphFont = font.GetFontByIndex(g.FontAssetIndex);
+            if (glyphFont.IsNotValid())
+                continue;
+
+            IReadOnlyList<GlyphData> glyphTable = glyphFont.GlyphTable;
+            if (g.GlyphIndex < 0 || g.GlyphIndex >= glyphTable.Count)
+                continue;
+
+            GlyphData gd = glyphTable[g.GlyphIndex];
+            g.Position = new Float2(penX + gd.BearingX * charScale, newBaseline + gd.BearingY * charScale);
             g.LineIndex++;
             glyphs[i] = g;
-            // Track furthest extent for penX
-            // This is a simplification; actual advance should be used
-            penX = offsetX + 1f; // Approximate
+
+            penX += gd.Advance * charScale;
         }
+
         return penX;
     }
 

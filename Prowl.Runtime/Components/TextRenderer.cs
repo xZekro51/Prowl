@@ -34,6 +34,7 @@ public class TextRenderer : MonoBehaviour, IRenderable
     [SerializeField] private float _characterSpacing = 0f;
     [SerializeField] private float _lineSpacing = 0f;
     [SerializeField] private float _wordSpacing = 0f;
+    [SerializeField] private float _paragraphSpacing = 0f;
 
     // ── Outline & Effects ─────────────────────────────────────
 
@@ -155,6 +156,13 @@ public class TextRenderer : MonoBehaviour, IRenderable
     {
         get => _wordSpacing;
         set { if (_wordSpacing != value) { _wordSpacing = value; _isDirty = true; } }
+    }
+
+    /// <summary> Extra spacing between paragraphs (on explicit newlines). </summary>
+    public float ParagraphSpacing
+    {
+        get => _paragraphSpacing;
+        set { if (_paragraphSpacing != value) { _paragraphSpacing = value; _isDirty = true; } }
     }
 
     /// <summary> SDF outline width (0 = no outline). </summary>
@@ -374,6 +382,7 @@ public class TextRenderer : MonoBehaviour, IRenderable
             _characterSpacing,
             _lineSpacing,
             _wordSpacing,
+            _paragraphSpacing,
             styleRuns);
 
         // Build mesh

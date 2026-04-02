@@ -270,4 +270,44 @@ public class TextShaperTests : IDisposable
 
         Assert.True(midLayout.Glyphs[0].Position.Y > topLayout.Glyphs[0].Position.Y);
     }
+
+    [Fact]
+    public void Shape_Truncate_StopsAtBoundary()
+    {
+        FontAsset font = CreateTestFont();
+
+        // Each glyph: BearingX=1, Width=12, Advance=14. At scale 1.0, each glyph
+        // occupies up to penX + 1 + 12 = penX + 13. With maxWidth=50, the first
+        // 3 glyphs fit (0+13=13, 14+13=27, 28+13=41) but the 4th won't (42+13=55 > 50).
+        TextLayout layout = TextShaper.Shape(
+            "ABCDE", font, 32f, 50f,
+            TextAlignment.Left, VerticalAlignment.Top,
+            TextOverflowMode.Truncate, Color.White);
+
+        // Truncate should stop placing glyphs at the boundary
+        Assert.True(layout.Glyphs.Length < 5, $"Expected fewer than 5 glyphs, got {layout.Glyphs.Length}");
+        Assert.Single(layout.Lines);
+    }
+
+    [Fact]
+    public void Shape_ParagraphSpacing_AddsExtraSpaceOnNewlines()
+    {
+        FontAsset font = CreateTestFont();
+
+        TextLayout withoutSpacing = TextShaper.Shape(
+            "A\nB", font, 32f, float.MaxValue,
+            TextAlignment.Left, VerticalAlignment.Top,
+            TextOverflowMode.Overflow, Color.White);
+
+        TextLayout withSpacing = TextShaper.Shape(
+            "A\nB", font, 32f, float.MaxValue,
+            TextAlignment.Left, VerticalAlignment.Top,
+            TextOverflowMode.Overflow, Color.White,
+            paragraphSpacing: 10f);
+
+        // The second glyph ('B') should be pushed down further with paragraph spacing
+        float yWithout = withoutSpacing.Glyphs[1].Position.Y;
+        float yWith = withSpacing.Glyphs[1].Position.Y;
+        Assert.True(yWith < yWithout, $"Expected paragraph spacing to push 'B' lower: yWith={yWith}, yWithout={yWithout}");
+    }
 }

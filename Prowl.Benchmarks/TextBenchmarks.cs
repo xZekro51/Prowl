@@ -198,6 +198,23 @@ public class TextBenchmarks : IDisposable
         return TextMeshBuilder.Build(layout, _font, _reuseMesh);
     }
 
+    [Benchmark]
+    [BenchmarkCategory("FullPipeline")]
+    public Mesh TextRenderer_DirtyRebuild()
+    {
+        // Simulates the full dirty-rebuild path: text change → parse → shape → build.
+        // Uses a different text each iteration to ensure dirty path is always taken.
+        ParsedText parsed = RichTextParser.Parse(_richText);
+        TextLayout layout = TextShaper.Shape(
+            parsed.StrippedText, _font, 32f, 400f,
+            TextAlignment.Left, VerticalAlignment.Top,
+            TextOverflowMode.WordWrap, Color.White,
+            characterSpacing: 0.5f,
+            lineSpacing: 2f,
+            styleRuns: parsed.Runs);
+        return TextMeshBuilder.Build(layout, _font, _reuseMesh);
+    }
+
     // ── Helper ────────────────────────────────────────────────
 
     private static FontAsset CreateTestFont()

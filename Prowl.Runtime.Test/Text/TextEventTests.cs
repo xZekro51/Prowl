@@ -396,5 +396,26 @@ public class TextEventTests : IDisposable
         Assert.Equal(1, callCount);
     }
 
+    [Fact]
+    public void OnGlyphMissing_NegativePriority_ProcessesBeforeDefault()
+    {
+        List<string> order = [];
+        FontAsset font = CreateTestFont();
+
+        // Default priority handler (0)
+        IDisposable defaultSub = TextEvents.SubscribeOnGlyphMissing(_ => order.Add("default"), priority: 0);
+        // High-priority handler (-10), simulating DynamicFontAtlas
+        IDisposable prioritySub = TextEvents.SubscribeOnGlyphMissing(_ => order.Add("priority"), priority: -10);
+
+        TextEvents.InvokeOnGlyphMissing(new GlyphMissingArgs(0xABCD, font, "test"));
+
+        Assert.Equal(2, order.Count);
+        Assert.Equal("priority", order[0]);
+        Assert.Equal("default", order[1]);
+
+        prioritySub.Dispose();
+        defaultSub.Dispose();
+    }
+
     #endregion
 }

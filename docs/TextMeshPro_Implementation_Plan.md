@@ -1315,12 +1315,12 @@ Use this checklist to track implementation progress. Each item maps to a concret
 - [x] `TextEffectTests` — wave/shake/typewriter produce expected vertex deltas
 - [x] `TextEventTests` — verify `OnFontAtlasChanged`, `OnGlyphMissing`, `OnTextMeshRebuilt` fire/subscribe contracts
 - [x] `TextEventTests` — verify `IDisposable` subscription cleanup prevents leaks
-- [ ] `TextEventTests` — verify `DynamicFontAtlas` priority `-10` processes `OnGlyphMissing` before other subscribers
+- [x] `TextEventTests` — verify `DynamicFontAtlas` priority `-10` processes `OnGlyphMissing` before other subscribers
 - [x] `TextShaper_Layout_1000Chars` benchmark
 - [x] `TextMeshBuilder_Build_1000Chars` benchmark
 - [x] `RichTextParser_Parse_ComplexMarkup` benchmark
 - [x] `FontAtlasLookup_100K` benchmark
-- [ ] `TextRenderer_DirtyRebuild` benchmark
+- [x] `TextRenderer_DirtyRebuild` benchmark
 - [ ] Create `Samples/TextDemo` project
 - [ ] Visual test: world-space text at various sizes/distances
 - [ ] Visual test: all rich text tags
