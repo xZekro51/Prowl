@@ -952,6 +952,79 @@ public sealed class InspectorPanel : EditorPanel
     }
 
     /// <summary>
+    /// Integer variant of <see cref="DrawVectorComponent"/>. Draws a colored
+    /// label button (draggable, click-to-reset) flush with an <see cref="ImGui.InputInt"/>
+    /// text field.
+    /// </summary>
+    private static bool DrawVectorComponentInt(string letter, ref int value, float speed,
+        float fieldWidth, float buttonW,
+        Vector4 btnColor, Vector4 btnHover, Vector4 btnActive, Vector4 labelColor)
+    {
+        bool changed = false;
+        var style = ImGui.GetStyle();
+        uint id = ImGui.GetID("##lbl_" + letter);
+
+        // ── Colored label (draggable, click-to-reset) ──────────
+        ImGui.PushStyleColor(ImGuiCol.Button, btnColor);
+        ImGui.PushStyleColor(ImGuiCol.ButtonHovered, btnHover);
+        ImGui.PushStyleColor(ImGuiCol.ButtonActive, btnActive);
+        ImGui.PushStyleColor(ImGuiCol.Text, labelColor);
+        ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 2f);
+        ImGui.PushStyleVar(ImGuiStyleVar.ItemSpacing, new Vector2(0, style.ItemSpacing.Y));
+
+        ImGui.Button(letter, new Vector2(buttonW, ImGui.GetFrameHeight()));
+        bool labelHovered = ImGui.IsItemHovered();
+
+        if (labelHovered || (_isDraggingLabel && _dragId == id))
+            ImGui.SetMouseCursor(ImGuiMouseCursor.ResizeEW);
+
+        if (labelHovered && ImGui.IsMouseClicked(ImGuiMouseButton.Left))
+        {
+            _dragId = id;
+            _dragStartValue = value;
+            _dragStartPos = ImGui.GetMousePos();
+            _isDraggingLabel = false;
+        }
+
+        if (_dragId == id && ImGui.IsMouseDown(ImGuiMouseButton.Left))
+        {
+            Vector2 delta = ImGui.GetMousePos() - _dragStartPos;
+            if (!_isDraggingLabel && MathF.Abs(delta.X) > 2f)
+                _isDraggingLabel = true;
+
+            if (_isDraggingLabel)
+            {
+                value = (int)MathF.Round(_dragStartValue + delta.X * speed);
+                changed = true;
+            }
+        }
+
+        if (_dragId == id && ImGui.IsMouseReleased(ImGuiMouseButton.Left))
+        {
+            if (!_isDraggingLabel)
+            {
+                value = 0;
+                changed = true;
+            }
+            _dragId = 0;
+            _isDraggingLabel = false;
+        }
+
+        ImGui.PopStyleVar(2);
+        ImGui.PopStyleColor(4);
+
+        // ── InputInt flush against the label ───────────────────
+        ImGui.PushStyleVar(ImGuiStyleVar.ItemSpacing, new Vector2(0, style.ItemSpacing.Y));
+        ImGui.SameLine();
+        ImGui.SetNextItemWidth(fieldWidth);
+        if (ImGui.InputInt("##" + letter, ref value, 0, 0))
+            changed = true;
+        ImGui.PopStyleVar();
+
+        return changed;
+    }
+
+    /// <summary>
     /// Draws a Vector3 field with Stride-style colored indicator buttons
     /// flush against DragFloat inputs in a two-column layout.
     /// </summary>
@@ -1331,10 +1404,10 @@ public sealed class InspectorPanel : EditorPanel
                     float buttonW = ImGui.GetFrameHeight();
                     float fieldWidth = ImGui.GetContentRegionAvail().X - buttonW;
                     if (DrawVectorComponent("f", ref v, 0.01f, fieldWidth, buttonW,
-                        new Vector4(0.19f, 0.16f, 0.16f, 1f),
-                        new Vector4(0.34f, 0.29f, 0.29f, 1f),
-                        new Vector4(0.49f, 0.42f, 0.42f, 1f),
-                        new Vector4(0.86f, 0.42f, 0.41f, 1f)))
+                        new Vector4(0.17f, 0.18f, 0.2f, 1f),
+                        new Vector4(0.3f, 0.32f, 0.35f, 1f),
+                        new Vector4(0.42f, 0.46f, 0.5f, 1f),
+                        new Vector4(0.34f, 0.51f, 0.71f, 1f)))
                         SetFieldWithUndo(target, field, value, v);
                 });
             }
@@ -1346,10 +1419,10 @@ public sealed class InspectorPanel : EditorPanel
                     float buttonW = ImGui.GetFrameHeight();
                     float fieldWidth = ImGui.GetContentRegionAvail().X - buttonW;
                     if (DrawVectorComponent("f", ref v, 0.01f, fieldWidth, buttonW,
-                        new Vector4(0.19f, 0.16f, 0.16f, 1f),
-                        new Vector4(0.34f, 0.29f, 0.29f, 1f),
-                        new Vector4(0.49f, 0.42f, 0.42f, 1f),
-                        new Vector4(0.86f, 0.42f, 0.41f, 1f)))
+                        new Vector4(0.17f, 0.18f, 0.2f, 1f),
+                        new Vector4(0.3f, 0.32f, 0.35f, 1f),
+                        new Vector4(0.42f, 0.46f, 0.5f, 1f),
+                        new Vector4(0.34f, 0.51f, 0.71f, 1f)))
                         SetFieldWithUndo(target, field, value, (double)v);
                 });
             }
@@ -1358,7 +1431,13 @@ public sealed class InspectorPanel : EditorPanel
                 int v = (int)(value ?? 0);
                 DrawFieldRow(label, () =>
                 {
-                    if (ImGui.DragInt("##val", ref v))
+                    float buttonW = ImGui.GetFrameHeight();
+                    float fieldWidth = ImGui.GetContentRegionAvail().X - buttonW;
+                    if (DrawVectorComponentInt("i", ref v, 0.15f, fieldWidth, buttonW,
+                        new Vector4(0.17f, 0.18f, 0.2f, 1f),
+                        new Vector4(0.3f, 0.32f, 0.35f, 1f),
+                        new Vector4(0.42f, 0.46f, 0.5f, 1f),
+                        new Vector4(0.34f, 0.51f, 0.71f, 1f)))
                         SetFieldWithUndo(target, field, value, v);
                 });
             }
@@ -1552,7 +1631,13 @@ public sealed class InspectorPanel : EditorPanel
                     int v = (int)(elem ?? 0);
                     DrawFieldRow(elemLabel, () =>
                     {
-                        if (ImGui.DragInt("##val", ref v))
+                        float buttonW = ImGui.GetFrameHeight();
+                        float fieldWidth = ImGui.GetContentRegionAvail().X - buttonW;
+                        if (DrawVectorComponentInt("i", ref v, 0.15f, fieldWidth, buttonW,
+                            new Vector4(0.19f, 0.16f, 0.16f, 1f),
+                            new Vector4(0.34f, 0.29f, 0.29f, 1f),
+                            new Vector4(0.49f, 0.42f, 0.42f, 1f),
+                            new Vector4(0.86f, 0.42f, 0.41f, 1f)))
                         { items[i] = v; changed = true; }
                     });
                 }
