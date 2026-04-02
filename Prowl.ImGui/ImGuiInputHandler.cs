@@ -5,8 +5,11 @@ using System;
 using System.Collections.Generic;
 using System.Numerics;
 using System.Runtime.InteropServices;
+using System.Text;
 
 using ImGuiNET;
+
+using Prowl.Runtime;
 
 using Silk.NET.Input;
 using Silk.NET.Input.Extensions;
@@ -29,17 +32,36 @@ public sealed class ImGuiInputHandler : IDisposable
     // Keyboard tracking
     private readonly bool[] _keyStates = new bool[512];
 
+    // Clipboard support — static because ImGui callbacks require persistent function pointers
+    private static IKeyboard? s_clipboardKeyboard;
+    private static IntPtr s_clipboardBuffer;
+
+    // Delegate types matching ImGui's clipboard callback signatures
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    private delegate IntPtr GetClipboardTextFn(IntPtr userData);
+
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    private delegate void SetClipboardTextFn(IntPtr userData, IntPtr text);
+
+    // Static delegate instances prevent GC collection while ImGui holds the function pointers
+    private static GetClipboardTextFn? s_getClipboardDelegate;
+    private static SetClipboardTextFn? s_setClipboardDelegate;
+
     public ImGuiInputHandler(IInputContext input)
     {
         _input = input ?? throw new ArgumentNullException(nameof(input));
 
         // Subscribe to input events
-        foreach (var keyboard in _input.Keyboards)
+        foreach (IKeyboard keyboard in _input.Keyboards)
         {
             keyboard.KeyDown += OnKeyDown;
             keyboard.KeyUp += OnKeyUp;
             keyboard.KeyChar += OnKeyChar;
         }
+
+        // Wire up system clipboard for ImGui text fields (Ctrl+C / Ctrl+V)
+        if (_input.Keyboards.Count > 0)
+            SetupClipboard(_input.Keyboards[0]);
     }
 
     /// <summary>
@@ -68,12 +90,14 @@ public sealed class ImGuiInputHandler : IDisposable
         if (_disposed) return;
         _disposed = true;
 
-        foreach (var keyboard in _input.Keyboards)
+        foreach (IKeyboard keyboard in _input.Keyboards)
         {
             keyboard.KeyDown -= OnKeyDown;
             keyboard.KeyUp -= OnKeyUp;
             keyboard.KeyChar -= OnKeyChar;
         }
+
+        CleanupClipboard();
     }
 
     // ── Private helpers ─────────────────────────────────────────────
@@ -134,6 +158,86 @@ public sealed class ImGuiInputHandler : IDisposable
     private void OnKeyChar(IKeyboard keyboard, char character)
     {
         _pressedChars.Add(character);
+    }
+
+    // ── Clipboard ───────────────────────────────────────────────────
+
+    private static void SetupClipboard(IKeyboard keyboard)
+    {
+        s_clipboardKeyboard = keyboard;
+
+        // Store delegates as static fields so the GC does not collect them
+        // while ImGui holds the corresponding native function pointers.
+        s_getClipboardDelegate = GetClipboardTextImpl;
+        s_setClipboardDelegate = SetClipboardTextImpl;
+
+        ImGuiIOPtr io = ImGui.GetIO();
+        io.GetClipboardTextFn = Marshal.GetFunctionPointerForDelegate(s_getClipboardDelegate);
+        io.SetClipboardTextFn = Marshal.GetFunctionPointerForDelegate(s_setClipboardDelegate);
+    }
+
+    private static void CleanupClipboard()
+    {
+        s_getClipboardDelegate = null;
+        s_setClipboardDelegate = null;
+        s_clipboardKeyboard = null;
+
+        if (s_clipboardBuffer != IntPtr.Zero)
+        {
+            Marshal.FreeHGlobal(s_clipboardBuffer);
+            s_clipboardBuffer = IntPtr.Zero;
+        }
+    }
+
+    private static IntPtr GetClipboardTextImpl(IntPtr userData)
+    {
+        try
+        {
+            if (s_clipboardBuffer != IntPtr.Zero)
+            {
+                Marshal.FreeHGlobal(s_clipboardBuffer);
+                s_clipboardBuffer = IntPtr.Zero;
+            }
+
+            string? text = s_clipboardKeyboard?.ClipboardText;
+            if (string.IsNullOrEmpty(text))
+                return IntPtr.Zero;
+
+            int byteCount = Encoding.UTF8.GetByteCount(text) + 1;
+            s_clipboardBuffer = Marshal.AllocHGlobal(byteCount);
+            unsafe
+            {
+                fixed (char* pText = text)
+                {
+                    int written = Encoding.UTF8.GetBytes(pText, text.Length, (byte*)s_clipboardBuffer, byteCount - 1);
+                    ((byte*)s_clipboardBuffer)[written] = 0; // null terminator
+                }
+            }
+
+            return s_clipboardBuffer;
+        }
+        catch (Exception ex)
+        {
+            Debug.LogError($"[ImGui Clipboard] GetClipboardText failed: {ex}");
+            return IntPtr.Zero;
+        }
+    }
+
+    private static void SetClipboardTextImpl(IntPtr userData, IntPtr text)
+    {
+        try
+        {
+            if (s_clipboardKeyboard == null || text == IntPtr.Zero)
+                return;
+
+            string? str = Marshal.PtrToStringUTF8(text);
+            if (str != null)
+                s_clipboardKeyboard.ClipboardText = str;
+        }
+        catch (Exception ex)
+        {
+            Debug.LogError($"[ImGui Clipboard] SetClipboardText failed: {ex}");
+        }
     }
 
     // ── Key mapping table ───────────────────────────────────────────

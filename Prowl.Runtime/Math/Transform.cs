@@ -198,7 +198,7 @@ public class Transform
         _version++;
     }
 
-    private float MakeSafe(float v) => float.IsNaN(v) ? 0 : v;
+    private float MakeSafe(float v) => float.IsNaN(v) ? 0 : (v == 0 ? 0 : v);
     private Float3 MakeSafe(Float3 v) => new(MakeSafe(v.X), MakeSafe(v.Y), MakeSafe(v.Z));
     private Quaternion MakeSafe(Quaternion v) => new(MakeSafe(v.X), MakeSafe(v.Y), MakeSafe(v.Z), MakeSafe(v.W));
 
