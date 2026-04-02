@@ -62,7 +62,16 @@ public sealed class StubEditorRendering : IEditorRendering
         // ── Ensure render texture ──
         if (_sceneRT == null || _sceneW != width || _sceneH != height)
         {
-            _sceneRT?.Dispose();
+            if (_sceneRT != null)
+            {
+                // Wait for all in-flight GPU commands to finish before destroying
+                // the old Vulkan textures. With double-buffered frames the previous
+                // frame's command buffers (ImGui bind groups, scene render passes)
+                // may still reference these resources on the GPU.
+                if (Graphics.IsGraphiteReady)
+                    Graphics.Graphite.WaitForIdle();
+                _sceneRT.Dispose();
+            }
             _sceneRT = new RenderTexture(width, height, true, [TextureImageFormat.Color4b]);
             _sceneW = width;
             _sceneH = height;
@@ -264,7 +273,12 @@ public sealed class StubEditorRendering : IEditorRendering
         // ── Ensure render texture ──
         if (_gameRT == null || _gameW != width || _gameH != height)
         {
-            _gameRT?.Dispose();
+            if (_gameRT != null)
+            {
+                if (Graphics.IsGraphiteReady)
+                    Graphics.Graphite.WaitForIdle();
+                _gameRT.Dispose();
+            }
             _gameRT = new RenderTexture(width, height, true, [TextureImageFormat.Color4b]);
             _gameW = width;
             _gameH = height;
