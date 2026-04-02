@@ -2256,6 +2256,16 @@ public sealed class InspectorPanel : EditorPanel
         ".wav", ".mp3", ".ogg", ".flac"
     };
 
+    private static readonly HashSet<string> FontExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".ttf", ".otf", ".asset"
+    };
+
+    private static readonly HashSet<string> ScriptableObjectExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".asset"
+    };
+
     /// <summary>
     /// Returns true if the given asset entry is compatible with the target field type.
     /// Only shows assets whose file extension matches the expected type.
@@ -2280,6 +2290,14 @@ public sealed class InspectorPanel : EditorPanel
             return entry.Extension.Equals(".scene", StringComparison.OrdinalIgnoreCase);
         if (fieldType == typeof(GameObject) || fieldType.IsSubclassOf(typeof(GameObject)))
             return false; // GameObjects come from the scene, not asset files
+
+        // FontAsset: accept .ttf/.otf (import on the fly) and .asset (pre-baked)
+        if (fieldType == typeof(FontAsset) || fieldType.IsSubclassOf(typeof(FontAsset)))
+            return FontExtensions.Contains(entry.Extension);
+
+        // Generic ScriptableObject subclasses saved as .asset files
+        if (typeof(ScriptableObject).IsAssignableFrom(fieldType))
+            return ScriptableObjectExtensions.Contains(entry.Extension);
 
         // Unknown EngineObject types: don't show file assets (avoids cluttering the list)
         return false;
@@ -2363,6 +2381,44 @@ public sealed class InspectorPanel : EditorPanel
                     if (shader != null)
                         StampAssetId(shader, entry);
                     return shader;
+                }
+            }
+
+            // FontAsset field: .ttf/.otf → import on the fly, .asset → load pre-baked
+            if (typeof(FontAsset).IsAssignableFrom(fieldType))
+            {
+                if ((ext == ".ttf" || ext == ".otf") && File.Exists(path))
+                {
+                    FontAsset? font = Importing.FontAssetImporter.Import(path);
+                    if (font != null)
+                    {
+                        font.Name = Path.GetFileNameWithoutExtension(path);
+                        StampAssetId(font, entry);
+                    }
+                    return font;
+                }
+                if (ext == ".asset" && File.Exists(path))
+                {
+                    ScriptableObject? so = ScriptableObjectSerializer.Load(path);
+                    if (so is FontAsset fontAsset)
+                    {
+                        StampAssetId(fontAsset, entry);
+                        return fontAsset;
+                    }
+                }
+            }
+
+            // Generic ScriptableObject field: load from .asset file
+            if (typeof(ScriptableObject).IsAssignableFrom(fieldType))
+            {
+                if (ext == ".asset" && File.Exists(path))
+                {
+                    ScriptableObject? so = ScriptableObjectSerializer.Load(path);
+                    if (so != null && fieldType.IsInstanceOfType(so))
+                    {
+                        StampAssetId(so, entry);
+                        return so;
+                    }
                 }
             }
         }
