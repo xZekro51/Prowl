@@ -332,6 +332,79 @@ internal static class SpirvReflection
         return merged;
     }
 
+    /// <summary>
+    /// Checks whether two reflection results have any (set, binding) pair
+    /// with differing resource types, indicating a cross-stage binding collision.
+    /// </summary>
+    internal static bool HasBindingCollisions(ReflectionResult a, ReflectionResult b)
+    {
+        var aTypes = new Dictionary<(uint, uint), ResourceType>();
+        foreach (ResourceBinding binding in a.Bindings)
+            aTypes[(binding.Set, binding.Binding)] = binding.Type;
+
+        foreach (ResourceBinding binding in b.Bindings)
+        {
+            if (aTypes.TryGetValue((binding.Set, binding.Binding), out ResourceType existingType)
+                && existingType != binding.Type)
+                return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Returns the highest descriptor binding number found in a SPIR-V binary, or -1 if none.
+    /// </summary>
+    internal static int FindMaxBinding(ReadOnlySpan<byte> spirv)
+    {
+        ReadOnlySpan<uint> words = MemoryMarshal.Cast<byte, uint>(spirv);
+        int maxBinding = -1;
+        int i = 5; // Skip 5-word header
+        while (i < words.Length)
+        {
+            uint word0 = words[i];
+            uint opcode = word0 & 0xFFFF;
+            int wordCount = (int)(word0 >> 16);
+            if (wordCount == 0 || i + wordCount > words.Length)
+                break;
+
+            if (opcode == 71 && wordCount >= 4 && words[i + 2] == 33) // OpDecorate, Binding
+            {
+                int binding = (int)words[i + 3];
+                if (binding > maxBinding)
+                    maxBinding = binding;
+            }
+
+            i += wordCount;
+        }
+
+        return maxBinding;
+    }
+
+    /// <summary>
+    /// Patches a SPIR-V binary in-place, adding <paramref name="offset"/> to every
+    /// Binding decoration value. Used to resolve cross-stage binding collisions when
+    /// shaderc's AutoBindUniforms assigns overlapping bindings to different stages.
+    /// </summary>
+    internal static void OffsetBindings(Span<byte> spirv, uint offset)
+    {
+        Span<uint> words = MemoryMarshal.Cast<byte, uint>(spirv);
+        int i = 5; // Skip 5-word header
+        while (i < words.Length)
+        {
+            uint word0 = words[i];
+            uint opcode = word0 & 0xFFFF;
+            int wordCount = (int)(word0 >> 16);
+            if (wordCount == 0 || i + wordCount > words.Length)
+                break;
+
+            if (opcode == 71 && wordCount >= 4 && words[i + 2] == 33) // OpDecorate, Binding
+                words[i + 3] += offset;
+
+            i += wordCount;
+        }
+    }
+
     #region SPIR-V Type Helpers
 
     private enum TypeKind { Scalar, Vector, Matrix, Struct, Image, Sampler, SampledImage, Array }

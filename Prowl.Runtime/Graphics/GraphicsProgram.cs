@@ -359,31 +359,56 @@ public class GraphicsProgram : IDisposable
 
     private void CreateGraphiteModulesVulkan(string vertexSource, string fragmentSource, string geometrySource)
     {
-        // Cross-compile GLSL → SPIR-V, then create Vulkan shader modules.
-        // Also run SPIR-V reflection to discover auto-assigned descriptor bindings.
-        SpirvReflection.ReflectionResult? vertRefl = null, fragRefl = null, geomRefl = null;
+        // Cross-compile GLSL → SPIR-V for each stage.
+        byte[]? vertSpirv = !string.IsNullOrEmpty(vertexSource)
+            ? Graphite.ShaderCrossCompiler.CompileGLSLToSPIRV(vertexSource, Graphite.ShaderStage.Vertex) : null;
+        byte[]? fragSpirv = !string.IsNullOrEmpty(fragmentSource)
+            ? Graphite.ShaderCrossCompiler.CompileGLSLToSPIRV(fragmentSource, Graphite.ShaderStage.Fragment) : null;
+        byte[]? geomSpirv = !string.IsNullOrEmpty(geometrySource)
+            ? Graphite.ShaderCrossCompiler.CompileGLSLToSPIRV(geometrySource, Graphite.ShaderStage.Geometry) : null;
 
-        if (!string.IsNullOrEmpty(vertexSource))
+        // shaderc's AutoBindUniforms assigns descriptor bindings per-stage starting
+        // from 0. When different stages map different resource types (e.g. UBO vs
+        // sampler) to the same (set, binding), the resulting Vulkan descriptor set
+        // layout is invalid and causes a GPU hang. Detect such collisions and offset
+        // later stages' bindings in the SPIR-V binary before creating modules.
+        SpirvReflection.ReflectionResult? vertRefl = vertSpirv != null ? SpirvReflection.Reflect(vertSpirv) : null;
+        SpirvReflection.ReflectionResult? fragRefl = fragSpirv != null ? SpirvReflection.Reflect(fragSpirv) : null;
+        SpirvReflection.ReflectionResult? geomRefl = geomSpirv != null ? SpirvReflection.Reflect(geomSpirv) : null;
+
+        int maxBinding = vertSpirv != null ? SpirvReflection.FindMaxBinding(vertSpirv) : -1;
+
+        if (fragSpirv != null && vertRefl != null && SpirvReflection.HasBindingCollisions(vertRefl, fragRefl!))
         {
-            byte[] spirv = Graphite.ShaderCrossCompiler.CompileGLSLToSPIRV(vertexSource, Graphite.ShaderStage.Vertex);
-            GraphiteVertexModule = Graphics.Graphite.CreateShaderModule(Graphite.ShaderModuleDescriptor.VertexSPIRV(spirv));
-            vertRefl = SpirvReflection.Reflect(spirv);
-        }
-        if (!string.IsNullOrEmpty(fragmentSource))
-        {
-            byte[] spirv = Graphite.ShaderCrossCompiler.CompileGLSLToSPIRV(fragmentSource, Graphite.ShaderStage.Fragment);
-            GraphiteFragmentModule = Graphics.Graphite.CreateShaderModule(Graphite.ShaderModuleDescriptor.FragmentSPIRV(spirv));
-            fragRefl = SpirvReflection.Reflect(spirv);
-        }
-        if (!string.IsNullOrEmpty(geometrySource))
-        {
-            byte[] spirv = Graphite.ShaderCrossCompiler.CompileGLSLToSPIRV(geometrySource, Graphite.ShaderStage.Geometry);
-            GraphiteGeometryModule = Graphics.Graphite.CreateShaderModule(Graphite.ShaderModuleDescriptor.GeometrySPIRV(spirv));
-            geomRefl = SpirvReflection.Reflect(spirv);
+            SpirvReflection.OffsetBindings(fragSpirv, (uint)(maxBinding + 1));
+            fragRefl = SpirvReflection.Reflect(fragSpirv);
         }
 
-        // Merge reflection from all stages
-        var results = new List<SpirvReflection.ReflectionResult>();
+        maxBinding = Math.Max(maxBinding, fragSpirv != null ? SpirvReflection.FindMaxBinding(fragSpirv) : -1);
+
+        if (geomSpirv != null && maxBinding >= 0)
+        {
+            List<SpirvReflection.ReflectionResult> earlier = [];
+            if (vertRefl != null) earlier.Add(vertRefl);
+            if (fragRefl != null) earlier.Add(fragRefl);
+            SpirvReflection.ReflectionResult earlierMerged = SpirvReflection.Merge(earlier.ToArray());
+            if (SpirvReflection.HasBindingCollisions(earlierMerged, geomRefl!))
+            {
+                SpirvReflection.OffsetBindings(geomSpirv, (uint)(maxBinding + 1));
+                geomRefl = SpirvReflection.Reflect(geomSpirv);
+            }
+        }
+
+        // Create shader modules from (possibly patched) SPIR-V.
+        if (vertSpirv != null)
+            GraphiteVertexModule = Graphics.Graphite.CreateShaderModule(Graphite.ShaderModuleDescriptor.VertexSPIRV(vertSpirv));
+        if (fragSpirv != null)
+            GraphiteFragmentModule = Graphics.Graphite.CreateShaderModule(Graphite.ShaderModuleDescriptor.FragmentSPIRV(fragSpirv));
+        if (geomSpirv != null)
+            GraphiteGeometryModule = Graphics.Graphite.CreateShaderModule(Graphite.ShaderModuleDescriptor.GeometrySPIRV(geomSpirv));
+
+        // Merge reflection from all (patched) stages.
+        List<SpirvReflection.ReflectionResult> results = [];
         if (vertRefl != null) results.Add(vertRefl);
         if (fragRefl != null) results.Add(fragRefl);
         if (geomRefl != null) results.Add(geomRefl);
