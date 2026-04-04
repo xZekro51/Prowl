@@ -420,6 +420,44 @@ public class Scene : EngineObject, ISerializationCallbackReceiver
     internal void UnregisterCamera(Camera cam) => _trackedCameras.Remove(cam);
 
     /// <summary>
+    /// Handles lifecycle callbacks for a component that was added to a
+    /// <see cref="GameObject"/> already registered in this scene.
+    /// Mirrors the per-component logic inside <see cref="AddObject"/>:
+    /// registers the component in indexed lookups, calls
+    /// <see cref="MonoBehaviour.OnAddedToScene"/>, and — when the scene is
+    /// active and the component is enabled — calls
+    /// <see cref="MonoBehaviour.InternalOnEnable"/>.
+    /// </summary>
+    internal void OnComponentAdded(MonoBehaviour component)
+    {
+        // Register in indexed lookups so FindObjectByID / FindObjectByIdentifier work
+        _idLookup[component.InstanceID] = component;
+        _identifierLookup[component.Identifier] = component;
+
+        component.OnAddedToScene();
+
+        if (_isActive && component.GameObject.EnabledInHierarchy
+            && component.Enabled && component.EnabledInHierarchy)
+        {
+            component.InternalOnEnable();
+        }
+    }
+
+    /// <summary>
+    /// Handles lifecycle callbacks for a component that is being removed
+    /// from a <see cref="GameObject"/> registered in this scene.
+    /// Removes the component from indexed lookups and, if the component
+    /// was previously enabled, calls <see cref="MonoBehaviour.OnRemovedFromScene"/>.
+    /// </summary>
+    internal void OnComponentRemoved(MonoBehaviour component)
+    {
+        _idLookup.Remove(component.InstanceID);
+        _identifierLookup.Remove(component.Identifier);
+
+        component.OnRemovedFromScene();
+    }
+
+    /// <summary>
     /// Fills <see cref="_activeGOsBuffer"/> with all non-disposed, hierarchy-enabled
     /// objects. Reuses the same list instance to avoid per-frame allocations.
     /// </summary>

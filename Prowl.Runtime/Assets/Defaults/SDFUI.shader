@@ -13,7 +13,7 @@ Properties
     _UnderlayOffsetY ("Underlay Offset Y", Float) = 0.0
     _UnderlayDilate ("Underlay Dilate", Float) = 0.0
     _UnderlaySoftness ("Underlay Softness", Float) = 0.0
-    _ScreenProjection ("Screen Projection", Matrix) = identity
+    _ScreenProjection ("Screen Projection", Matrix)
 }
 
 Pass "SDFUIText"
@@ -23,7 +23,11 @@ Pass "SDFUIText"
     Cull Off
     ZWrite Off
     ZTest Off
-    Blend Alpha
+    Blend {
+        Src One
+        Dst OneMinusSrcAlpha
+        Mode Add
+    }
 
     GLSLPROGRAM
 
@@ -32,7 +36,8 @@ Pass "SDFUIText"
         layout (location = 0) in vec3 aPosition;
         layout (location = 1) in vec2 aTexCoord0;
         layout (location = 2) in vec2 aTexCoord1;
-        layout (location = 3) in vec4 aColor;
+        // location 3 = Normal (VertexSemantic.Normal = 3), unused by this shader
+        layout (location = 4) in vec4 aColor;
 
         uniform mat4 _ScreenProjection;
 

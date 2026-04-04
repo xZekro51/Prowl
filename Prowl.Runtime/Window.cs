@@ -10,6 +10,8 @@ using Silk.NET.Input;
 using Silk.NET.Maths;
 using Silk.NET.Windowing;
 
+using GlfwApi = Silk.NET.GLFW.Glfw;
+
 namespace Prowl.Runtime;
 
 public static class Window
@@ -84,6 +86,12 @@ public static class Window
     {
         ActiveBackend = backend;
 
+        // Pre-validate Vulkan support via GLFW to produce a catchable managed
+        // exception instead of a fatal native access-violation (0xC0000005) in
+        // glfwCreateWindow that would bypass Game.Run's Vulkan → OpenGL fallback.
+        if (backend == GraphicsBackendType.Vulkan)
+            PreValidateVulkanSupport();
+
         WindowOptions options = WindowOptions.Default;
         options.Title = title;
         options.Size = new Vector2D<int>(width, height);
@@ -119,6 +127,38 @@ public static class Window
         InternalWindow.FileDrop += (files) => { WindowEvents.InvokeOnFileDrop(new WindowFileDropArgs(files)); };
 
         InternalWindow.FocusChanged += (focused) => { isFocused = focused; };
+    }
+
+    /// <summary>
+    /// Verifies that GLFW can initialize and reports Vulkan as supported.
+    /// Throws a catchable <see cref="PlatformNotSupportedException"/> instead of
+    /// allowing a fatal native access-violation in <c>glfwCreateWindow</c> that
+    /// would kill the process before <see cref="Game.Run"/>'s fallback logic runs.
+    /// </summary>
+    private static void PreValidateVulkanSupport()
+    {
+        try
+        {
+            GlfwApi glfw = GlfwApi.GetApi();
+            if (!glfw.Init())
+                throw new PlatformNotSupportedException(
+                    "GLFW initialization failed — cannot create a Vulkan window.");
+
+            if (!glfw.VulkanSupported())
+                throw new PlatformNotSupportedException(
+                    "Vulkan is not supported on this system (glfwVulkanSupported returned false).");
+        }
+        catch (PlatformNotSupportedException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            throw new PlatformNotSupportedException(
+                $"Failed to verify Vulkan support via GLFW: {ex.Message}", ex);
+        }
+        // Do NOT call glfw.Terminate() — Silk.NET reuses the initialized GLFW
+        // state and glfwInit is a safe no-op when already initialized.
     }
 
     /// <summary>
@@ -208,12 +248,21 @@ public static class Window
         if (!Graphics.Graphite.BeginFrame())
             return;
 
-        Rendering.GraphiteMaterialBinder.BeginFrame();
+        try
+        {
+            Rendering.GraphiteMaterialBinder.BeginFrame();
 
-        WindowEvents.InvokeOnRender(new WindowRenderArgs((float)delta));
-        WindowEvents.InvokeOnPostRender(new WindowRenderArgs((float)delta));
-
-        Graphics.Graphite.Present();
+            WindowEvents.InvokeOnRender(new WindowRenderArgs((float)delta));
+            WindowEvents.InvokeOnPostRender(new WindowRenderArgs((float)delta));
+        }
+        catch (Exception ex)
+        {
+            Debug.LogError($"[Window] Exception during render: {ex}");
+        }
+        finally
+        {
+            Graphics.Graphite.Present();
+        }
     }
 
     public static void OnFocusChanged(bool focused)

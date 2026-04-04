@@ -145,13 +145,11 @@ internal unsafe class VKPipelineState : PipelineState
             {
                 DynamicState.Viewport,
                 DynamicState.Scissor,
-                DynamicState.BlendConstants,
-                DynamicState.StencilReference,
             };
             var dynamicState = new PipelineDynamicStateCreateInfo
             {
                 SType = StructureType.PipelineDynamicStateCreateInfo,
-                DynamicStateCount = 4,
+                DynamicStateCount = 2,
                 PDynamicStates = dynamicStates,
             };
 

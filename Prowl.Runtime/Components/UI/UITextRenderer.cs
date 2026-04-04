@@ -217,17 +217,47 @@ public class UITextRenderer : UIBehaviour
         set { _underlaySoftness = value; UpdateMaterialProperties(); }
     }
 
+    // ── Resource Initialization ──────────────────────────────
+
+    /// <summary>
+    /// Ensures the mesh exists, creating it lazily if needed.
+    /// </summary>
+    private void EnsureMesh()
+    {
+        if (_mesh.IsValid())
+            return;
+
+        _mesh = new Mesh();
+        _mesh.Name = "UITextMesh";
+    }
+
+    /// <summary>
+    /// Ensures the SDF material exists, creating it lazily if needed.
+    /// </summary>
+    private void EnsureMaterial()
+    {
+        if (_material.IsValid())
+            return;
+
+        try
+        {
+            Shader sdfuiShader = Shader.LoadDefault(DefaultShader.SDFUI);
+            _material = new Material(sdfuiShader);
+        }
+        catch (Exception ex)
+        {
+            Debug.LogError($"[UIText] Failed to create SDFUI material: {ex.Message}");
+        }
+    }
+
     // ── Lifecycle ─────────────────────────────────────────────
 
     public override void OnEnable()
     {
-        _mesh = new Mesh();
-        _mesh.Name = "UITextMesh";
+        EnsureMesh();
+        EnsureMaterial();
 
-        Shader sdfuiShader = Shader.LoadDefault(DefaultShader.SDFUI);
-        _material = new Material(sdfuiShader);
-
-        _properties = new PropertyState();
+        _properties ??= new PropertyState();
         _isDirty = true;
 
         // Subscribe to events
@@ -261,6 +291,10 @@ public class UITextRenderer : UIBehaviour
         float h = rect.Size.Y;
         if (w <= 0 || h <= 0)
             return;
+
+        // Ensure resources are initialized (handles missed OnEnable or dispose/re-enable cycles)
+        EnsureMesh();
+        EnsureMaterial();
 
         _lastContextAlpha = context.Alpha;
 
@@ -593,6 +627,16 @@ public class UITextRenderer : UIBehaviour
 
         using RenderCommandBuffer cmd = new("UITextRenderer");
 
+        // The DefaultRenderPipeline's blit pass transitions the render texture
+        // to ShaderResource (ShaderReadOnlyOptimal) for downstream sampling
+        // (e.g. ImGui).  We must transition it back to RenderTarget
+        // (ColorAttachmentOptimal) before using it as a color attachment with
+        // LoadOp.Load, otherwise the Vulkan render pass's initialLayout will
+        // not match the image's actual layout — an undefined-behaviour
+        // violation that causes ErrorDeviceLost on many drivers.
+        cmd.ResourceBarrier(new Graphite.ResourceBarrier(
+            colorTarget, Graphite.ResourceState.ShaderResource, Graphite.ResourceState.RenderTarget));
+
         Graphite.RenderPassColorAttachment colorAtt = Graphite.RenderPassColorAttachment.Load(colorTarget);
         Graphite.RenderPassDescriptor desc = new()
         {
@@ -601,6 +645,7 @@ public class UITextRenderer : UIBehaviour
         RenderPassLayout passLayout = new([colorTarget.Format]);
         cmd.BeginRenderPass(in desc, passLayout);
         cmd.SetViewportRaw(0, 0, screenW, screenH);
+        cmd.SetScissor(0, 0, (uint)screenW, (uint)screenH);
 
         for (int i = 0; i < s_pendingRenders.Count; i++)
         {
@@ -658,12 +703,29 @@ public class UITextRenderer : UIBehaviour
                 program.Use();
                 PropertyState.Apply(req.Properties, program);
             }
+            else
+            {
+                // Vulkan requires a valid bind group — skip this draw if
+                // bind group creation failed to avoid drawing without
+                // descriptor sets, which causes ErrorDeviceLost.
+                continue;
+            }
 
             // Draw the mesh
             cmd.DrawMeshIndexed(req.Mesh);
         }
 
         cmd.EndRenderPass();
+
+        // Transition the color target back to ShaderResource so downstream
+        // consumers (e.g. ImGui sampling the game RT) see the correct layout.
+        // This mirrors the pattern used by PaperRenderer after its render pass.
+        if (!Graphics.IsOpenGL)
+        {
+            cmd.ResourceBarrier(new Graphite.ResourceBarrier(
+                colorTarget, Graphite.ResourceState.RenderTarget, Graphite.ResourceState.ShaderResource));
+        }
+
         cmd.Submit();
 
         s_pendingRenders.Clear();

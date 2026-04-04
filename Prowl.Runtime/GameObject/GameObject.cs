@@ -578,6 +578,10 @@ public class GameObject : EngineObject, ISerializable
         else
             SortComponents();
 
+        // If this GO is already in a scene, run the component lifecycle
+        // (OnAddedToScene, OnEnable) so it is immediately operational.
+        Scene?.OnComponentAdded(newComponent);
+
         return newComponent;
     }
 
@@ -615,6 +619,10 @@ public class GameObject : EngineObject, ISerializable
             _needsSort = true;
         else
             SortComponents();
+
+        // If this GO is already in a scene, run the component lifecycle
+        // (OnAddedToScene, OnEnable) so it is immediately operational.
+        Scene?.OnComponentAdded(comp);
     }
 
     /// <summary>

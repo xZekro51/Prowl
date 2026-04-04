@@ -31,16 +31,30 @@ public static class ScriptableObjectSerializer
         AssetDatabase.ConfigureContext(ctx);
 
         // The configured context intercepts every EngineObject and converts it
-        // into an $assetId reference.  That is correct for *child* references
-        // (e.g. a Texture2D field inside a FontAsset), but the root object being
-        // saved here must be serialized in full — its fields need to be written
-        // out, not replaced by a (likely empty) asset reference.
-        // Wrap the callback so the root object is excluded from interception.
+        // into an $assetId reference.  That is correct for external asset
+        // references (e.g. a Material field pointing to a .mat file), but:
+        //
+        // 1. The ROOT object being saved must be serialized in full — its fields
+        //    need to be written out, not replaced by a (likely empty) asset ref.
+        //
+        // 2. EMBEDDED EngineObjects that have no AssetID and no AssetPath (e.g.
+        //    a Texture2D atlas baked into a FontAsset) are integral parts of this
+        //    ScriptableObject — they must be serialized inline with their data,
+        //    not forced to a null $assetId reference.
+        //
+        // Wrap the callback so both cases are excluded from interception.
         var innerOnSerialize = ctx.OnSerialize;
         ctx.OnSerialize = (obj, c) =>
         {
             if (ReferenceEquals(obj, so))
                 return null; // let the root object serialize normally
+
+            // Allow embedded EngineObjects with no asset identity to serialize
+            // inline.  Objects that DO have an AssetID or AssetPath are external
+            // references and should still go through the normal $assetId path.
+            if (obj is EngineObject eo && eo.AssetID == Guid.Empty && string.IsNullOrEmpty(eo.AssetPath))
+                return null; // serialize inline — it's embedded data
+
             return innerOnSerialize?.Invoke(obj, c);
         };
 

@@ -1103,7 +1103,12 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
 
         // Wait for this frame's fence to be signaled (previous use of this frame slot)
         var fence = _inFlightFences[_currentFrame];
-        Vk.WaitForFences(Device, 1, &fence, true, ulong.MaxValue);
+        var waitResult = Vk.WaitForFences(Device, 1, &fence, true, ulong.MaxValue);
+        if (waitResult == Result.ErrorDeviceLost)
+        {
+            Debug.LogError("[Vulkan] Device lost while waiting for frame fence.");
+            return false;
+        }
 
         // Now that the fence is signaled, all GPU work from the previous use of this
         // frame slot has finished — destroy any retired framebuffers / command buffers.
