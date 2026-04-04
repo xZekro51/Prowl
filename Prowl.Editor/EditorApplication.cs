@@ -60,10 +60,15 @@ public sealed class EditorApplication : Game
 
     // Window event subscription
     private IDisposable? _fileDropSub;
+    private IDisposable? _resizeSub;
 
     // Maximize state for scene panel
     private bool _sceneMaximized;
     private bool[] _savedOpenStates = new bool[10]; // hierarchy, inspector, project, game, prefs, console, projSettings, build, profiler, fontCreator
+    private string? _savedLayoutBeforeMaximize;
+
+    // Window state persistence
+    private (int Width, int Height)? _lastNormalWindowSize;
 
     /// <summary> The project folder path passed via --project, or null. </summary>
     public static string? ProjectPath { get; private set; }
@@ -299,6 +304,15 @@ public sealed class EditorApplication : Game
         // Wire up OS file explorer drag-and-drop to import assets into the project
         _fileDropSub = WindowEvents.SubscribeOnFileDrop(args => OnExternalFileDrop(args.Files));
 
+        // Track last non-maximized window size for persistence
+        if (!Window.IsMaximized)
+            _lastNormalWindowSize = (Window.Size.X, Window.Size.Y);
+        _resizeSub = WindowEvents.SubscribeOnResize(args =>
+            {
+                if (!Window.IsMaximized)
+                    _lastNormalWindowSize = (args.Width, args.Height);
+            });
+
         // Menu bar panel toggles
         _menuBar.OnToggleHierarchy = () => _hierarchyPanel.IsOpen = !_hierarchyPanel.IsOpen;
         _menuBar.OnToggleInspector = () => _inspectorPanel.IsOpen = !_inspectorPanel.IsOpen;
@@ -342,6 +356,17 @@ public sealed class EditorApplication : Game
 
             // Restore panel open states
             RestorePanelStates(_sessionState);
+
+            // Restore window size and maximized state
+            if (_sessionState.WindowWidth.HasValue && _sessionState.WindowHeight.HasValue)
+            {
+                Window.SetSize(_sessionState.WindowWidth.Value, _sessionState.WindowHeight.Value);
+                _lastNormalWindowSize = (_sessionState.WindowWidth.Value, _sessionState.WindowHeight.Value);
+            }
+            if (_sessionState.WindowMaximized)
+            {
+                Window.IsMaximized = true;
+            }
         }
 
         Debug.LogSuccess("Editor initialized.");
@@ -556,14 +581,16 @@ public sealed class EditorApplication : Game
         ImGui.End();
 
         // ── All dockable panel windows ──
-        // Handle scene maximize: hide/show other panels
+        // Handle scene maximize: hide/show other panels and rebuild dock layout
         if (_scenePanel != null)
         {
             bool wantMax = _scenePanel.IsMaximized;
             if (wantMax && !_sceneMaximized)
             {
-                // Entering maximized mode — save panel states and hide others
+                // Entering maximized mode — save dock layout, panel states, and rebuild
                 _sceneMaximized = true;
+                _savedLayoutBeforeMaximize = ImGui.SaveIniSettingsToMemory();
+
                 _savedOpenStates[0] = _hierarchyPanel?.IsOpen ?? false;
                 _savedOpenStates[1] = _inspectorPanel?.IsOpen ?? false;
                 _savedOpenStates[2] = _projectPanel?.IsOpen ?? false;
@@ -585,10 +612,17 @@ public sealed class EditorApplication : Game
                 if (_buildPanel != null) _buildPanel.IsOpen = false;
                 if (_profilerPanel != null) _profilerPanel.IsOpen = false;
                 if (_fontCreatorPanel != null) _fontCreatorPanel.IsOpen = false;
+
+                // Rebuild dockspace so Scene fills the entire area
+                ImGuiDockBuilder.RemoveNode(dockspaceId);
+                ImGuiDockBuilder.AddNode(dockspaceId, 1 << 10); // ImGuiDockNodeFlags_DockSpace
+                ImGuiDockBuilder.SetNodeSize(dockspaceId, dockSize);
+                ImGuiDockBuilder.DockWindow("Scene", dockspaceId);
+                ImGuiDockBuilder.Finish(dockspaceId);
             }
             else if (!wantMax && _sceneMaximized)
             {
-                // Exiting maximized mode — restore saved panel states
+                // Exiting maximized mode — restore saved panel states and dock layout
                 _sceneMaximized = false;
                 if (_hierarchyPanel != null) _hierarchyPanel.IsOpen = _savedOpenStates[0];
                 if (_inspectorPanel != null) _inspectorPanel.IsOpen = _savedOpenStates[1];
@@ -600,6 +634,12 @@ public sealed class EditorApplication : Game
                 if (_buildPanel != null) _buildPanel.IsOpen = _savedOpenStates[7];
                 if (_profilerPanel != null) _profilerPanel.IsOpen = _savedOpenStates[8];
                 if (_fontCreatorPanel != null) _fontCreatorPanel.IsOpen = _savedOpenStates[9];
+
+                if (_savedLayoutBeforeMaximize != null)
+                {
+                    ImGui.LoadIniSettingsFromMemory(_savedLayoutBeforeMaximize);
+                    _savedLayoutBeforeMaximize = null;
+                }
             }
         }
 
@@ -965,6 +1005,19 @@ public sealed class EditorApplication : Game
             // Save panel open states
             SavePanelStates(_sessionState);
 
+            // Save window size and maximized state
+            _sessionState.WindowMaximized = Window.IsMaximized;
+            if (_lastNormalWindowSize.HasValue)
+            {
+                _sessionState.WindowWidth = _lastNormalWindowSize.Value.Width;
+                _sessionState.WindowHeight = _lastNormalWindowSize.Value.Height;
+            }
+            else if (!Window.IsMaximized)
+            {
+                _sessionState.WindowWidth = Window.Size.X;
+                _sessionState.WindowHeight = Window.Size.Y;
+            }
+
             _sessionState.Save(ProjectPath);
         }
 
@@ -984,6 +1037,9 @@ public sealed class EditorApplication : Game
 
         _fileDropSub?.Dispose();
         _fileDropSub = null;
+
+        _resizeSub?.Dispose();
+        _resizeSub = null;
 
         Debug.Log("Editor shutting down.");
     }

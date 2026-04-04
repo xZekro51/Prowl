@@ -61,6 +61,24 @@ public static class Window
         get { return InternalWindow.Handle; }
     }
 
+    /// <summary>
+    /// Whether the window is currently in the maximized state.
+    /// Setting to <c>true</c> maximizes the window; <c>false</c> restores it to normal.
+    /// </summary>
+    public static bool IsMaximized
+    {
+        get { return InternalWindow.WindowState == WindowState.Maximized; }
+        set { InternalWindow.WindowState = value ? WindowState.Maximized : WindowState.Normal; }
+    }
+
+    /// <summary>
+    /// Sets the window size in pixels without requiring a <see cref="Silk.NET.Maths.Vector2D{T}"/> import.
+    /// </summary>
+    public static void SetSize(int width, int height)
+    {
+        InternalWindow.Size = new Vector2D<int>(width, height);
+    }
+
     private static bool isFocused = true;
     private static DefaultInputHandler WindowInputHandler;
 
@@ -251,56 +269,76 @@ public static class Window
         if (_fatalError || !Graphics.IsGraphiteReady)
             return;
 
-        Debug.LogTrace("[Window.OnRender] BeginFrame...");
+        if (GpuDebug)
+        {
+            Debug.LogTrace("[Window.OnRender] BeginFrame...");
+            try
+            {
+                ProcessRendering(delta);
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError($"[Window] Exception during render: {ex}");
+            }
+            finally
+            {
+                Debug.LogTrace("[Window.OnRender] Presenting...");
+                int frameSlot = Graphics.Graphite.CurrentFrameIndex;
+                bool presentOk = Graphics.Graphite.Present();
+
+                GraphiteDeviceEvents.InvokeOnGpuFrameEnd(new GpuFrameEndArgs(
+                    frameSlot, presentOk && !Graphics.Graphite.IsDeviceLost));
+
+                Debug.LogTrace("[Window.OnRender] Frame complete.");
+            }
+        }
+        else
+        {
+            // In non-debug mode, we skip the extra try/catch and just let exceptions propagate,
+            // since they will be caught by the outer try/catch in Start() and trigger fallback.
+            ProcessRendering(delta);
+
+            int frameSlot = Graphics.Graphite.CurrentFrameIndex;
+            bool presentOk = Graphics.Graphite.Present();
+
+            GraphiteDeviceEvents.InvokeOnGpuFrameEnd(new GpuFrameEndArgs(
+                frameSlot, presentOk && !Graphics.Graphite.IsDeviceLost));
+        }
+    }
+
+    public static void ProcessRendering(double delta)
+    {
         if (!Graphics.Graphite.BeginFrame())
             return;
 
         // Fire GPU frame begin — subscribers (e.g. GraphiteMaterialBinder,
         // RenderStats) run their per-frame reset logic in priority order.
         GraphiteDeviceEvents.InvokeOnGpuFrameBegin(new GpuFrameBeginArgs(
-            Graphics.Graphite.CurrentFrameIndex, 0));
+        Graphics.Graphite.CurrentFrameIndex, 0));
 
-        try
+        // Batch lazy resource uploads (mesh/texture data transfers) that
+        // occur during rendering into a single GPU submission, avoiding
+        // per-upload synchronous QueueSubmit+WaitForFences stalls.
+        Graphics.Graphite.BeginUploadBatch();
+        GraphiteDeviceEvents.InvokeOnUploadWindowOpen();
+
+        Debug.LogTrace("[Window.OnRender] Invoking OnRender event...");
+        WindowEvents.InvokeOnRender(new WindowRenderArgs((float)delta));
+
+        // Flush any remaining batched uploads before post-render work.
+        GraphiteDeviceEvents.InvokeOnUploadWindowClosing(new UploadWindowClosingArgs(0, 0));
+        Graphics.Graphite.FlushUploadBatch();
+
+        // If the device was lost during rendering, skip presentation and
+        // post-render work to prevent cascading Vulkan errors.
+        if (Graphics.Graphite.IsDeviceLost)
         {
-            // Batch lazy resource uploads (mesh/texture data transfers) that
-            // occur during rendering into a single GPU submission, avoiding
-            // per-upload synchronous QueueSubmit+WaitForFences stalls.
-            Graphics.Graphite.BeginUploadBatch();
-            GraphiteDeviceEvents.InvokeOnUploadWindowOpen();
-
-            Debug.LogTrace("[Window.OnRender] Invoking OnRender event...");
-            WindowEvents.InvokeOnRender(new WindowRenderArgs((float)delta));
-
-            // Flush any remaining batched uploads before post-render work.
-            GraphiteDeviceEvents.InvokeOnUploadWindowClosing(new UploadWindowClosingArgs(0, 0));
-            Graphics.Graphite.FlushUploadBatch();
-
-            // If the device was lost during rendering, skip presentation and
-            // post-render work to prevent cascading Vulkan errors.
-            if (Graphics.Graphite.IsDeviceLost)
-            {
-                Graphics.OnDeviceLost();
-                return;
-            }
-
-            Debug.LogTrace("[Window.OnRender] Invoking OnPostRender...");
-            WindowEvents.InvokeOnPostRender(new WindowRenderArgs((float)delta));
+            Graphics.OnDeviceLost();
+            return;
         }
-        catch (Exception ex)
-        {
-            Debug.LogError($"[Window] Exception during render: {ex}");
-        }
-        finally
-        {
-            Debug.LogTrace("[Window.OnRender] Presenting...");
-            int frameSlot = Graphics.Graphite.CurrentFrameIndex;
-            bool presentOk = Graphics.Graphite.Present();
 
-            GraphiteDeviceEvents.InvokeOnGpuFrameEnd(new GpuFrameEndArgs(
-                frameSlot, presentOk && !Graphics.Graphite.IsDeviceLost));
-
-            Debug.LogTrace("[Window.OnRender] Frame complete.");
-        }
+        Debug.LogTrace("[Window.OnRender] Invoking OnPostRender...");
+        WindowEvents.InvokeOnPostRender(new WindowRenderArgs((float)delta));
     }
 
     public static void OnFocusChanged(bool focused)

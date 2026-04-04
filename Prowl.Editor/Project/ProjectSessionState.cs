@@ -33,6 +33,15 @@ public sealed class ProjectSessionState
     /// <summary> Which panels were open (keyed by panel title). </summary>
     public Dictionary<string, bool> OpenPanels { get; set; } = new();
 
+    /// <summary> Last window width in pixels when not maximized (null = use default). </summary>
+    public int? WindowWidth { get; set; }
+
+    /// <summary> Last window height in pixels when not maximized (null = use default). </summary>
+    public int? WindowHeight { get; set; }
+
+    /// <summary> Whether the window was maximized when the editor was last closed. </summary>
+    public bool WindowMaximized { get; set; }
+
     /// <summary> Arbitrary extra values for future use (avoids breaking changes). </summary>
     public Dictionary<string, string> Extra { get; set; } = new();
 
