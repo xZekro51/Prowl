@@ -322,7 +322,8 @@ public static class Window
         Graphics.Graphite.BeginUploadBatch();
         GraphiteDeviceEvents.InvokeOnUploadWindowOpen();
 
-        Debug.LogTrace("[Window.OnRender] Invoking OnRender event...");
+        if (GpuDebug)
+            Debug.LogTrace("[Window.OnRender] Invoking OnRender event...");
         WindowEvents.InvokeOnRender(new WindowRenderArgs((float)delta));
 
         // Flush any remaining batched uploads before post-render work.
@@ -337,7 +338,8 @@ public static class Window
             return;
         }
 
-        Debug.LogTrace("[Window.OnRender] Invoking OnPostRender...");
+        if (GpuDebug)
+            Debug.LogTrace("[Window.OnRender] Invoking OnPostRender...");
         WindowEvents.InvokeOnPostRender(new WindowRenderArgs((float)delta));
     }
 

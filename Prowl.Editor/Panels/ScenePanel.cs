@@ -234,7 +234,7 @@ public sealed class ScenePanel : EditorPanel
 
         // Don't pick while Alt is held (orbit) or RMB (fly) or gizmo is active
         bool alt = input.IsKey(KeyCode.AltLeft) || input.IsKey(KeyCode.AltRight);
-        if (alt || input.IsMouseButton(1) || Gizmo.IsActive) return;
+        if (alt || input.IsMouseButton(1) || Gizmo.IsActive || Gizmo.IsSceneGizmoHovered) return;
 
         // Track LMB press start
         if (input.IsMouseButtonDown(0) && IsHovered)

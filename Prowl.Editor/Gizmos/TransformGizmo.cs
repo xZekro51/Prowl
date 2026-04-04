@@ -45,6 +45,9 @@ public sealed class TransformGizmo
     /// <summary> True while the user is dragging a gizmo handle. </summary>
     public bool IsActive => _activeAxis >= 0;
 
+    /// <summary> True when the mouse is over the scene orientation gizmo in the corner. </summary>
+    public bool IsSceneGizmoHovered { get; private set; }
+
     // Drag state
     private int _activeAxis = -1;        // -1=none, 0=X, 1=Y, 2=Z, 3=XY, 4=XZ, 5=YZ, 6=Uniform
     private Float2 _dragStart;
@@ -94,7 +97,7 @@ public sealed class TransformGizmo
     {
         if (selected == null)
         {
-            DrawAxisIndicator(camera, vpRect);
+            DrawAxisIndicator(camera, vpRect, input);
             return;
         }
 
@@ -103,8 +106,12 @@ public sealed class TransformGizmo
         float vpH = vpRect.Size.Y;
         Float3 screenPos = camera.WorldToViewport(worldPos, vpW, vpH);
 
-        // Behind camera — don't draw
-        if (screenPos.Z < 0f) return;
+        // Behind camera — only draw the orientation gizmo
+        if (screenPos.Z < 0f)
+        {
+            DrawAxisIndicator(camera, vpRect, input);
+            return;
+        }
 
         // Convert viewport-local coords to screen coords for DrawList
         float ox = vpRect.Min.X;
@@ -138,7 +145,13 @@ public sealed class TransformGizmo
         Vector4[] colors   = [XColorVec, YColorVec, ZColorVec];
         Vector4[] hiColors = [XColorHiVec, YColorHiVec, ZColorHiVec];
 
-        // Pre-compute projected axis tips
+        // Project axis tips using WorldToViewport so axes foreshorten naturally
+        // with perspective. Only fall back to the VP-direction heuristic when a
+        // tip extends behind the camera near plane.
+        float aspect = vpW / Math.Max(vpH, 1f);
+        Float4x4 vpMat = camera.GetProjectionMatrix(aspect) * camera.GetViewMatrix();
+        Float2 center = new(screenPos.X, screenPos.Y);
+
         Float2[] tipVp = new Float2[3];
         Float2[] tipVp2 = new Float2[3];
         Float2[] screenDirs = new Float2[3];
@@ -147,14 +160,42 @@ public sealed class TransformGizmo
         {
             Float3 tipWorld = worldPos + axisDirs[i] * worldHandleLen;
             Float3 tipScreen = camera.WorldToViewport(tipWorld, vpW, vpH);
-            Float3 tipWorld2 = worldPos + axisDirs[i] * worldHandleLen * 1.07f;
-            Float3 tipScreen2 = camera.WorldToViewport(tipWorld2, vpW, vpH);
-            Float2 d = new(tipScreen.X - screenPos.X, tipScreen.Y - screenPos.Y);
-            float l = Float2.Length(d);
-            tipVp[i] = new Float2(tipScreen.X, tipScreen.Y);
-            tipVp2[i] = new Float2(tipScreen2.X, tipScreen2.Y);
-            screenLens[i] = l;
-            screenDirs[i] = l < 1f ? Float2.Zero : d / l;
+
+            Float2 diff;
+            if (tipScreen.Z >= 0f)
+            {
+                // Tip is in front of camera — use the real projected position
+                diff = new Float2(tipScreen.X, tipScreen.Y) - center;
+            }
+            else
+            {
+                // Tip behind camera — axis points into the viewer. Use the VP
+                // direction transform (w=0) to get a valid screen direction
+                // and show a small stub (the axis is heavily foreshortened).
+                Float4 clipDir = Float4x4.TransformPoint(new Float4(axisDirs[i], 0f), vpMat);
+                Float2 sd = new(clipDir.X, -clipDir.Y);
+                float dirLen = Float2.Length(sd);
+                if (dirLen < 0.001f)
+                    diff = Float2.Zero;
+                else
+                    diff = (sd / dirLen) * DesiredScreenLength * 0.15f;
+            }
+
+            float len = Float2.Length(diff);
+            if (len < 1f)
+            {
+                screenDirs[i] = Float2.Zero;
+                screenLens[i] = 0f;
+                tipVp[i] = center;
+                tipVp2[i] = center;
+            }
+            else
+            {
+                screenDirs[i] = diff / len;
+                screenLens[i] = len;
+                tipVp[i] = center + diff;
+                tipVp2[i] = center + screenDirs[i] * len * 1.10f;
+            }
         }
 
         // Sort axes by depth so back-facing axes draw first (behind)
@@ -171,8 +212,7 @@ public sealed class TransformGizmo
         Float2 mouseLocal = input.MousePosition - vpRect.Min;
         var drawList = ImGui.GetWindowDrawList();
 
-        // Pre-compute rotation arc parameters (center in viewport-local coords, radius)
-        Float2 center = new(screenPos.X, screenPos.Y);
+        // Pre-compute rotation arc parameters
         float rotationRadius = DesiredScreenLength * 0.8f;
 
         // Pre-compute projected circle points for rotation hit testing
@@ -198,7 +238,9 @@ public sealed class TransformGizmo
         }
 
         // Check plane handle hovers (Translate mode only, when no single axis is hovered/active)
-        float planeFrac = 0.28f;
+        // Plane handles are offset from center (Unity-style) to avoid occluding axis lines.
+        float planeInner = 0.22f;
+        float planeOuter = 0.48f;
         if (hoveredAxis == -1 && _activeAxis == -1 && Mode == GizmoMode.Translate)
         {
             int[,] planePairs = { {0,1}, {0,2}, {1,2} };
@@ -207,12 +249,14 @@ public sealed class TransformGizmo
                 int pi = planePairs[p,0], pj = planePairs[p,1];
                 if (screenLens[pi] < 1f || screenLens[pj] < 1f) continue;
 
-                Float2 dI = screenDirs[pi] * screenLens[pi] * planeFrac;
-                Float2 dJ = screenDirs[pj] * screenLens[pj] * planeFrac;
-                Float2 q0 = center;
-                Float2 q1 = center + dI;
-                Float2 q2 = center + dI + dJ;
-                Float2 q3 = center + dJ;
+                Float2 dI0 = screenDirs[pi] * screenLens[pi] * planeInner;
+                Float2 dI1 = screenDirs[pi] * screenLens[pi] * planeOuter;
+                Float2 dJ0 = screenDirs[pj] * screenLens[pj] * planeInner;
+                Float2 dJ1 = screenDirs[pj] * screenLens[pj] * planeOuter;
+                Float2 q0 = center + dI0 + dJ0;
+                Float2 q1 = center + dI1 + dJ0;
+                Float2 q2 = center + dI1 + dJ1;
+                Float2 q3 = center + dI0 + dJ1;
 
                 if (IsPointInQuad(mouseLocal, q0, q1, q2, q3))
                 {
@@ -306,6 +350,7 @@ public sealed class TransformGizmo
         }
 
         // ── Plane handles (Translate mode only) ────────────────────
+        // Offset from center (Unity-style) for clearer visual and interaction.
         if (Mode == GizmoMode.Translate)
         {
             int[,] planePairs = { {0,1}, {0,2}, {1,2} };
@@ -314,12 +359,14 @@ public sealed class TransformGizmo
                 int pi = planePairs[p,0], pj = planePairs[p,1];
                 if (screenLens[pi] < 1f || screenLens[pj] < 1f) continue;
 
-                Float2 dI = screenDirs[pi] * screenLens[pi] * planeFrac;
-                Float2 dJ = screenDirs[pj] * screenLens[pj] * planeFrac;
-                Float2 q0 = center;
-                Float2 q1 = center + dI;
-                Float2 q2 = center + dI + dJ;
-                Float2 q3 = center + dJ;
+                Float2 dI0 = screenDirs[pi] * screenLens[pi] * planeInner;
+                Float2 dI1 = screenDirs[pi] * screenLens[pi] * planeOuter;
+                Float2 dJ0 = screenDirs[pj] * screenLens[pj] * planeInner;
+                Float2 dJ1 = screenDirs[pj] * screenLens[pj] * planeOuter;
+                Float2 q0 = center + dI0 + dJ0;
+                Float2 q1 = center + dI1 + dJ0;
+                Float2 q2 = center + dI1 + dJ1;
+                Float2 q3 = center + dI0 + dJ1;
 
                 int handleIdx = 3 + p;
                 bool planeHovered = hoveredAxis == handleIdx;
@@ -337,11 +384,11 @@ public sealed class TransformGizmo
 
                 Vector4 planeColor;
                 if (planeHovered || planeActive)
-                    planeColor = DimAlpha(blendHi, 0.50f);
+                    planeColor = DimAlpha(blendHi, 0.55f);
                 else if (_activeAxis >= 0 || hoveredAxis >= 0)
                     planeColor = DimAlpha(blendNorm, 0.08f);
                 else
-                    planeColor = DimAlpha(blendNorm, 0.22f);
+                    planeColor = DimAlpha(blendNorm, 0.28f);
 
                 uint planeFill = ImGui.GetColorU32(planeColor);
 
@@ -353,10 +400,10 @@ public sealed class TransformGizmo
                 drawList.AddTriangleFilled(sp0, sp1, sp2, planeFill);
                 drawList.AddTriangleFilled(sp0, sp2, sp3, planeFill);
 
-                // Draw outline when hovered/active
+                // Draw outline
                 if (planeHovered || planeActive)
                 {
-                    uint outlineCol = ImGui.GetColorU32(DimAlpha(blendHi, 0.80f));
+                    uint outlineCol = ImGui.GetColorU32(DimAlpha(blendHi, 0.85f));
                     drawList.AddLine(sp0, sp1, outlineCol, HandleThick);
                     drawList.AddLine(sp1, sp2, outlineCol, HandleThick);
                     drawList.AddLine(sp2, sp3, outlineCol, HandleThick);
@@ -396,7 +443,7 @@ public sealed class TransformGizmo
         }
 
         // Draw the axis indicator in the corner
-        DrawAxisIndicator(camera, vpRect);
+        DrawAxisIndicator(camera, vpRect, input);
     }
 
     /// <summary>
@@ -485,7 +532,7 @@ public sealed class TransformGizmo
             float angle = (float)i / segments * MathF.PI * 2f;
             Float3 worldPt = worldCenter + (perp1 * MathF.Cos(angle) + perp2 * MathF.Sin(angle)) * worldRadius;
             Float3 sp = camera.WorldToViewport(worldPt, vpW, vpH);
-            points[i] = new Float2(sp.X, sp.Y);
+            points[i] = sp.Z < 0f ? new Float2(float.NaN, float.NaN) : new Float2(sp.X, sp.Y);
         }
         return points;
     }
@@ -498,6 +545,7 @@ public sealed class TransformGizmo
     {
         for (int i = 0; i < points.Length - 1; i++)
         {
+            if (float.IsNaN(points[i].X) || float.IsNaN(points[i + 1].X)) continue;
             drawList.AddLine(
                 new Vector2(ox + points[i].X, oy + points[i].Y),
                 new Vector2(ox + points[i + 1].X, oy + points[i + 1].Y),
@@ -512,6 +560,7 @@ public sealed class TransformGizmo
     {
         for (int i = 0; i < circlePoints.Length - 1; i++)
         {
+            if (float.IsNaN(circlePoints[i].X) || float.IsNaN(circlePoints[i + 1].X)) continue;
             if (IsNearSegment(point, circlePoints[i], circlePoints[i + 1], threshold))
                 return true;
         }
@@ -519,67 +568,179 @@ public sealed class TransformGizmo
     }
 
     /// <summary>
-    /// Draws a small 3D axis indicator in the top-right corner of the viewport.
-    /// Uses only the camera's rotation so it is independent of camera position.
+    /// Draws a Unity-style 3D orientation gizmo in the top-right corner of the viewport.
+    /// Shows colored cone tips on positive axes and small dots on negative axes.
+    /// Clicking an axis snaps the camera to look along that direction.
     /// </summary>
-    private static void DrawAxisIndicator(SceneCamera camera, Rect vpRect)
+    private void DrawAxisIndicator(SceneCamera camera, Rect vpRect, IEditorInput input)
     {
-        float size = 40f * Game.DpiScale;
-        float margin = 12f * Game.DpiScale;
+        float size = 55f * Game.DpiScale;
+        float margin = 16f * Game.DpiScale;
         float cx = vpRect.Max.X - size - margin;
         float cy = vpRect.Min.Y + size + margin;
+        Float2 gizmoCenter = new(cx, cy);
 
         var drawList = ImGui.GetWindowDrawList();
 
         // Background circle
-        drawList.AddCircleFilled(new Vector2(cx, cy), size * 0.85f,
-            ImGui.GetColorU32(new Vector4(0.10f, 0.10f, 0.10f, 0.60f)));
-        drawList.AddCircle(new Vector2(cx, cy), size * 0.85f,
-            ImGui.GetColorU32(new Vector4(0.30f, 0.30f, 0.30f, 0.40f)));
+        drawList.AddCircleFilled(new Vector2(cx, cy), size,
+            ImGui.GetColorU32(new Vector4(0.08f, 0.08f, 0.10f, 0.65f)));
+        drawList.AddCircle(new Vector2(cx, cy), size,
+            ImGui.GetColorU32(new Vector4(0.25f, 0.25f, 0.30f, 0.50f)), 0, 1.5f * Game.DpiScale);
 
         // Derive camera basis from its rotation (position-independent)
         Prowl.Vector.Quaternion camRot = camera.GetRotation();
         Float3 camRight   = QuatMulVec(camRot, Float3.UnitX);
         Float3 camUp      = QuatMulVec(camRot, Float3.UnitY);
-
-        Float3[] dirs = [Float3.UnitX, Float3.UnitY, Float3.UnitZ];
-        string[] labels = ["X", "Y", "Z"];
-        Vector4[] axisColors = [XColorVec, YColorVec, ZColorVec];
-
-        // Sort axes by depth so the nearest axis draws on top
         Float3 camForward = QuatMulVec(camRot, new Float3(0, 0, -1));
-        int[] order = [0, 1, 2];
+
+        // All 6 axis directions: +X, +Y, +Z, -X, -Y, -Z
+        Float3[] dirs =
+        [
+            Float3.UnitX, Float3.UnitY, Float3.UnitZ,
+            new Float3(-1, 0, 0), new Float3(0, -1, 0), new Float3(0, 0, -1)
+        ];
+        string[] labels = ["X", "Y", "Z", "", "", ""];
+        Vector4[] axisClrs =
+        [
+            XColorVec, YColorVec, ZColorVec,
+            DimAlpha(XColorVec, 0.55f), DimAlpha(YColorVec, 0.55f), DimAlpha(ZColorVec, 0.55f)
+        ];
+
+        // Sort all 6 endpoints by depth (back-to-front draw order)
+        int[] order = [0, 1, 2, 3, 4, 5];
         Array.Sort(order, (a, b) =>
             Float3.Dot(dirs[a], camForward).CompareTo(Float3.Dot(dirs[b], camForward)));
 
-        float axisLen = size * 0.70f;
+        float axisLen = size * 0.72f;
+        float coneSize = 12f * Game.DpiScale;
+        float dotSize = 5f * Game.DpiScale;
 
-        for (int idx = 0; idx < 3; idx++)
+        // Pre-compute endpoints for hover detection.
+        // Use the raw (un-normalized) screen projection so axes foreshorten
+        // with the camera perspective — axes pointing toward/away from the
+        // viewer appear shorter, giving a true 3D orientation cue.
+        Float2[] endPoints = new Float2[6];
+        Float2[] dir2ds = new Float2[6];
+        for (int i = 0; i < 6; i++)
+        {
+            float dx = Float3.Dot(dirs[i], camRight);
+            float dy = -Float3.Dot(dirs[i], camUp);
+            Float2 d = new(dx, dy);
+            float len = Float2.Length(d);
+            if (len < 0.01f) { dir2ds[i] = Float2.Zero; endPoints[i] = gizmoCenter; continue; }
+            dir2ds[i] = d / len;
+            endPoints[i] = gizmoCenter + d * axisLen;
+        }
+
+        // Hover test (front-to-back priority)
+        int hoveredIndex = -1;
+        Float2 mousePos = input.MousePosition;
+        for (int idx = 5; idx >= 0; idx--)
         {
             int i = order[idx];
-            // Project world axis onto camera's screen-space right / up
-            float dx =  Float3.Dot(dirs[i], camRight);
-            float dy = -Float3.Dot(dirs[i], camUp); // negate: screen Y is down
-
-            Float2 dir2d = new(dx, dy);
-            float len = Float2.Length(dir2d);
-            if (len < 0.01f) continue;
-            dir2d = dir2d / len;
-
-            float endX = cx + dir2d.X * axisLen;
-            float endY = cy + dir2d.Y * axisLen;
-
-            uint col = ImGui.GetColorU32(axisColors[i]);
-
-            drawList.AddLine(new Vector2(cx, cy), new Vector2(endX, endY), col, 2f * Game.DpiScale);
-            drawList.AddCircleFilled(new Vector2(endX, endY), 4f * Game.DpiScale, col);
-
-            // Label
-            var labelSize = ImGui.CalcTextSize(labels[i]);
-            float lx = endX + dir2d.X * 6f * Game.DpiScale - labelSize.X * 0.5f;
-            float ly = endY + dir2d.Y * 6f * Game.DpiScale - labelSize.Y * 0.5f;
-            drawList.AddText(new Vector2(lx, ly), col, labels[i]);
+            float hitR = i < 3 ? coneSize * 1.1f : dotSize * 2f;
+            if (Float2.Length(mousePos - endPoints[i]) < hitR)
+            {
+                hoveredIndex = i;
+                break;
+            }
         }
+
+        IsSceneGizmoHovered = hoveredIndex >= 0;
+
+        // Click to snap camera
+        if (hoveredIndex >= 0 && input.IsMouseButtonDown(0) && !IsActive)
+            SnapCameraToAxis(camera, hoveredIndex);
+
+        // Draw back-to-front
+        for (int idx = 0; idx < 6; idx++)
+        {
+            int i = order[idx];
+            Float2 d2 = dir2ds[i];
+            if (Float2.Length(d2) < 0.01f) continue;
+
+            Float2 ep = endPoints[i];
+            bool hovered = hoveredIndex == i;
+
+            Vector4 col = hovered
+                ? new Vector4(MathF.Min(axisClrs[i].X * 1.4f, 1f),
+                              MathF.Min(axisClrs[i].Y * 1.4f, 1f),
+                              MathF.Min(axisClrs[i].Z * 1.4f, 1f), 1f)
+                : axisClrs[i];
+            uint colU = ImGui.GetColorU32(col);
+
+            float thick = (hovered ? 2.5f : 1.8f) * Game.DpiScale;
+            drawList.AddLine(new Vector2(cx, cy), new Vector2(ep.X, ep.Y), colU, thick);
+
+            if (i < 3)
+            {
+                // Positive axis: filled cone tip
+                float cs = hovered ? coneSize * 1.25f : coneSize;
+                DrawCone(drawList, new Vector2(ep.X, ep.Y), d2, cs, colU);
+
+                // Label on the cone
+                string lbl = labels[i];
+                var ls = ImGui.CalcTextSize(lbl);
+                uint lblCol = ImGui.GetColorU32(new Vector4(1f, 1f, 1f, hovered ? 1f : 0.90f));
+                drawList.AddText(new Vector2(ep.X - ls.X * 0.5f, ep.Y - ls.Y * 0.5f), lblCol, lbl);
+            }
+            else
+            {
+                // Negative axis: small circle
+                float ds = hovered ? dotSize * 1.4f : dotSize;
+                drawList.AddCircleFilled(new Vector2(ep.X, ep.Y), ds, colU);
+                if (hovered)
+                    drawList.AddCircle(new Vector2(ep.X, ep.Y), ds + 1.5f * Game.DpiScale,
+                        ImGui.GetColorU32(new Vector4(1f, 1f, 1f, 0.65f)));
+            }
+        }
+
+        // Center dot
+        drawList.AddCircleFilled(new Vector2(cx, cy), 3.5f * Game.DpiScale,
+            ImGui.GetColorU32(new Vector4(0.60f, 0.60f, 0.65f, 0.85f)));
+
+        // "Persp" label beneath the gizmo
+        string perspLabel = "Persp";
+        var perspSz = ImGui.CalcTextSize(perspLabel);
+        drawList.AddText(
+            new Vector2(cx - perspSz.X * 0.5f, cy + size + 4f * Game.DpiScale),
+            ImGui.GetColorU32(new Vector4(0.55f, 0.55f, 0.55f, 0.70f)), perspLabel);
+    }
+
+    /// <summary>
+    /// Draws a filled cone (triangle) pointing in the given 2D direction.
+    /// </summary>
+    private static void DrawCone(ImDrawListPtr drawList, Vector2 center, Float2 dir, float size, uint color)
+    {
+        Float2 perp = new(-dir.Y, dir.X);
+        float half = size * 0.42f;
+        Vector2 tip = new(center.X + dir.X * size * 0.5f, center.Y + dir.Y * size * 0.5f);
+        Vector2 bl = new(center.X - dir.X * size * 0.35f + perp.X * half,
+                         center.Y - dir.Y * size * 0.35f + perp.Y * half);
+        Vector2 br = new(center.X - dir.X * size * 0.35f - perp.X * half,
+                         center.Y - dir.Y * size * 0.35f - perp.Y * half);
+        drawList.AddTriangleFilled(tip, bl, br, color);
+    }
+
+    /// <summary>
+    /// Snaps the camera to look along a specific axis direction.
+    /// </summary>
+    private static void SnapCameraToAxis(SceneCamera camera, int axisIndex)
+    {
+        (float yaw, float pitch) = axisIndex switch
+        {
+            0 => (90f, 0f),            // +X
+            1 => (camera.Yaw, 89f),    // +Y (top-down, keep horizontal orientation)
+            2 => (0f, 0f),             // +Z
+            3 => (-90f, 0f),           // -X
+            4 => (camera.Yaw, -89f),   // -Y (bottom-up)
+            5 => (180f, 0f),           // -Z
+            _ => (camera.Yaw, camera.Pitch)
+        };
+
+        camera.Yaw = yaw;
+        camera.Pitch = pitch;
     }
 
     /// <summary> Rotates a vector by a quaternion (q * v * q⁻¹). </summary>
