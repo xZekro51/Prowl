@@ -85,14 +85,19 @@ public readonly record struct DeviceReadyArgs(
 /// Arguments for <see cref="GraphiteDeviceEvents.OnDeviceLost"/>.
 /// Implements <see cref="ICancellable"/> to allow a handler to attempt recovery
 /// and prevent further propagation.
+/// <para>
+/// This is a <c>class</c> (not a struct) because <see cref="ICancellable"/>
+/// requires reference semantics: the event manager checks <see cref="Cancelled"/>
+/// on the same instance the handler mutated.
+/// </para>
 /// </summary>
-public struct DeviceLostArgs : ICancellable
+public class DeviceLostArgs : ICancellable
 {
     /// <summary>Whether a handler has handled the device loss and wants to stop propagation.</summary>
     public bool Cancelled { get; set; }
 
     /// <summary>Human-readable reason for the device loss.</summary>
-    public string Reason { get; init; }
+    public string Reason { get; init; } = string.Empty;
 }
 
 /// <summary>

@@ -304,13 +304,30 @@ public static unsafe class Graphics
     /// Initializes the graphics subsystem with the specified backend.
     /// Creates a <see cref="GraphiteDevice"/> which now also provides
     /// the legacy immediate-mode API during the migration.
-    /// If initialization fails the device reference is cleared so that
-    /// <see cref="IsGraphiteReady"/> returns <c>false</c> and subsequent
-    /// code does not attempt to use a partially-initialized device.
+    /// <para>
+    /// Ordering: the device reference is assigned and all event subscriptions
+    /// are registered <b>before</b> <c>device.Initialize()</c> is called, so
+    /// that subscribers receive the initial
+    /// <see cref="EventSystem.GraphiteDeviceEvents.OnDeviceReady"/> event fired
+    /// at the end of device initialization. If initialization fails the device
+    /// reference is cleared so that <see cref="IsGraphiteReady"/> returns
+    /// <c>false</c>.
+    /// </para>
     /// </summary>
     public static void Initialize(GraphicsBackendType backend, bool debug)
     {
         var device = GraphiteDevice.Create(backend);
+
+        // Assign the device reference BEFORE calling device.Initialize() so
+        // that event subscriptions registered below can access Graphics.Graphite
+        // when OnDeviceReady fires (which happens inside device.Initialize()).
+        _graphiteDevice = device;
+
+        // Register all event subscriptions before the device is fully initialized.
+        // Critical ordering: OnDeviceReady fires at the END of device.Initialize(),
+        // so subscribers (e.g. PipelineCacheManager) must be registered first.
+        InitializeEventSubscriptions();
+
         try
         {
             device.Initialize(debug ? GraphiteDeviceOptions.Debug : GraphiteDeviceOptions.Default);
@@ -322,11 +339,16 @@ public static unsafe class Graphics
             throw;
         }
 
-        _graphiteDevice = device;
         Debug.Log($"[Graphics] Device initialized: {_graphiteDevice.BackendName}");
+    }
 
-        // Initialize event-driven subscriptions for GPU resource caches.
-        // These replace the old direct-call pattern in Graphics.OnDeviceLost().
+    /// <summary>
+    /// Registers all event-driven subscriptions for GPU resource caches and
+    /// frame-level bookkeeping. Called once from <see cref="Initialize"/> before
+    /// the device fires <see cref="EventSystem.GraphiteDeviceEvents.OnDeviceReady"/>.
+    /// </summary>
+    private static void InitializeEventSubscriptions()
+    {
         Rendering.PipelineStateCache.InitializeEventSubscriptions();
         Rendering.GraphiteMaterialBinder.InitializeEventSubscriptions();
         Rendering.PipelineCacheManager.InitializeEventSubscriptions();

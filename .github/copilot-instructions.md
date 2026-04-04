@@ -349,7 +349,7 @@ finally { Manager.EndBatch(); }
 |--------|------|--------|--------|---------|
 | `GameLoopEvents` | `EventSystem/GameLoopEvents.cs` | ✅ | ✅ | Frame lifecycle (init, begin, end, render, close) |
 | `WindowEvents` | `EventSystem/WindowEvents.cs` | ✅ | ✅ | Platform window lifecycle (load, render, resize, close, file drop) |
-| `RenderingEvents` | `EventSystem/RenderingEvents.cs` | ✅ | ✅ | Render pipeline phases, per-camera stage events (GBuffer, lighting, composition, transparent, stats) |
+| `RenderingEvents` | `EventSystem/RenderingEvents.cs` | ✅ | ✅ | Render pipeline phases, per-camera stage events (GBuffer, lighting, composition, transparent, stats), GI pass begin/end |
 | `PhysicsEvents` | `EventSystem/PhysicsEvents.cs` | ✅ | ✅ | Physics step begin/end |
 | `AssetEvents` | `EventSystem/AssetEvents.cs` | ✅ | ✅ | Asset refresh/import/delete (editor) |
 | `GraphiteDeviceEvents` | `EventSystem/GraphiteDeviceEvents.cs` | ✅ | ✅ | GPU device lifecycle, swapchain, frame boundaries, upload windows, validation |
@@ -369,7 +369,7 @@ finally { Manager.EndBatch(); }
 - ❌ **Do not** forget `[EventArgs(...)]` on `EventKey` fields — this disables the type-safety contract.
 - ❌ **Do not** subscribe without a plan for unsubscription. Either use a lifecycle-aware container, store the `IDisposable` handle, or use `-=`.
 - ❌ **Do not** create new event domains for a single event that fits an existing domain. Group related events together.
-- ❌ **Do not** make event args mutable classes — use `readonly record struct` or `readonly struct`.
+- ❌ **Do not** make event args mutable classes — use `readonly record struct` or `readonly struct`. **Exception:** args implementing `ICancellable` **must** be a `class` because the event dispatch loop checks cancellation on the original instance; value-type copies silently fail to propagate cancellation.
 
 ---
 
