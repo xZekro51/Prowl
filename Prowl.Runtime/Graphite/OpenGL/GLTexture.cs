@@ -398,6 +398,8 @@ public class GLTexture : Texture
     {
         if (Handle != 0)
         {
+            // Invalidate any cached FBOs that reference this texture
+            _device.InvalidateFBOsForTexture(Handle);
             _device.GL.DeleteTexture(Handle);
             Handle = 0;
         }

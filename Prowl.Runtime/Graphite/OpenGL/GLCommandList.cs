@@ -85,7 +85,7 @@ public class GLCommandList : CommandList
     #region Render Pass
 
     // Shared state between BeginRenderPass and EndRenderPass for the current pass
-    private uint _pendingFramebufferToDelete;
+    private uint _currentPassFramebuffer;
 
     // MSAA resolve info stored during BeginRenderPass, executed in EndRenderPass
     private readonly struct MsaaResolveInfo
@@ -147,12 +147,12 @@ public class GLCommandList : CommandList
 
         _commands.Add(() =>
         {
-            // Create or get framebuffer
-            uint fbo = CreateFramebuffer(desc);
+            // Get or create cached framebuffer
+            uint fbo = _device.GetOrCreateFBO(desc);
             _device.GL.BindFramebuffer(FramebufferTarget.Framebuffer, fbo);
 
-            // Store for EndRenderPass to clean up (this runs at execution time)
-            _pendingFramebufferToDelete = fbo;
+            // Store for EndRenderPass (MSAA resolve rebind)
+            _currentPassFramebuffer = fbo;
 
             // Set viewport based on first attachment
             uint width = 0, height = 0;
@@ -211,124 +211,6 @@ public class GLCommandList : CommandList
     // Resolves captured during BeginRenderPass, used during EndRenderPass execution
     private MsaaResolveInfo[]? _pendingResolvesForExecution;
 
-    private uint CreateFramebuffer(in RenderPassDescriptor descriptor)
-    {
-        // Check for default framebuffer (swapchain)
-        bool isSwapchain = false;
-        if (descriptor.ColorAttachments != null && descriptor.ColorAttachments.Length > 0)
-        {
-            if (descriptor.ColorAttachments[0].Texture is GLSwapchainTexture)
-                isSwapchain = true;
-        }
-
-        if (isSwapchain)
-            return 0; // Default framebuffer
-
-        uint fbo = _device.GL.GenFramebuffer();
-        _device.GL.BindFramebuffer(FramebufferTarget.Framebuffer, fbo);
-
-        // Attach color targets
-        if (descriptor.ColorAttachments != null && descriptor.ColorAttachments.Length > 0)
-        {
-            var drawBuffers = new DrawBufferMode[descriptor.ColorAttachments.Length];
-
-            for (int i = 0; i < descriptor.ColorAttachments.Length; i++)
-            {
-                var attachment = descriptor.ColorAttachments[i];
-                if (attachment.Texture is GLTexture glTex)
-                {
-                    var attachmentPoint = FramebufferAttachment.ColorAttachment0 + i;
-                    AttachTextureToFramebuffer(glTex, attachmentPoint, attachment.MipLevel, attachment.ArrayLayer);
-                }
-                drawBuffers[i] = DrawBufferMode.ColorAttachment0 + i;
-            }
-
-            _device.GL.DrawBuffers((uint)drawBuffers.Length, drawBuffers);
-        }
-        else
-        {
-            // For depth-only passes, explicitly specify no color output
-            _device.GL.DrawBuffer(DrawBufferMode.None);
-        }
-
-        // Attach depth/stencil
-        if (descriptor.DepthStencilAttachment.HasValue)
-        {
-            var attachment = descriptor.DepthStencilAttachment.Value;
-            if (attachment.Texture is GLTexture glTex)
-            {
-                var attachmentPoint = glTex.HasStencil
-                    ? FramebufferAttachment.DepthStencilAttachment
-                    : FramebufferAttachment.DepthAttachment;
-
-                AttachTextureToFramebuffer(glTex, attachmentPoint, attachment.MipLevel, attachment.ArrayLayer);
-            }
-        }
-
-        // Verify framebuffer completeness
-        var status = _device.GL.CheckFramebufferStatus(FramebufferTarget.Framebuffer);
-        if (status != GLEnum.FramebufferComplete)
-        {
-            _device.GL.DeleteFramebuffer(fbo);
-            throw new InvalidOperationException($"Framebuffer incomplete: {status}. Check that all attachments have compatible formats and dimensions.");
-        }
-
-        return fbo;
-    }
-
-    /// <summary>
-    /// Attaches a texture to a framebuffer, handling array textures, cubemaps, and 3D textures properly.
-    /// </summary>
-    private void AttachTextureToFramebuffer(GLTexture texture, FramebufferAttachment attachment, uint mipLevel, uint arrayLayer)
-    {
-        switch (texture.Target)
-        {
-            case TextureTarget.Texture1D:
-                _device.GL.FramebufferTexture1D(FramebufferTarget.Framebuffer, attachment,
-                    texture.Target, texture.Handle, (int)mipLevel);
-                break;
-
-            case TextureTarget.Texture1DArray:
-            case TextureTarget.Texture2DArray:
-            case TextureTarget.Texture3D:
-                // Use FramebufferTextureLayer for layered textures
-                _device.GL.FramebufferTextureLayer(FramebufferTarget.Framebuffer, attachment,
-                    texture.Handle, (int)mipLevel, (int)arrayLayer);
-                break;
-
-            case TextureTarget.TextureCubeMap:
-                // For cubemaps, arrayLayer specifies the face (0-5: +X, -X, +Y, -Y, +Z, -Z)
-                var faceTarget = GetCubemapFaceTarget(arrayLayer);
-                _device.GL.FramebufferTexture2D(FramebufferTarget.Framebuffer, attachment,
-                    faceTarget, texture.Handle, (int)mipLevel);
-                break;
-
-            case TextureTarget.TextureCubeMapArray:
-                // For cubemap arrays, layer = array_index * 6 + face
-                _device.GL.FramebufferTextureLayer(FramebufferTarget.Framebuffer, attachment,
-                    texture.Handle, (int)mipLevel, (int)arrayLayer);
-                break;
-
-            case TextureTarget.Texture2DMultisample:
-                // Multisample textures always use mip level 0
-                _device.GL.FramebufferTexture2D(FramebufferTarget.Framebuffer, attachment,
-                    texture.Target, texture.Handle, 0);
-                break;
-
-            case TextureTarget.Texture2DMultisampleArray:
-                // Multisample array textures use layer, but always mip level 0
-                _device.GL.FramebufferTextureLayer(FramebufferTarget.Framebuffer, attachment,
-                    texture.Handle, 0, (int)arrayLayer);
-                break;
-
-            default:
-                // Texture2D and other simple targets
-                _device.GL.FramebufferTexture2D(FramebufferTarget.Framebuffer, attachment,
-                    texture.Target, texture.Handle, (int)mipLevel);
-                break;
-        }
-    }
-
     private void ClearAttachments(in RenderPassDescriptor descriptor)
     {
         // Color clears
@@ -377,12 +259,8 @@ public class GLCommandList : CommandList
                 _pendingResolvesForExecution = null;
             }
 
-            // Delete framebuffer if it was created (not default)
-            if (_pendingFramebufferToDelete != 0)
-            {
-                _device.GL.DeleteFramebuffer(_pendingFramebufferToDelete);
-                _pendingFramebufferToDelete = 0;
-            }
+            // Unbind framebuffer (cached FBOs are not deleted per pass)
+            _currentPassFramebuffer = 0;
             _device.GL.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
         });
     }
@@ -400,13 +278,13 @@ public class GLCommandList : CommandList
         {
             // Attach source (MSAA) texture to read framebuffer
             _device.GL.BindFramebuffer(FramebufferTarget.ReadFramebuffer, readFbo);
-            AttachTextureToFramebufferForResolve(resolve.SourceTexture, FramebufferAttachment.ColorAttachment0,
+            _device.AttachTextureToFramebuffer(resolve.SourceTexture, FramebufferAttachment.ColorAttachment0,
                 resolve.SourceMipLevel, resolve.SourceArrayLayer, FramebufferTarget.ReadFramebuffer);
             _device.GL.ReadBuffer(ReadBufferMode.ColorAttachment0);
 
             // Attach destination (non-MSAA) texture to draw framebuffer
             _device.GL.BindFramebuffer(FramebufferTarget.DrawFramebuffer, drawFbo);
-            AttachTextureToFramebufferForResolve(resolve.DestTexture, FramebufferAttachment.ColorAttachment0,
+            _device.AttachTextureToFramebuffer(resolve.DestTexture, FramebufferAttachment.ColorAttachment0,
                 resolve.DestMipLevel, resolve.DestArrayLayer, FramebufferTarget.DrawFramebuffer);
             _device.GL.DrawBuffer(DrawBufferMode.ColorAttachment0);
 
@@ -423,44 +301,7 @@ public class GLCommandList : CommandList
         _device.GL.DeleteFramebuffer(drawFbo);
 
         // Rebind the render pass framebuffer
-        _device.GL.BindFramebuffer(FramebufferTarget.Framebuffer, _pendingFramebufferToDelete);
-    }
-
-    /// <summary>
-    /// Attaches a texture to a framebuffer for MSAA resolve (similar to AttachTextureToFramebuffer but takes target).
-    /// </summary>
-    private void AttachTextureToFramebufferForResolve(GLTexture texture, FramebufferAttachment attachment,
-        uint mipLevel, uint arrayLayer, FramebufferTarget target)
-    {
-        switch (texture.Target)
-        {
-            case TextureTarget.Texture2DMultisample:
-                // MSAA textures always use mip level 0
-                _device.GL.FramebufferTexture2D(target, attachment,
-                    texture.Target, texture.Handle, 0);
-                break;
-
-            case TextureTarget.Texture2DMultisampleArray:
-                _device.GL.FramebufferTextureLayer(target, attachment,
-                    texture.Handle, 0, (int)arrayLayer);
-                break;
-
-            case TextureTarget.Texture2DArray:
-            case TextureTarget.Texture3D:
-                _device.GL.FramebufferTextureLayer(target, attachment,
-                    texture.Handle, (int)mipLevel, (int)arrayLayer);
-                break;
-
-            case TextureTarget.TextureCubeMap:
-                _device.GL.FramebufferTexture2D(target, attachment,
-                    GetCubemapFaceTarget(arrayLayer), texture.Handle, (int)mipLevel);
-                break;
-
-            default:
-                _device.GL.FramebufferTexture2D(target, attachment,
-                    texture.Target, texture.Handle, (int)mipLevel);
-                break;
-        }
+        _device.GL.BindFramebuffer(FramebufferTarget.Framebuffer, _currentPassFramebuffer);
     }
 
     #endregion
@@ -840,7 +681,7 @@ public class GLCommandList : CommandList
                             break;
 
                         case TextureTarget.TextureCubeMap:
-                            _device.GL.CompressedTexSubImage2D(GetCubemapFaceTarget(c.ArrayLayer), (int)c.MipLevel,
+                            _device.GL.CompressedTexSubImage2D(GLGraphiteDevice.GetCubemapFaceTarget(c.ArrayLayer), (int)c.MipLevel,
                                 (int)c.X, (int)c.Y, c.Width, c.Height, internalFormat, imageSize, offset);
                             break;
 
@@ -888,7 +729,7 @@ public class GLCommandList : CommandList
                             break;
 
                         case TextureTarget.TextureCubeMap:
-                            _device.GL.TexSubImage2D(GetCubemapFaceTarget(c.ArrayLayer), (int)c.MipLevel,
+                            _device.GL.TexSubImage2D(GLGraphiteDevice.GetCubemapFaceTarget(c.ArrayLayer), (int)c.MipLevel,
                                 (int)c.X, (int)c.Y, c.Width, c.Height, format, type, offset);
                             break;
 
@@ -972,7 +813,7 @@ public class GLCommandList : CommandList
                     {
                         case TextureTarget.TextureCubeMap:
                             // For cubemaps, read the specific face
-                            _device.GL.GetCompressedTexImage(GetCubemapFaceTarget(c.ArrayLayer), (int)c.MipLevel, offset);
+                            _device.GL.GetCompressedTexImage(GLGraphiteDevice.GetCubemapFaceTarget(c.ArrayLayer), (int)c.MipLevel, offset);
                             break;
 
                         default:
@@ -1017,7 +858,7 @@ public class GLCommandList : CommandList
 
                     case TextureTarget.TextureCubeMap:
                         _device.GL.FramebufferTexture2D(FramebufferTarget.ReadFramebuffer,
-                            attachment, GetCubemapFaceTarget(c.ArrayLayer), glTexture.Handle, (int)c.MipLevel);
+                            attachment, GLGraphiteDevice.GetCubemapFaceTarget(c.ArrayLayer), glTexture.Handle, (int)c.MipLevel);
                         break;
 
                     case TextureTarget.TextureCubeMapArray:
@@ -1081,17 +922,6 @@ public class GLCommandList : CommandList
                 (int)c.DestinationX, (int)c.DestinationY, dstZ,
                 c.Width, c.Height, c.Depth);
         });
-    }
-
-    /// <summary>
-    /// Converts a cubemap face index (0-5) to the corresponding OpenGL TextureTarget.
-    /// Face order: +X, -X, +Y, -Y, +Z, -Z
-    /// </summary>
-    private static TextureTarget GetCubemapFaceTarget(uint faceIndex)
-    {
-        if (faceIndex > 5)
-            throw new ArgumentOutOfRangeException(nameof(faceIndex), $"Cubemap face index must be 0-5, got {faceIndex}");
-        return (TextureTarget)((int)TextureTarget.TextureCubeMapPositiveX + (int)faceIndex);
     }
 
     // Complete pixel format mapping matching GLTexture.GetPixelFormat
@@ -1192,6 +1022,21 @@ public class GLCommandList : CommandList
     protected override void MemoryBarrierCore()
     {
         _commands.Add(() => _device.GL.MemoryBarrier(MemoryBarrierMask.AllBarrierBits));
+    }
+
+    protected override void GenerateMipmapsCore(Texture texture)
+    {
+        if (texture is not GLTexture glTexture)
+            return;
+
+        var target = glTexture.Target;
+        var handle = glTexture.Handle;
+        _commands.Add(() =>
+        {
+            _device.GL.BindTexture(target, handle);
+            _device.GL.GenerateMipmap(target);
+            _device.GL.BindTexture(target, 0);
+        });
     }
 
     #endregion

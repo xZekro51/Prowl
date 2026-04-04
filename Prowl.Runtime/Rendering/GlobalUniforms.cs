@@ -59,92 +59,55 @@ public struct GlobalUniformsData
 /// </summary>
 public static class GlobalUniforms
 {
-    private static GraphicsBuffer? s_uniformBuffer;
     private static GlobalUniformsData s_data;
     private static bool s_isDirty = true;
 
     /// <summary>
-    /// Per-upload Graphite buffer snapshot. Each <see cref="Upload"/> call
+    /// Per-upload Graphite buffer. Each <see cref="Upload"/> call
     /// creates a new buffer so that bind groups from different camera renders
     /// reference independent GPU memory, preventing data races when multiple
     /// command buffers are in flight.
     /// </summary>
-    private static GBuffer? s_graphiteSnapshot;
-
-    /// <summary>
-    /// Initializes the global uniform buffer
-    /// </summary>
-    public static void Initialize()
-    {
-        if (s_uniformBuffer == null)
-        {
-            // Create a dynamic uniform buffer
-            s_uniformBuffer = Graphics.CreateBuffer<GlobalUniformsData>(
-                BufferType.UniformBuffer,
-                [s_data],
-                true
-            );
-            s_isDirty = true;
-        }
-    }
+    private static GBuffer? s_graphiteBuffer;
 
     /// <summary>
     /// Updates the GPU buffer if data has changed.
-    /// On Graphite backends a new buffer is created for each upload so that
-    /// bind groups from the previous camera render keep referencing their own
-    /// immutable copy of the data.
+    /// A new buffer is created for each upload so that bind groups from the
+    /// previous camera render keep referencing their own immutable copy of
+    /// the data.
     /// </summary>
     public static void Upload()
     {
-        Initialize();
+        if (!s_isDirty || !Graphics.IsGraphiteReady)
+            return;
 
-        if (s_isDirty && s_uniformBuffer != null)
+        var prev = s_graphiteBuffer;
+
+        GlobalUniformsData[] arr = [s_data];
+        var bytes = MemoryMarshal.AsBytes(arr.AsSpan()).ToArray();
+
+        var desc = new BufferDescriptor
         {
-            Graphics.UpdateBuffer(s_uniformBuffer, 0, [s_data]);
+            SizeInBytes = (uint)GlobalUniformsData.SizeInBytes,
+            Usage = BufferUsage.Uniform,
+            MemoryAccess = MemoryAccess.CpuToGpu,
+            InitialData = bytes,
+        };
+        s_graphiteBuffer = Graphics.Graphite.CreateBuffer(in desc);
 
-            // Create a per-upload Graphite buffer snapshot so each camera
-            // render gets its own GPU buffer. This prevents data races when
-            // multiple command buffers are in flight on Vulkan.
-            if (Graphics.IsGraphiteReady)
-            {
-                var prev = s_graphiteSnapshot;
+        if (prev != null)
+            GraphiteMaterialBinder.Retire(prev);
 
-                GlobalUniformsData[] arr = [s_data];
-                var bytes = MemoryMarshal.AsBytes(arr.AsSpan()).ToArray();
-
-                var desc = new BufferDescriptor
-                {
-                    SizeInBytes = (uint)GlobalUniformsData.SizeInBytes,
-                    Usage = BufferUsage.Uniform,
-                    MemoryAccess = MemoryAccess.CpuToGpu,
-                    InitialData = bytes,
-                };
-                s_graphiteSnapshot = Graphics.Graphite.CreateBuffer(in desc);
-
-                if (prev != null)
-                    GraphiteMaterialBinder.Retire(prev);
-            }
-
-            s_isDirty = false;
-        }
+        s_isDirty = false;
     }
 
     /// <summary>
-    /// Gets the uniform buffer for binding to shaders
-    /// </summary>
-    public static GraphicsBuffer GetBuffer()
-    {
-        Initialize();
-        return s_uniformBuffer!;
-    }
-
-    /// <summary>
-    /// Gets the per-upload Graphite buffer snapshot for bind group creation.
+    /// Gets the per-upload Graphite buffer for bind group creation and GL UBO binding.
     /// Returns <c>null</c> before the first <see cref="Upload"/> call.
     /// </summary>
-    public static GBuffer? GetGraphiteBuffer()
+    public static GBuffer? GetBuffer()
     {
-        return s_graphiteSnapshot;
+        return s_graphiteBuffer;
     }
 
     /// <summary>
@@ -152,10 +115,8 @@ public static class GlobalUniforms
     /// </summary>
     public static void Dispose()
     {
-        s_graphiteSnapshot?.Dispose();
-        s_graphiteSnapshot = null;
-        s_uniformBuffer?.Dispose();
-        s_uniformBuffer = null;
+        s_graphiteBuffer?.Dispose();
+        s_graphiteBuffer = null;
     }
 
     // Camera matrix setters (per-frame data)

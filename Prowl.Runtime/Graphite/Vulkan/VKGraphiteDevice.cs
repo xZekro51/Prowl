@@ -2,6 +2,7 @@
 // Licensed under the MIT License. See the LICENSE file in the project root for details.
 
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
@@ -39,6 +40,18 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
     internal Queue PresentQueue { get; private set; }
     internal uint PresentQueueFamily { get; private set; }
     internal CommandPool CommandPool { get; private set; }
+
+    // Vulkan pipeline cache — accelerates pipeline creation by caching compiled
+    // shader data across pipeline objects, and supports serialization to disk
+    // for cross-session warm starts.
+    internal Silk.NET.Vulkan.PipelineCache PipelineCacheHandle { get; private set; }
+
+    // Dedicated transfer queue for async uploads (falls back to graphics queue)
+    internal Queue TransferQueue { get; private set; }
+    internal uint TransferQueueFamily { get; private set; }
+    internal CommandPool TransferCommandPool { get; private set; }
+    internal bool HasDedicatedTransferQueue { get; private set; }
+
     internal PhysicalDeviceMemoryProperties MemoryProperties { get; private set; }
 
     // KHR extensions
@@ -78,7 +91,7 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
     // Per-frame-slot deferred destruction for resources still referenced by in-flight command buffers.
     // Resources are retired into the current frame slot and destroyed in BeginFrame once the
     // corresponding fence has been signaled, guaranteeing the GPU is no longer using them.
-    private List<(List<Framebuffer> Framebuffers, CommandBuffer CommandBuffer)>[] _retiredResources = [];
+    private List<(List<Framebuffer> Framebuffers, CommandBuffer CommandBuffer, CommandPool SourcePool)>[] _retiredResources = [];
 
     // Sub-allocator for GPU memory (avoids the ~4096 vkAllocateMemory limit)
     internal VKMemoryAllocator MemoryAllocator { get; private set; } = null!;
@@ -89,11 +102,22 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
     // Per-frame ring buffer for per-draw uniform data (eliminates per-draw buffer creation)
     internal VKUniformRingBuffer UniformRingBuffer { get; private set; } = null!;
 
+    // ── VK Framebuffer Cache ─────────────────────────────────────
+    // Caches VkFramebuffer objects by their attachment configuration (render pass + image views
+    // + dimensions) to avoid per-render-pass create/destroy overhead in VKCommandList.
+    private readonly Dictionary<VKFramebufferCacheKey, Framebuffer> _framebufferCache = new();
+
     // Upload batch state (replaces per-upload QueueWaitIdle with batched fence-based submission)
     private CommandBuffer _batchCmdBuffer;
     private bool _isBatching;
     private readonly List<IDisposable> _batchResources = new();
     private VkFence _uploadFence;
+
+    // Per-thread command pools for parallel command recording.
+    // Each thread that creates a VKCommandList gets its own VkCommandPool,
+    // avoiding the need for external synchronization on pool operations.
+    private readonly ConcurrentDictionary<int, CommandPool> _threadCommandPools = new();
+    private readonly object _threadPoolCreationLock = new();
 
     /// <summary>Whether upload batching is currently active.</summary>
     internal bool IsUploadBatching => _isBatching;
@@ -137,6 +161,13 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
         Debug.Log("[Vulkan] Creating command pool...");
         CreateCommandPool();
 
+        // Create an empty VkPipelineCache. The driver will populate it as pipelines
+        // are created.  Call LoadPipelineCacheData() after init to seed it from disk.
+        var pipelineCacheInfo = new PipelineCacheCreateInfo { SType = StructureType.PipelineCacheCreateInfo };
+        Check(Vk.CreatePipelineCache(Device, &pipelineCacheInfo, null, out var pipelineCache));
+        PipelineCacheHandle = pipelineCache;
+        Debug.Log("[Vulkan] Pipeline cache created.");
+
         Vk.GetPhysicalDeviceMemoryProperties(PhysicalDevice, out var memProps);
         MemoryProperties = memProps;
 
@@ -148,7 +179,7 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
         Debug.Log("[Vulkan] Creating sync objects...");
         CreateSyncObjects();
 
-        _retiredResources = new List<(List<Framebuffer>, CommandBuffer)>[MaxFramesInFlight];
+        _retiredResources = new List<(List<Framebuffer>, CommandBuffer, CommandPool)>[MaxFramesInFlight];
         for (int i = 0; i < MaxFramesInFlight; i++)
             _retiredResources[i] = [];
 
@@ -300,6 +331,7 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
 
         uint graphicsFamily = uint.MaxValue;
         uint presentFamily = uint.MaxValue;
+        uint transferFamily = uint.MaxValue;
 
         for (uint i = 0; i < queueFamilyCount; i++)
         {
@@ -313,8 +345,26 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
                     presentFamily = i;
             }
 
-            if (graphicsFamily != uint.MaxValue && presentFamily != uint.MaxValue)
-                break;
+            // Prefer a dedicated transfer queue (transfer without graphics)
+            if (queueFamilies[i].QueueFlags.HasFlag(QueueFlags.TransferBit)
+                && !queueFamilies[i].QueueFlags.HasFlag(QueueFlags.GraphicsBit)
+                && transferFamily == uint.MaxValue)
+            {
+                transferFamily = i;
+            }
+        }
+
+        // Fall back: any queue with transfer capability that isn't the graphics queue
+        if (transferFamily == uint.MaxValue)
+        {
+            for (uint i = 0; i < queueFamilyCount; i++)
+            {
+                if (i != graphicsFamily && queueFamilies[i].QueueFlags.HasFlag(QueueFlags.TransferBit))
+                {
+                    transferFamily = i;
+                    break;
+                }
+            }
         }
 
         if (graphicsFamily == uint.MaxValue)
@@ -326,11 +376,14 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
 
         GraphicsQueueFamily = graphicsFamily;
         PresentQueueFamily = presentFamily;
-        Debug.Log($"[Vulkan] Queue families — graphics: {graphicsFamily}, present: {presentFamily}");
+        TransferQueueFamily = transferFamily != uint.MaxValue ? transferFamily : graphicsFamily;
+        HasDedicatedTransferQueue = transferFamily != uint.MaxValue;
+        Debug.Log($"[Vulkan] Queue families — graphics: {graphicsFamily}, present: {presentFamily}, " +
+            $"transfer: {TransferQueueFamily}{(HasDedicatedTransferQueue ? " (dedicated)" : " (shared with graphics)")}");
 
         // Build unique queue create infos
         float priority = 1.0f;
-        var uniqueFamilies = new HashSet<uint> { graphicsFamily, presentFamily };
+        var uniqueFamilies = new HashSet<uint> { graphicsFamily, presentFamily, TransferQueueFamily };
         var queueCreateInfos = new DeviceQueueCreateInfo[uniqueFamilies.Count];
         int idx = 0;
         foreach (var family in uniqueFamilies)
@@ -421,6 +474,9 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
         Vk.GetDeviceQueue(Device, presentFamily, 0, out var pQueue);
         PresentQueue = pQueue;
 
+        Vk.GetDeviceQueue(Device, TransferQueueFamily, 0, out var tQueue);
+        TransferQueue = tQueue;
+
         // Acquire the KHR swapchain extension from the device
         if (!Vk.TryGetDeviceExtension<KhrSwapchain>(VkInstance, Device, out _khrSwapchain))
             throw new InvalidOperationException("Failed to load VK_KHR_swapchain device extension.");
@@ -436,6 +492,23 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
         };
         Check(Vk.CreateCommandPool(Device, &poolInfo, null, out var pool));
         CommandPool = pool;
+
+        // Create a separate command pool for the transfer queue
+        if (HasDedicatedTransferQueue)
+        {
+            var transferPoolInfo = new CommandPoolCreateInfo
+            {
+                SType = StructureType.CommandPoolCreateInfo,
+                QueueFamilyIndex = TransferQueueFamily,
+                Flags = CommandPoolCreateFlags.ResetCommandBufferBit,
+            };
+            Check(Vk.CreateCommandPool(Device, &transferPoolInfo, null, out var tPool));
+            TransferCommandPool = tPool;
+        }
+        else
+        {
+            TransferCommandPool = pool;
+        }
     }
 
     private void CreateSurface()
@@ -608,6 +681,10 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
 
     private void CleanupSwapchainResources()
     {
+        // Swapchain image views are about to be destroyed — invalidate any
+        // cached framebuffers that reference them.
+        ClearFramebufferCache();
+
         foreach (var view in _swapchainImageViews)
         {
             if (view.Handle != 0)
@@ -738,9 +815,12 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
     public override void SubmitCommands(CommandList commandList)
     {
         ThrowIfDisposed();
+        if (IsDeviceLost) return;
         if (commandList is not VKCommandList vkCmd)
             throw new ArgumentException("Command list is not a Vulkan command list.", nameof(commandList));
 
+        // Capture debug marker context before submit for crash diagnostics.
+        string markerPath = commandList.DebugMarkerPath;
         var cb = vkCmd.Handle;
 
         // When the first command list renders to the swapchain, consume
@@ -763,7 +843,7 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
                 CommandBufferCount = 1,
                 PCommandBuffers = &cb,
             };
-            Check(Vk.QueueSubmit(GraphicsQueue, 1, &submitInfo, default));
+            CheckInstance(Vk.QueueSubmit(GraphicsQueue, 1, &submitInfo, default), markerPath);
             _frameSyncConsumed = true;
         }
         else
@@ -774,13 +854,14 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
                 CommandBufferCount = 1,
                 PCommandBuffers = &cb,
             };
-            Check(Vk.QueueSubmit(GraphicsQueue, 1, &submitInfo, default));
+            CheckInstance(Vk.QueueSubmit(GraphicsQueue, 1, &submitInfo, default), markerPath);
         }
     }
 
     public override void SubmitCommands(ReadOnlySpan<CommandList> commandLists)
     {
         ThrowIfDisposed();
+        if (IsDeviceLost) return;
         var buffers = stackalloc CommandBuffer[commandLists.Length];
         for (int i = 0; i < commandLists.Length; i++)
         {
@@ -795,12 +876,13 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
             CommandBufferCount = (uint)commandLists.Length,
             PCommandBuffers = buffers,
         };
-        Check(Vk.QueueSubmit(GraphicsQueue, 1, &submitInfo, default));
+        CheckInstance(Vk.QueueSubmit(GraphicsQueue, 1, &submitInfo, default));
     }
 
     public override void SubmitCommands(CommandList commandList, Fence fence)
     {
         ThrowIfDisposed();
+        if (IsDeviceLost) return;
         if (commandList is not VKCommandList vkCmd)
             throw new ArgumentException("Command list is not a Vulkan command list.", nameof(commandList));
 
@@ -815,7 +897,7 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
             CommandBufferCount = 1,
             PCommandBuffers = &cb,
         };
-        Check(Vk.QueueSubmit(GraphicsQueue, 1, &submitInfo, vkFence));
+        CheckResult(Vk.QueueSubmit(GraphicsQueue, 1, &submitInfo, vkFence));
     }
 
     #endregion
@@ -853,6 +935,49 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
         CreateSwapchain(width, height);
     }
 
+    /// <inheritdoc/>
+    public override byte[]? GetPipelineCacheData()
+    {
+        ThrowIfDisposed();
+        if (PipelineCacheHandle.Handle == 0)
+            return null;
+
+        nuint dataSize = 0;
+        Check(Vk.GetPipelineCacheData(Device, PipelineCacheHandle, &dataSize, null));
+        if (dataSize == 0)
+            return null;
+
+        byte[] data = new byte[dataSize];
+        fixed (byte* pData = data)
+            Check(Vk.GetPipelineCacheData(Device, PipelineCacheHandle, &dataSize, pData));
+        return data;
+    }
+
+    /// <inheritdoc/>
+    public override void LoadPipelineCacheData(ReadOnlySpan<byte> data)
+    {
+        ThrowIfDisposed();
+        if (data.IsEmpty)
+            return;
+
+        // Destroy the current empty cache and recreate with the supplied data
+        if (PipelineCacheHandle.Handle != 0)
+            Vk.DestroyPipelineCache(Device, PipelineCacheHandle, null);
+
+        fixed (byte* pData = data)
+        {
+            var createInfo = new PipelineCacheCreateInfo
+            {
+                SType = StructureType.PipelineCacheCreateInfo,
+                InitialDataSize = (nuint)data.Length,
+                PInitialData = pData,
+            };
+            Check(Vk.CreatePipelineCache(Device, &createInfo, null, out var pipelineCache));
+            PipelineCacheHandle = pipelineCache;
+        }
+        Debug.Log($"[Vulkan] Pipeline cache loaded ({data.Length} bytes).");
+    }
+
     #endregion
 
     #region Resource Updates
@@ -869,6 +994,7 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
     public override void UpdateBuffer<T>(Buffer buffer, uint offsetInBytes, ReadOnlySpan<T> data)
     {
         ThrowIfDisposed();
+        if (IsDeviceLost) return;
         if (buffer is not VKBuffer vkBuffer)
             return;
 
@@ -918,6 +1044,7 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
     public override void UpdateTexture(Texture texture, in TextureUpdateDescriptor descriptor, ReadOnlySpan<byte> data)
     {
         ThrowIfDisposed();
+        if (IsDeviceLost) return;
         if (texture is not VKTexture vkTexture)
             return;
 
@@ -966,6 +1093,7 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
     public override void ReadbackTexture(Texture texture, uint mipLevel, uint arrayLayer, Span<byte> destination)
     {
         ThrowIfDisposed();
+        if (IsDeviceLost) return;
         if (texture is not VKTexture vkTexture)
             return;
 
@@ -1026,6 +1154,7 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
     public override void GenerateMipmaps(Texture texture)
     {
         ThrowIfDisposed();
+        if (IsDeviceLost) return;
         if (texture is not VKTexture vkTexture || vkTexture.MipLevels <= 1)
             return;
 
@@ -1098,6 +1227,8 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
     public override bool BeginFrame()
     {
         ThrowIfDisposed();
+        if (IsDeviceLost)
+            return false;
         if (_khrSwapchain == null)
             return true;
 
@@ -1106,7 +1237,8 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
         var waitResult = Vk.WaitForFences(Device, 1, &fence, true, ulong.MaxValue);
         if (waitResult == Result.ErrorDeviceLost)
         {
-            Debug.LogError("[Vulkan] Device lost while waiting for frame fence.");
+            IsDeviceLost = true;
+            Debug.LogError("[Vulkan] Device lost detected waiting for in-flight fence in BeginFrame.");
             return false;
         }
 
@@ -1130,8 +1262,15 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
             return false;
         }
 
+        if (result == Result.ErrorDeviceLost)
+        {
+            IsDeviceLost = true;
+            Debug.LogError("[Vulkan] Device lost detected during swapchain image acquisition.");
+            return false;
+        }
+
         if (result != Result.Success && result != Result.SuboptimalKhr)
-            Check(result);
+            CheckResult(result);
 
         // Only reset the fence if we know we're going to submit work
         Vk.ResetFences(Device, 1, &fence);
@@ -1142,6 +1281,11 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
     public override bool Present()
     {
         ThrowIfDisposed();
+        if (IsDeviceLost)
+        {
+            _currentFrame = (_currentFrame + 1) % MaxFramesInFlight;
+            return false;
+        }
         if (_khrSwapchain == null)
             return true;
 
@@ -1174,7 +1318,7 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
                 syncSubmit.PWaitDstStageMask = &waitStage;
             }
 
-            Check(Vk.QueueSubmit(GraphicsQueue, 1, &syncSubmit, _inFlightFences[_currentFrame]));
+            CheckResult(Vk.QueueSubmit(GraphicsQueue, 1, &syncSubmit, _inFlightFences[_currentFrame]));
         }
 
         var waitSemaphore = _renderFinishedSemaphores[_currentFrame];
@@ -1199,9 +1343,14 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
             RecreateSwapchain();
             // Frame was presented (or discarded) — still advance
         }
+        else if (result == Result.ErrorDeviceLost)
+        {
+            IsDeviceLost = true;
+            Debug.LogError("[Vulkan] Device lost detected during Present.");
+        }
         else if (result != Result.Success)
         {
-            Check(result);
+            CheckResult(result);
         }
 
         _currentFrame = (_currentFrame + 1) % MaxFramesInFlight;
@@ -1213,9 +1362,10 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
         var fbSize = Window.InternalWindow.FramebufferSize;
         while (fbSize.X == 0 || fbSize.Y == 0)
         {
-            // Window is minimised — wait for it to become visible again
-            fbSize = Window.InternalWindow.FramebufferSize;
+            // Window is minimised — sleep to avoid burning CPU, then poll for restore.
+            System.Threading.Thread.Sleep(100);
             Window.InternalWindow.DoEvents();
+            fbSize = Window.InternalWindow.FramebufferSize;
         }
 
         Vk.DeviceWaitIdle(Device);
@@ -1270,6 +1420,19 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
         if (_isBatching)
             return;
 
+        // Device is lost — end and free the command buffer without submitting.
+        if (IsDeviceLost)
+        {
+            Vk.EndCommandBuffer(commandBuffer);
+            Vk.FreeCommandBuffers(Device, CommandPool, 1, &commandBuffer);
+            return;
+        }
+
+#if DEBUG
+        Debug.LogWarning("[VKGraphiteDevice] Synchronous EndSingleTimeCommands — CPU stall while " +
+            "GPU executes the upload.  Prefer BeginUploadBatch/FlushUploadBatch for bulk uploads.");
+#endif
+
         Vk.EndCommandBuffer(commandBuffer);
 
         var submitInfo = new SubmitInfo
@@ -1280,9 +1443,9 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
         };
         // Use a fence instead of QueueWaitIdle to avoid stalling unrelated GPU work
         var fence = _uploadFence;
-        Check(Vk.QueueSubmit(GraphicsQueue, 1, &submitInfo, fence));
-        Check(Vk.WaitForFences(Device, 1, &fence, true, ulong.MaxValue));
-        Check(Vk.ResetFences(Device, 1, &fence));
+        CheckResult(Vk.QueueSubmit(GraphicsQueue, 1, &submitInfo, fence));
+        CheckResult(Vk.WaitForFences(Device, 1, &fence, true, ulong.MaxValue));
+        CheckResult(Vk.ResetFences(Device, 1, &fence));
         Vk.FreeCommandBuffers(Device, CommandPool, 1, &commandBuffer);
     }
 
@@ -1301,16 +1464,16 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
     /// calls will record into the shared batch buffer. Call <see cref="FlushUploadBatch"/>
     /// to submit all batched work at once, avoiding per-upload pipeline stalls.
     /// </summary>
-    public void BeginUploadBatch()
+    public override void BeginUploadBatch()
     {
-        if (_isBatching) return;
+        if (_isBatching || IsDeviceLost) return;
         _isBatching = true;
 
         var allocInfo = new CommandBufferAllocateInfo
         {
             SType = StructureType.CommandBufferAllocateInfo,
             Level = CommandBufferLevel.Primary,
-            CommandPool = CommandPool,
+            CommandPool = TransferCommandPool,
             CommandBufferCount = 1,
         };
 
@@ -1328,10 +1491,22 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
     /// Submits all batched upload commands and waits for completion using a fence.
     /// Frees all staging resources that were tracked during the batch.
     /// </summary>
-    public void FlushUploadBatch()
+    public override void FlushUploadBatch()
     {
         if (!_isBatching) return;
         _isBatching = false;
+
+        // Device lost — discard the batch without submitting.
+        if (IsDeviceLost)
+        {
+            Vk.EndCommandBuffer(_batchCmdBuffer);
+            var discardCb = _batchCmdBuffer;
+            Vk.FreeCommandBuffers(Device, TransferCommandPool, 1, &discardCb);
+            foreach (var r in _batchResources)
+                try { r.Dispose(); } catch { }
+            _batchResources.Clear();
+            return;
+        }
 
         Vk.EndCommandBuffer(_batchCmdBuffer);
 
@@ -1343,10 +1518,10 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
             PCommandBuffers = &cb,
         };
         var fence = _uploadFence;
-        Check(Vk.QueueSubmit(GraphicsQueue, 1, &submitInfo, fence));
-        Check(Vk.WaitForFences(Device, 1, &fence, true, ulong.MaxValue));
-        Check(Vk.ResetFences(Device, 1, &fence));
-        Vk.FreeCommandBuffers(Device, CommandPool, 1, &cb);
+        CheckResult(Vk.QueueSubmit(TransferQueue, 1, &submitInfo, fence));
+        CheckResult(Vk.WaitForFences(Device, 1, &fence, true, ulong.MaxValue));
+        CheckResult(Vk.ResetFences(Device, 1, &fence));
+        Vk.FreeCommandBuffers(Device, TransferCommandPool, 1, &cb);
 
         // Free staging resources
         foreach (var r in _batchResources)
@@ -1488,24 +1663,89 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
     }
 
     /// <summary>
+    /// Returns a cached <see cref="Framebuffer"/> for the given configuration, creating one
+    /// if no cached entry exists. The returned framebuffer is owned by the cache and must
+    /// NOT be destroyed by the caller.
+    /// </summary>
+    internal Framebuffer GetOrCreateFramebuffer(RenderPass renderPass, ReadOnlySpan<ImageView> imageViews, uint width, uint height)
+    {
+        VKFramebufferCacheKey key = new(renderPass, imageViews, width, height);
+        if (_framebufferCache.TryGetValue(key, out Framebuffer cached))
+            return cached;
+
+        fixed (ImageView* pViews = imageViews)
+        {
+            var fbInfo = new FramebufferCreateInfo
+            {
+                SType = StructureType.FramebufferCreateInfo,
+                RenderPass = renderPass,
+                AttachmentCount = (uint)imageViews.Length,
+                PAttachments = pViews,
+                Width = width,
+                Height = height,
+                Layers = 1,
+            };
+            Check(Vk.CreateFramebuffer(Device, &fbInfo, null, out Framebuffer fb));
+            _framebufferCache[key] = fb;
+            return fb;
+        }
+    }
+
+    /// <summary>
+    /// Removes and destroys all cached framebuffers that reference the given <see cref="ImageView"/>.
+    /// Called when a <see cref="VKTexture"/> is disposed.
+    /// </summary>
+    internal void InvalidateFramebuffersForImageView(ImageView imageView)
+    {
+        List<VKFramebufferCacheKey>? toRemove = null;
+        foreach (KeyValuePair<VKFramebufferCacheKey, Framebuffer> pair in _framebufferCache)
+        {
+            if (pair.Key.ReferencesImageView(imageView))
+            {
+                toRemove ??= new List<VKFramebufferCacheKey>();
+                toRemove.Add(pair.Key);
+            }
+        }
+
+        if (toRemove != null)
+        {
+            foreach (VKFramebufferCacheKey key in toRemove)
+            {
+                if (_framebufferCache.Remove(key, out Framebuffer fb))
+                    Vk.DestroyFramebuffer(Device, fb, null);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Destroys all cached framebuffers. Called during swapchain recreation and device disposal.
+    /// </summary>
+    private void ClearFramebufferCache()
+    {
+        foreach (Framebuffer fb in _framebufferCache.Values)
+            Vk.DestroyFramebuffer(Device, fb, null);
+        _framebufferCache.Clear();
+    }
+
+    /// <summary>
     /// Moves framebuffers and the command buffer from a disposed <see cref="VKCommandList"/>
     /// into the current frame slot's retirement list so they are destroyed only after the
     /// GPU has finished executing the commands that reference them.
     /// </summary>
-    internal void RetireCommandListResources(List<Framebuffer> framebuffers, CommandBuffer commandBuffer)
+    internal void RetireCommandListResources(List<Framebuffer> framebuffers, CommandBuffer commandBuffer, CommandPool sourcePool)
     {
-        _retiredResources[_currentFrame].Add((framebuffers, commandBuffer));
+        _retiredResources[_currentFrame].Add((framebuffers, commandBuffer, sourcePool));
     }
 
     private void FlushRetiredResources(int frameSlot)
     {
         var list = _retiredResources[frameSlot];
-        foreach (var (framebuffers, cb) in list)
+        foreach (var (framebuffers, cb, sourcePool) in list)
         {
             foreach (var fb in framebuffers)
                 Vk.DestroyFramebuffer(Device, fb, null);
             var cbLocal = cb;
-            Vk.FreeCommandBuffers(Device, CommandPool, 1, &cbLocal);
+            Vk.FreeCommandBuffers(Device, sourcePool, 1, &cbLocal);
         }
         list.Clear();
     }
@@ -1601,8 +1841,89 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
         }
     }
 
+    /// <summary>
+    /// Returns a <see cref="CommandPool"/> for the current thread, creating one lazily
+    /// if needed. Each thread gets its own pool to allow lock-free parallel command
+    /// buffer recording. The returned pool is owned by the device and must NOT be
+    /// destroyed by the caller.
+    /// </summary>
+    internal CommandPool GetGraphicsCommandPool()
+    {
+        int threadId = Environment.CurrentManagedThreadId;
+        if (_threadCommandPools.TryGetValue(threadId, out CommandPool existing))
+            return existing;
+
+        lock (_threadPoolCreationLock)
+        {
+            // Double-check after acquiring lock
+            if (_threadCommandPools.TryGetValue(threadId, out existing))
+                return existing;
+
+            var poolInfo = new CommandPoolCreateInfo
+            {
+                SType = StructureType.CommandPoolCreateInfo,
+                QueueFamilyIndex = GraphicsQueueFamily,
+                Flags = CommandPoolCreateFlags.ResetCommandBufferBit,
+            };
+            Check(Vk.CreateCommandPool(Device, &poolInfo, null, out CommandPool pool));
+            _threadCommandPools[threadId] = pool;
+            return pool;
+        }
+    }
+
+    internal void CheckInstance(Result result, [CallerMemberName] string? caller = null)
+    {
+        CheckResult(result, caller);
+    }
+
+    internal void CheckInstance(Result result, string? markerContext, [CallerMemberName] string? caller = null)
+    {
+        CheckResult(result, markerContext, caller);
+    }
+
+    /// <summary>
+    /// Unified Vulkan result checker. Handles <c>ErrorDeviceLost</c> by setting
+    /// <see cref="GraphiteDevice.IsDeviceLost"/> and logs context for debugging.
+    /// All call sites should use this (or the static convenience overload) instead
+    /// of ad-hoc result checking.
+    /// </summary>
+    internal void CheckResult(Result result, [CallerMemberName] string? caller = null)
+    {
+        CheckResult(result, null, caller);
+    }
+
+    /// <summary>
+    /// Vulkan result checker with optional debug marker context for crash diagnostics.
+    /// When <paramref name="markerContext"/> is provided it is included in the error
+    /// log to identify which rendering stage triggered the failure.
+    /// </summary>
+    internal void CheckResult(Result result, string? markerContext, [CallerMemberName] string? caller = null)
+    {
+        if (result == Result.ErrorDeviceLost)
+        {
+            IsDeviceLost = true;
+            string context = string.IsNullOrEmpty(markerContext)
+                ? string.Empty
+                : $" | Debug marker path: [{markerContext}]";
+            Debug.LogError($"[Vulkan] Device lost detected in {caller}.{context} All subsequent GPU operations will be skipped.");
+        }
+
+        if (result != Result.Success)
+        {
+            string context = string.IsNullOrEmpty(markerContext)
+                ? string.Empty
+                : $" (debug markers: {markerContext})";
+            throw new InvalidOperationException($"Vulkan error in {caller}: {result}{context}");
+        }
+    }
+
     internal static void Check(Result result, [CallerMemberName] string? caller = null)
     {
+        if (result == Result.ErrorDeviceLost)
+        {
+            Debug.LogError($"[Vulkan] Device lost detected in {caller} (static check). This may not be recoverable.");
+        }
+
         if (result != Result.Success)
             throw new InvalidOperationException($"Vulkan error in {caller}: {result}");
     }
@@ -1622,12 +1943,18 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
         {
             for (int i = 0; i < _retiredResources.Length; i++)
                 FlushRetiredResources(i);
+
+            ClearFramebufferCache();
         }
 
         // Dispose new sub-systems before destroying the device
         UniformRingBuffer?.Dispose();
         DescriptorPoolManager?.Dispose();
         MemoryAllocator?.Dispose();
+
+        // Destroy pipeline cache before device
+        if (hasDevice && PipelineCacheHandle.Handle != 0)
+            Vk.DestroyPipelineCache(Device, PipelineCacheHandle, null);
 
         if (hasDevice && _uploadFence.Handle != 0)
             Vk.DestroyFence(Device, _uploadFence, null);
@@ -1659,6 +1986,17 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
 
             if (CommandPool.Handle != 0)
                 Vk.DestroyCommandPool(Device, CommandPool, null);
+
+            if (HasDedicatedTransferQueue && TransferCommandPool.Handle != 0)
+                Vk.DestroyCommandPool(Device, TransferCommandPool, null);
+
+            // Destroy per-thread command pools
+            foreach (CommandPool pool in _threadCommandPools.Values)
+            {
+                if (pool.Handle != 0)
+                    Vk.DestroyCommandPool(Device, pool, null);
+            }
+            _threadCommandPools.Clear();
         }
 
         if (hasDevice)
@@ -1786,5 +2124,78 @@ internal struct RenderPassKey : IEquatable<RenderPassKey>
         }
 
         return true;
+    }
+}
+
+/// <summary>
+/// Key for caching Vulkan framebuffers by their render pass, image view attachments, and dimensions.
+/// Supports up to 9 attachments (8 color + 1 depth).
+/// </summary>
+internal readonly struct VKFramebufferCacheKey : IEquatable<VKFramebufferCacheKey>
+{
+    private readonly ulong _renderPass;
+    private readonly ulong _v0, _v1, _v2, _v3, _v4, _v5, _v6, _v7, _v8;
+    private readonly byte _viewCount;
+    private readonly uint _width;
+    private readonly uint _height;
+
+    public VKFramebufferCacheKey(RenderPass renderPass, ReadOnlySpan<ImageView> imageViews, uint width, uint height)
+    {
+        _renderPass = renderPass.Handle;
+        _v0 = _v1 = _v2 = _v3 = _v4 = _v5 = _v6 = _v7 = _v8 = 0;
+        _viewCount = (byte)Math.Min(imageViews.Length, 9);
+        _width = width;
+        _height = height;
+
+        for (int i = 0; i < _viewCount; i++)
+        {
+            ulong h = imageViews[i].Handle;
+            switch (i)
+            {
+                case 0: _v0 = h; break;
+                case 1: _v1 = h; break;
+                case 2: _v2 = h; break;
+                case 3: _v3 = h; break;
+                case 4: _v4 = h; break;
+                case 5: _v5 = h; break;
+                case 6: _v6 = h; break;
+                case 7: _v7 = h; break;
+                case 8: _v8 = h; break;
+            }
+        }
+    }
+
+    public bool ReferencesImageView(ImageView imageView)
+    {
+        ulong h = imageView.Handle;
+        Span<ulong> slots = stackalloc ulong[] { _v0, _v1, _v2, _v3, _v4, _v5, _v6, _v7, _v8 };
+        for (int i = 0; i < _viewCount; i++)
+        {
+            if (slots[i] == h)
+                return true;
+        }
+        return false;
+    }
+
+    public bool Equals(VKFramebufferCacheKey other)
+        => _renderPass == other._renderPass
+        && _v0 == other._v0 && _v1 == other._v1 && _v2 == other._v2 && _v3 == other._v3
+        && _v4 == other._v4 && _v5 == other._v5 && _v6 == other._v6 && _v7 == other._v7
+        && _v8 == other._v8
+        && _viewCount == other._viewCount && _width == other._width && _height == other._height;
+
+    public override bool Equals(object? obj) => obj is VKFramebufferCacheKey other && Equals(other);
+
+    public override int GetHashCode()
+    {
+        HashCode h = new();
+        h.Add(_renderPass);
+        h.Add(_viewCount);
+        h.Add(_width);
+        h.Add(_height);
+        h.Add(_v0); h.Add(_v1); h.Add(_v2); h.Add(_v3);
+        h.Add(_v4); h.Add(_v5); h.Add(_v6); h.Add(_v7);
+        h.Add(_v8);
+        return h.ToHashCode();
     }
 }

@@ -82,6 +82,31 @@ public static class Debug
     public static EventManager<DebugEvents.EventTypes> DebugEventManager
         => DebugEvents.Manager;
 
+    /// <summary>
+    /// When <c>true</c>, subsystems emit detailed trace-level logs via
+    /// <see cref="LogTrace"/>. Enabled by the <c>--debug</c> CLI flag.
+    /// </summary>
+    public static bool IsVerbose { get; set; }
+
+    /// <summary>
+    /// Tracks the last high-level engine phase that was entered (e.g. "Render.Shadows",
+    /// "Update.FixedUpdate"). Updated automatically by the game loop when
+    /// <see cref="IsVerbose"/> is <c>true</c>. Included in crash reports to help
+    /// pinpoint the location of a crash.
+    /// </summary>
+    public static string LastPhase { get; set; } = "(none)";
+
+    /// <summary>
+    /// Logs a trace-level message only when <see cref="IsVerbose"/> is <c>true</c>.
+    /// Use this for high-frequency diagnostic output that would be too noisy for
+    /// normal operation.
+    /// </summary>
+    public static void LogTrace(string message)
+    {
+        if (!IsVerbose) return;
+        Log(message, LogSeverity.Normal);
+    }
+
     public static void Log(object message)
         => Log(message != null ? message.ToString() : "null", LogSeverity.Normal);
 

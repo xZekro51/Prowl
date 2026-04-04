@@ -2,6 +2,7 @@
 // Licensed under the MIT License. See the LICENSE file in the project root for details.
 
 using System;
+using System.Collections.Generic;
 
 using Prowl.Vector;
 
@@ -16,12 +17,36 @@ public abstract class CommandList : IDisposable
     private bool _disposed;
     private bool _isRecording;
     private bool _inRenderPass;
+    private readonly Stack<string> _debugMarkerStack = new();
 
     /// <summary>Whether the command list is currently recording.</summary>
     public bool IsRecording => _isRecording;
 
     /// <summary>Whether a render pass is currently active.</summary>
     public bool InRenderPass => _inRenderPass;
+
+    /// <summary>
+    /// Returns the name of the innermost active debug group, or <c>null</c> if none.
+    /// Used for crash diagnostics to identify which GPU operation was in progress.
+    /// </summary>
+    public string? CurrentDebugMarker => _debugMarkerStack.Count > 0 ? _debugMarkerStack.Peek() : null;
+
+    /// <summary>
+    /// Returns the full debug marker path as "Outer > Middle > Inner", or an empty string if none.
+    /// Useful for detailed crash reporting to show the full rendering context.
+    /// </summary>
+    public string DebugMarkerPath
+    {
+        get
+        {
+            if (_debugMarkerStack.Count == 0)
+                return string.Empty;
+            // Stack enumerates top-to-bottom; reverse to get outer-to-inner order.
+            string[] items = _debugMarkerStack.ToArray();
+            Array.Reverse(items);
+            return string.Join(" > ", items);
+        }
+    }
 
     #region Recording
 
@@ -365,6 +390,19 @@ public abstract class CommandList : IDisposable
     protected abstract void ResourceBarrierCore(in ResourceBarrier barrier);
     protected abstract void MemoryBarrierCore();
 
+    /// <summary>
+    /// Generates mipmaps for a texture using hardware-accelerated filtering.
+    /// Must be called outside a render pass.
+    /// </summary>
+    public void GenerateMipmaps(Texture texture)
+    {
+        ThrowIfNotRecording();
+        ThrowIfInRenderPass("GenerateMipmaps cannot be issued inside a render pass.");
+        GenerateMipmapsCore(texture);
+    }
+
+    protected abstract void GenerateMipmapsCore(Texture texture);
+
     #endregion
 
     #region Debug Markers
@@ -375,6 +413,7 @@ public abstract class CommandList : IDisposable
     public void PushDebugGroup(string name)
     {
         ThrowIfNotRecording();
+        _debugMarkerStack.Push(name);
         PushDebugGroupCore(name);
     }
 
@@ -384,6 +423,7 @@ public abstract class CommandList : IDisposable
     public void PopDebugGroup()
     {
         ThrowIfNotRecording();
+        _debugMarkerStack.TryPop(out _);
         PopDebugGroupCore();
     }
 

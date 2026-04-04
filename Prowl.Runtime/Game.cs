@@ -3,7 +3,10 @@
 
 using System;
 using System.Diagnostics.CodeAnalysis;
+using System.IO;
+using System.Runtime.InteropServices;
 using System.Text;
+using System.Threading.Tasks;
 
 using Echo.Logging;
 
@@ -159,26 +162,36 @@ public abstract class Game
     {
         try
         {
+            Debug.LastPhase = "Update.BeginFrame";
             Profiler.BeginFrame();
 
+            Debug.LastPhase = "Update.FrameBegin";
             EventSystem.GameLoopEvents.InvokeOnFrameBegin(
                 new EventSystem.FrameBeginArgs(frameCounter, delta));
 
             using (Profiler.Section("Input"))
             {
+                Debug.LastPhase = "Update.Input";
                 UpdatePaperInput();
                 Input.UpdateActions(delta);
             }
 
             using (Profiler.Section("Audio"))
+            {
+                Debug.LastPhase = "Update.Audio";
                 AudioContext.Update();
+            }
 
+            Debug.LastPhase = "Update.Time";
             time.Update();
             Time.TimeStack.Clear();
             Time.TimeStack.Push(time);
 
             using (Profiler.Section("BeginUpdate"))
+            {
+                Debug.LastPhase = "Update.BeginUpdate";
                 BeginUpdate();
+            }
 
             // Cache once — each access takes a lock.
             int loadedScenes = SceneManager.LoadedSceneCount;
@@ -186,6 +199,7 @@ public abstract class Game
             // Fixed update loop — update all loaded scenes
             using (Profiler.Section("FixedUpdate"))
             {
+                Debug.LastPhase = "Update.FixedUpdate";
                 fixedTimeAccumulator += delta;
                 int count = 0;
                 while (fixedTimeAccumulator >= Time.FixedDeltaTime && count++ < 10)
@@ -204,6 +218,7 @@ public abstract class Game
 
             using (Profiler.Section("Update"))
             {
+                Debug.LastPhase = "Update.SceneUpdate";
                 if (loadedScenes > 0)
                     SceneManager.UpdateAll();
                 else
@@ -214,6 +229,7 @@ public abstract class Game
             {
                 using (Profiler.Section("Gizmos"))
                 {
+                    Debug.LastPhase = "Update.Gizmos";
                     if (loadedScenes > 0)
                         SceneManager.DrawGizmosAll();
                     else
@@ -222,8 +238,12 @@ public abstract class Game
             }
 
             using (Profiler.Section("EndUpdate"))
+            {
+                Debug.LastPhase = "Update.EndUpdate";
                 EndUpdate();
+            }
 
+            Debug.LastPhase = "Update.FrameEnd";
             EventSystem.GameLoopEvents.InvokeOnFrameEnd(
                 new EventSystem.FrameEndArgs(
                     frameCounter,
@@ -234,10 +254,11 @@ public abstract class Game
             frameCounter++;
             UpdateWindowTitle();
 
+            Debug.LastPhase = "Update.Complete";
         }
         catch (Exception e)
         {
-            Debug.LogError("An exception occurred during the Update loop:");
+            Debug.LogError($"An exception occurred during the Update loop (phase: {Debug.LastPhase}):");
             Debug.LogError(e.ToString());
             if (!HandleFrameException(e, "Update"))
                 throw;
@@ -252,11 +273,22 @@ public abstract class Game
         // are written to the log before the process terminates.
         AppDomain.CurrentDomain.UnhandledException += (_, args) =>
         {
-            Debug.LogError($"[FATAL] Unhandled exception (isTerminating={args.IsTerminating}): {args.ExceptionObject}");
+            Debug.LogError($"[FATAL] Unhandled exception (isTerminating={args.IsTerminating}), lastPhase={Debug.LastPhase}: {args.ExceptionObject}");
+            WriteCrashReport(args.ExceptionObject as Exception, "UnhandledException");
+        };
+
+        // Catch unobserved Task exceptions so async errors are not silently lost.
+        TaskScheduler.UnobservedTaskException += (_, args) =>
+        {
+            Debug.LogError($"[FATAL] Unobserved task exception, lastPhase={Debug.LastPhase}: {args.Exception}");
+            WriteCrashReport(args.Exception, "UnobservedTaskException");
         };
 
         // Create a fresh engine context for this game instance.
         EngineContext.Current = new EngineContext();
+
+        // Log system and environment info for diagnostics.
+        LogSystemInfo(backend);
 
         Debug.Log($"[Game.Run] Requested backend: {backend}");
 
@@ -447,58 +479,62 @@ public abstract class Game
         {
             // === Start Graphics ===
 
-            if (Graphics.IsOpenGL)
-            {
-                Graphics.InvalidateLegacyCaches();
-                Graphics.UnbindFramebuffer();
-                Graphics.Viewport(0, 0, (uint)Window.InternalWindow.FramebufferSize.X, (uint)Window.InternalWindow.FramebufferSize.Y);
-                Graphics.SetState(new(), true);
-                Graphics.BindVertexArray(null);
-                Graphics.Clear(0, 0, 0, 1, ClearFlags.Color | ClearFlags.Depth | ClearFlags.Stencil);
-            }
-
             // Reset per-frame swapchain tracking so the first render pass
             // targeting the swapchain knows to use Clear (Vulkan layout transition).
             Graphics.SwapchainClearedThisFrame = false;
 
             // Scene rendering is wrapped separately so that failures here
             // do not prevent UI from rendering.
+            // Skip all GPU rendering if the device has been lost — continuing
+            // would produce cascading Vulkan errors on every submission.
+            bool deviceLost = Graphics.IsGraphiteReady && Graphics.Graphite.IsDeviceLost;
+            if (deviceLost)
+                Graphics.OnDeviceLost();
             try
             {
-                using (Profiler.Section("Shadows"))
+                if (!deviceLost)
                 {
-                    Rendering.ShadowAtlas.TryInitialize();
-                    Rendering.ShadowAtlas.Clear();
+                    using (Profiler.Section("Shadows"))
+                    {
+                        Debug.LastPhase = "Render.Shadows";
+                        Rendering.ShadowAtlas.TryInitialize();
+                        Rendering.ShadowAtlas.Clear();
+                    }
+
+                    Debug.LastPhase = "Render.ShadowsReady";
+                    EventSystem.RenderingEvents.InvokeOnShadowsReady();
+
+                    using (Profiler.Section("BeginRender"))
+                    {
+                        Debug.LastPhase = "Render.BeginRender";
+                        BeginRender();
+                    }
+
+                    Debug.LastPhase = "Render.BeginRenderEvent";
+                    EventSystem.RenderingEvents.InvokeOnBeginRender();
+
+                    using (Profiler.Section("RenderScenes"))
+                    {
+                        Debug.LastPhase = "Render.Scenes";
+                        RenderScenes();
+                    }
+
+                    using (Profiler.Section("EndRender"))
+                    {
+                        Debug.LastPhase = "Render.EndRender";
+                        EndRender();
+                    }
+
+                    Debug.LastPhase = "Render.EndRenderEvent";
+                    EventSystem.RenderingEvents.InvokeOnEndRender();
                 }
-
-                EventSystem.RenderingEvents.InvokeOnShadowsReady();
-
-                using (Profiler.Section("BeginRender"))
-                    BeginRender();
-
-                EventSystem.RenderingEvents.InvokeOnBeginRender();
-
-                using (Profiler.Section("RenderScenes"))
-                    RenderScenes();
-
-                using (Profiler.Section("EndRender"))
-                    EndRender();
-
-                EventSystem.RenderingEvents.InvokeOnEndRender();
             }
             catch (Exception e)
             {
-                Debug.LogError("An exception occurred during scene rendering:");
+                Debug.LogError($"An exception occurred during scene rendering (phase: {Debug.LastPhase}):");
                 Debug.LogError(e.ToString());
                 if (!HandleFrameException(e, "SceneRender"))
                     throw;
-            }
-
-            // Reset GL state so Paper UI starts from a known-good state.
-            if (Graphics.IsOpenGL)
-            {
-                Graphics.UnbindFramebuffer();
-                Graphics.Viewport(0, 0, (uint)Window.InternalWindow.FramebufferSize.X, (uint)Window.InternalWindow.FramebufferSize.Y);
             }
 
             // Paper UI is also isolated so ImGui always gets a chance to render.
@@ -506,6 +542,7 @@ public abstract class Game
             {
                 using (Profiler.Section("PaperUI"))
                 {
+                    Debug.LastPhase = "Render.PaperUI";
                     _paper.BeginFrame(delta);
 
                     BeginGui(_paper);
@@ -526,26 +563,19 @@ public abstract class Game
             }
             catch (Exception e)
             {
-                Debug.LogError("An exception occurred during Paper UI rendering:");
+                Debug.LogError($"An exception occurred during Paper UI rendering (phase: {Debug.LastPhase}):");
                 Debug.LogError(e.ToString());
                 if (!HandleFrameException(e, "PaperUI"))
                     throw;
             }
 
-            // Reset GL state before ImGui so it always starts clean.
-            if (Graphics.IsOpenGL)
-            {
-                Graphics.InvalidateLegacyCaches();
-                Graphics.UnbindFramebuffer();
-                Graphics.Viewport(0, 0, (uint)Window.InternalWindow.FramebufferSize.X, (uint)Window.InternalWindow.FramebufferSize.Y);
-                Graphics.SetState(new(), true);
-            }
-
             // Overlay UI frame (editor / launcher UI) — works on all backends via Graphite.
+            Debug.LastPhase = "Render.Overlay";
             RenderOverlay(delta);
 
             // === End Graphics ===
 
+            Debug.LastPhase = "Render.Cleanup";
             RenderTexture.UpdatePool();
 
             Debug.ClearGizmos();
@@ -554,10 +584,12 @@ public abstract class Game
 
             EventSystem.GameLoopEvents.InvokeOnRenderComplete(
                 new EventSystem.RenderCompleteArgs(frameCounter, delta));
+
+            Debug.LastPhase = "Render.Complete";
         }
         catch (Exception e)
         {
-            Debug.LogError("An exception occurred during the Render loop:");
+            Debug.LogError($"An exception occurred during the Render loop (phase: {Debug.LastPhase}):");
             Debug.LogError(e.ToString());
             if (!HandleFrameException(e, "Render"))
                 throw;
@@ -722,6 +754,94 @@ public abstract class Game
     {
         Window.Stop();
         Debug.Log("Is terminating...");
+    }
+
+    /// <summary>
+    /// Logs system and environment information at startup for crash diagnostics.
+    /// Always logs basic info; emits additional detail when <see cref="Debug.IsVerbose"/> is set.
+    /// </summary>
+    private static void LogSystemInfo(GraphicsBackendType requestedBackend)
+    {
+        Debug.Log($"[System] OS: {Environment.OSVersion} ({System.Runtime.InteropServices.RuntimeInformation.OSDescription})");
+        Debug.Log($"[System] Runtime: {System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription}");
+        Debug.Log($"[System] Architecture: {System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture}");
+        Debug.Log($"[System] Backend: {requestedBackend}, GpuDebug: {Window.GpuDebug}, Verbose: {Debug.IsVerbose}");
+
+        if (Debug.IsVerbose)
+        {
+            Debug.Log($"[System] ProcessId: {Environment.ProcessId}");
+            Debug.Log($"[System] CommandLine: {Environment.CommandLine}");
+            Debug.Log($"[System] WorkingDir: {Environment.CurrentDirectory}");
+            Debug.Log($"[System] BaseDir: {AppDomain.CurrentDomain.BaseDirectory}");
+            Debug.Log($"[System] ProcessorCount: {Environment.ProcessorCount}");
+            Debug.Log($"[System] 64-bit Process: {Environment.Is64BitProcess}");
+        }
+    }
+
+    /// <summary>
+    /// Writes a structured crash report file to the base directory when an
+    /// unhandled exception is caught. The report includes system info, the
+    /// last known engine phase, frame counter, and the full exception details.
+    /// </summary>
+    private void WriteCrashReport(Exception? exception, string trigger)
+    {
+        try
+        {
+            string timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
+            string reportPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, $"CrashReport_{timestamp}.log");
+
+            StringBuilder sb = new();
+            sb.AppendLine("=== Prowl Engine Crash Report ===");
+            sb.AppendLine($"Timestamp:    {DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}");
+            sb.AppendLine($"Trigger:      {trigger}");
+            sb.AppendLine($"Last Phase:   {Debug.LastPhase}");
+            sb.AppendLine($"Frame:        {frameCounter}");
+            sb.AppendLine($"Uptime:       {Time.TimeSinceStartup:F2}s");
+            sb.AppendLine();
+
+            sb.AppendLine("--- System ---");
+            sb.AppendLine($"OS:           {Environment.OSVersion} ({System.Runtime.InteropServices.RuntimeInformation.OSDescription})");
+            sb.AppendLine($"Runtime:      {System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription}");
+            sb.AppendLine($"Architecture: {System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture}");
+            sb.AppendLine($"64-bit:       {Environment.Is64BitProcess}");
+            sb.AppendLine($"Processors:   {Environment.ProcessorCount}");
+            sb.AppendLine();
+
+            sb.AppendLine("--- Graphics ---");
+            sb.AppendLine($"Backend:      {Window.ActiveBackend}");
+            sb.AppendLine($"GpuDebug:     {Window.GpuDebug}");
+            sb.AppendLine($"DeviceReady:  {Graphics.IsGraphiteReady}");
+            if (Graphics.IsGraphiteReady)
+            {
+                try
+                {
+                    sb.AppendLine($"DeviceName:   {Graphics.Graphite.BackendName}");
+                    sb.AppendLine($"DeviceLost:   {Graphics.Graphite.IsDeviceLost}");
+                }
+                catch { sb.AppendLine("DeviceName:   (query failed)"); }
+            }
+            sb.AppendLine();
+
+            sb.AppendLine("--- Exception ---");
+            if (exception != null)
+            {
+                sb.AppendLine($"Type:         {exception.GetType().FullName}");
+                sb.AppendLine($"Message:      {exception.Message}");
+                sb.AppendLine($"StackTrace:");
+                sb.AppendLine(exception.ToString());
+            }
+            else
+            {
+                sb.AppendLine("(no exception object available)");
+            }
+
+            File.WriteAllText(reportPath, sb.ToString());
+            Debug.LogError($"[CrashReport] Written to: {reportPath}");
+        }
+        catch
+        {
+            // Best effort — don't let crash reporting cause another crash.
+        }
     }
 
     }

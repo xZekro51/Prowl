@@ -18,8 +18,10 @@ internal unsafe class VKTexture : Texture
     internal ImageView ImageView { get; }
     internal VKAllocation Allocation { get; }
 
-    // Per-mip layout tracking (simplified: tracks first layer only)
-    private readonly ImageLayout[] _mipLayouts;
+    // Per-mip-per-layer layout tracking for correct transitions on
+    // array textures, cubemaps, and any texture with multiple layers.
+    // Index as _mipLayerLayouts[mip * ArrayLayers + layer].
+    private readonly ImageLayout[] _mipLayerLayouts;
 
     internal VKTexture(VKGraphiteDevice device, in TextureDescriptor descriptor)
     {
@@ -35,8 +37,8 @@ internal unsafe class VKTexture : Texture
         SampleCount = descriptor.SampleCount;
         DebugName = descriptor.DebugName;
 
-        _mipLayouts = new ImageLayout[MipLevels];
-        Array.Fill(_mipLayouts, ImageLayout.Undefined);
+        _mipLayerLayouts = new ImageLayout[MipLevels * ArrayLayers];
+        Array.Fill(_mipLayerLayouts, ImageLayout.Undefined);
 
         var vkFormat = VKFormatHelper.ToVkFormat(descriptor.Format);
         var imageType = descriptor.Dimension switch
@@ -116,11 +118,73 @@ internal unsafe class VKTexture : Texture
 
     internal void TransitionLayout(CommandBuffer cmd, ImageLayout newLayout, uint baseMip, uint mipCount, uint baseLayer, uint layerCount)
     {
-        var oldLayout = baseMip < (uint)_mipLayouts.Length ? _mipLayouts[baseMip] : ImageLayout.Undefined;
+        // When transitioning multiple mips/layers, each sub-resource may be in a
+        // different layout. Issue one barrier per unique (oldLayout → newLayout) group.
+        // For the common case (all sub-resources share the same layout), this collapses
+        // to a single barrier with the full range.
 
-        if (oldLayout == newLayout)
+        // Fast path: single mip, single layer
+        if (mipCount == 1 && layerCount == 1)
+        {
+            uint idx = baseMip * ArrayLayers + baseLayer;
+            ImageLayout oldLayout = idx < (uint)_mipLayerLayouts.Length ? _mipLayerLayouts[idx] : ImageLayout.Undefined;
+            if (oldLayout == newLayout)
+                return;
+
+            EmitBarrier(cmd, oldLayout, newLayout, baseMip, 1, baseLayer, 1);
+            _mipLayerLayouts[idx] = newLayout;
             return;
+        }
 
+        // Check if all sub-resources in the range share the same layout (common case)
+        bool allSame = true;
+        uint firstIdx = baseMip * ArrayLayers + baseLayer;
+        ImageLayout firstLayout = firstIdx < (uint)_mipLayerLayouts.Length ? _mipLayerLayouts[firstIdx] : ImageLayout.Undefined;
+        for (uint m = baseMip; m < baseMip + mipCount; m++)
+        {
+            for (uint l = baseLayer; l < baseLayer + layerCount; l++)
+            {
+                uint idx = m * ArrayLayers + l;
+                ImageLayout cur = idx < (uint)_mipLayerLayouts.Length ? _mipLayerLayouts[idx] : ImageLayout.Undefined;
+                if (cur != firstLayout) { allSame = false; break; }
+            }
+            if (!allSame) break;
+        }
+
+        if (allSame)
+        {
+            if (firstLayout != newLayout)
+                EmitBarrier(cmd, firstLayout, newLayout, baseMip, mipCount, baseLayer, layerCount);
+        }
+        else
+        {
+            // Slow path: issue per-sub-resource barriers for differing layouts
+            for (uint m = baseMip; m < baseMip + mipCount; m++)
+            {
+                for (uint l = baseLayer; l < baseLayer + layerCount; l++)
+                {
+                    uint idx = m * ArrayLayers + l;
+                    ImageLayout oldLayout = idx < (uint)_mipLayerLayouts.Length ? _mipLayerLayouts[idx] : ImageLayout.Undefined;
+                    if (oldLayout == newLayout) continue;
+                    EmitBarrier(cmd, oldLayout, newLayout, m, 1, l, 1);
+                }
+            }
+        }
+
+        // Update tracked layouts
+        for (uint m = baseMip; m < baseMip + mipCount; m++)
+        {
+            for (uint l = baseLayer; l < baseLayer + layerCount; l++)
+            {
+                uint idx = m * ArrayLayers + l;
+                if (idx < (uint)_mipLayerLayouts.Length)
+                    _mipLayerLayouts[idx] = newLayout;
+            }
+        }
+    }
+
+    private void EmitBarrier(CommandBuffer cmd, ImageLayout oldLayout, ImageLayout newLayout, uint baseMip, uint mipCount, uint baseLayer, uint layerCount)
+    {
         var barrier = new ImageMemoryBarrier
         {
             SType = StructureType.ImageMemoryBarrier,
@@ -147,6 +211,10 @@ internal unsafe class VKTexture : Texture
             case ImageLayout.Undefined:
                 barrier.SrcAccessMask = 0;
                 srcStage = PipelineStageFlags.TopOfPipeBit;
+                break;
+            case ImageLayout.General:
+                barrier.SrcAccessMask = AccessFlags.ShaderReadBit | AccessFlags.ShaderWriteBit;
+                srcStage = PipelineStageFlags.ComputeShaderBit;
                 break;
             case ImageLayout.TransferDstOptimal:
                 barrier.SrcAccessMask = AccessFlags.TransferWriteBit;
@@ -186,7 +254,7 @@ internal unsafe class VKTexture : Texture
                 break;
             case ImageLayout.ShaderReadOnlyOptimal:
                 barrier.DstAccessMask = AccessFlags.ShaderReadBit;
-                dstStage = PipelineStageFlags.FragmentShaderBit;
+                dstStage = PipelineStageFlags.FragmentShaderBit | PipelineStageFlags.ComputeShaderBit;
                 break;
             case ImageLayout.ColorAttachmentOptimal:
                 barrier.DstAccessMask = AccessFlags.ColorAttachmentReadBit | AccessFlags.ColorAttachmentWriteBit;
@@ -196,6 +264,10 @@ internal unsafe class VKTexture : Texture
                 barrier.DstAccessMask = AccessFlags.DepthStencilAttachmentReadBit | AccessFlags.DepthStencilAttachmentWriteBit;
                 dstStage = PipelineStageFlags.EarlyFragmentTestsBit;
                 break;
+            case ImageLayout.General:
+                barrier.DstAccessMask = AccessFlags.ShaderReadBit | AccessFlags.ShaderWriteBit;
+                dstStage = PipelineStageFlags.ComputeShaderBit;
+                break;
             default:
                 barrier.DstAccessMask = 0;
                 dstStage = PipelineStageFlags.AllCommandsBit;
@@ -203,25 +275,38 @@ internal unsafe class VKTexture : Texture
         }
 
         _device.Vk.CmdPipelineBarrier(cmd, srcStage, dstStage, 0, 0, null, 0, null, 1, &barrier);
-
-        // Update tracked layouts
-        for (uint m = baseMip; m < baseMip + mipCount && m < (uint)_mipLayouts.Length; m++)
-            _mipLayouts[m] = newLayout;
     }
 
     /// <summary>
-    /// Updates the tracked layout for all mip levels without issuing a barrier.
+    /// Updates the tracked layout for all mip levels and all layers without issuing a barrier.
     /// Called by <see cref="VKCommandList.EndRenderPassCore"/> to sync the tracked
     /// layout with the render pass's <c>finalLayout</c>, which Vulkan applies
     /// automatically at render pass end.
     /// </summary>
     internal void SetTrackedLayout(ImageLayout layout)
     {
-        Array.Fill(_mipLayouts, layout);
+        Array.Fill(_mipLayerLayouts, layout);
+    }
+
+    /// <summary>
+    /// Updates the tracked layout for a specific mip level and layer range without issuing a barrier.
+    /// </summary>
+    internal void SetTrackedLayout(ImageLayout layout, uint baseMip, uint mipCount, uint baseLayer, uint layerCount)
+    {
+        for (uint m = baseMip; m < baseMip + mipCount; m++)
+        {
+            for (uint l = baseLayer; l < baseLayer + layerCount; l++)
+            {
+                uint idx = m * ArrayLayers + l;
+                if (idx < (uint)_mipLayerLayouts.Length)
+                    _mipLayerLayouts[idx] = layout;
+            }
+        }
     }
 
     protected override void DisposeResources()
     {
+        _device.InvalidateFramebuffersForImageView(ImageView);
         _device.Vk.DestroyImageView(_device.Device, ImageView, null);
         _device.Vk.DestroyImage(_device.Device, Image, null);
         var alloc = Allocation;

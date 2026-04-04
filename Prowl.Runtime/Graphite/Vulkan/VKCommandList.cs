@@ -20,6 +20,7 @@ namespace Prowl.Runtime.Graphite.Vulkan;
 internal unsafe class VKCommandList : CommandList
 {
     private readonly VKGraphiteDevice _device;
+    private readonly CommandPool _sourcePool;
     internal CommandBuffer Handle { get; private set; }
 
     private VKPipelineState? _currentPipeline;
@@ -32,9 +33,6 @@ internal unsafe class VKCommandList : CommandList
     /// <summary>True when the command list records a render pass that targets the swapchain.</summary>
     internal bool IsPresentTarget { get; private set; }
 
-    // Track framebuffers created during recording so we can destroy them after submission
-    private readonly List<Framebuffer> _framebuffers = new();
-
     // Track textures attached to the current render pass so EndRenderPassCore
     // can update their tracked layouts to match the render pass's finalLayout.
     private readonly List<VKTexture> _currentRPColorAttachments = new();
@@ -44,11 +42,12 @@ internal unsafe class VKCommandList : CommandList
     internal VKCommandList(VKGraphiteDevice device)
     {
         _device = device;
+        _sourcePool = device.GetGraphicsCommandPool();
 
         var allocInfo = new CommandBufferAllocateInfo
         {
             SType = StructureType.CommandBufferAllocateInfo,
-            CommandPool = device.CommandPool,
+            CommandPool = _sourcePool,
             Level = CommandBufferLevel.Primary,
             CommandBufferCount = 1,
         };
@@ -94,7 +93,10 @@ internal unsafe class VKCommandList : CommandList
         };
 
         uint width = 0, height = 0;
-        var imageViews = new List<ImageView>();
+
+        // stackalloc for image views: max 8 color + 8 resolve + 1 depth = 17
+        Span<ImageView> imageViews = stackalloc ImageView[17];
+        int imageViewCount = 0;
 
         // Clear per-pass attachment tracking
         _currentRPColorAttachments.Clear();
@@ -111,20 +113,20 @@ internal unsafe class VKCommandList : CommandList
 
             if (att.Texture is VKTexture vkTex)
             {
-                imageViews.Add(vkTex.ImageView);
+                imageViews[imageViewCount++] = vkTex.ImageView;
                 _currentRPColorAttachments.Add(vkTex);
                 if (width == 0) { width = vkTex.Width; height = vkTex.Height; }
             }
             else if (att.Texture is VKSwapchainImageTexture swapTex)
             {
-                imageViews.Add(swapTex.ImageView);
+                imageViews[imageViewCount++] = swapTex.ImageView;
                 width = swapTex.Width;
                 height = swapTex.Height;
                 isPresentTarget = true;
             }
 
             if (att.ResolveTarget is VKTexture resolveTex)
-                imageViews.Add(resolveTex.ImageView);
+                imageViews[imageViewCount++] = resolveTex.ImageView;
         }
 
         if (descriptor.DepthStencilAttachment is { } depth)
@@ -139,7 +141,7 @@ internal unsafe class VKCommandList : CommandList
 
             if (depth.Texture is VKTexture vkDepth)
             {
-                imageViews.Add(vkDepth.ImageView);
+                imageViews[imageViewCount++] = vkDepth.ImageView;
                 _currentRPDepthAttachment = vkDepth;
                 if (width == 0) { width = vkDepth.Width; height = vkDepth.Height; }
             }
@@ -151,28 +153,48 @@ internal unsafe class VKCommandList : CommandList
             IsPresentTarget = true;
         _currentRenderPass = _device.GetOrCreateRenderPass(in rpKey);
 
-        // Create framebuffer
-        fixed (ImageView* pViews = imageViews.ToArray())
-        {
-            var fbInfo = new FramebufferCreateInfo
-            {
-                SType = StructureType.FramebufferCreateInfo,
-                RenderPass = _currentRenderPass,
-                AttachmentCount = (uint)imageViews.Count,
-                PAttachments = pViews,
-                Width = width,
-                Height = height,
-                Layers = 1,
-            };
-            VKGraphiteDevice.Check(_device.Vk.CreateFramebuffer(_device.Device, &fbInfo, null, out _currentFramebuffer));
-            _framebuffers.Add(_currentFramebuffer);
-        }
+        // Look up or create a cached framebuffer
+        _currentFramebuffer = _device.GetOrCreateFramebuffer(
+            _currentRenderPass,
+            imageViews.Slice(0, imageViewCount),
+            width, height);
 
         _currentFBWidth = width;
         _currentFBHeight = height;
 
-        // Build clear values
-        var clearValues = new List<ClearValue>();
+        // Auto-transition attachments to the layout expected by the render pass.
+        // The cached VkRenderPass encodes an initialLayout for each attachment
+        // based on LoadOp (Load → specific layout, Clear/DontCare → Undefined).
+        // If a texture's tracked layout diverges (e.g. freshly created with
+        // Undefined, or left in ShaderReadOnly after a prior pass), starting the
+        // render pass without correcting the layout is undefined behaviour and
+        // causes ErrorDeviceLost on many drivers.
+        if (descriptor.ColorAttachments != null)
+        {
+            for (int i = 0; i < colorCount; i++)
+            {
+                ref readonly var att = ref descriptor.ColorAttachments[i];
+                if (att.LoadOp == LoadOp.Load && att.Texture is VKTexture vkColorTex)
+                {
+                    var expected = isPresentTarget
+                        ? ImageLayout.PresentSrcKhr
+                        : ImageLayout.ColorAttachmentOptimal;
+                    vkColorTex.TransitionLayout(Handle, expected, att.MipLevel, 1, att.ArrayLayer, 1);
+                }
+            }
+        }
+
+        if (descriptor.DepthStencilAttachment is { } depthAtt
+            && depthAtt.DepthLoadOp == LoadOp.Load
+            && depthAtt.Texture is VKTexture vkDepthTex)
+        {
+            vkDepthTex.TransitionLayout(Handle, ImageLayout.DepthStencilAttachmentOptimal,
+                depthAtt.MipLevel, 1, depthAtt.ArrayLayer, 1);
+        }
+
+        // Build clear values on the stack (max 8 color + 8 resolve + 1 depth = 17)
+        Span<ClearValue> clearValues = stackalloc ClearValue[17];
+        int clearValueCount = 0;
         if (descriptor.ColorAttachments != null)
         {
             foreach (ref readonly var att in descriptor.ColorAttachments.AsSpan())
@@ -182,20 +204,19 @@ internal unsafe class VKCommandList : CommandList
                 color.Float32_1 = att.ClearColor.Y;
                 color.Float32_2 = att.ClearColor.Z;
                 color.Float32_3 = att.ClearColor.W;
-                var cv = new ClearValue { Color = color };
-                clearValues.Add(cv);
+                clearValues[clearValueCount++] = new ClearValue { Color = color };
                 if (att.ResolveTarget != null)
-                    clearValues.Add(default);
+                    clearValues[clearValueCount++] = default;
             }
         }
         if (descriptor.DepthStencilAttachment is { } ds)
         {
             var cv = new ClearValue();
             cv.DepthStencil = new ClearDepthStencilValue(ds.DepthClearValue, ds.StencilClearValue);
-            clearValues.Add(cv);
+            clearValues[clearValueCount++] = cv;
         }
 
-        fixed (ClearValue* pClears = clearValues.ToArray())
+        fixed (ClearValue* pClears = clearValues)
         {
             var rpBegin = new RenderPassBeginInfo
             {
@@ -203,7 +224,7 @@ internal unsafe class VKCommandList : CommandList
                 RenderPass = _currentRenderPass,
                 Framebuffer = _currentFramebuffer,
                 RenderArea = new Rect2D(default, new Extent2D(width, height)),
-                ClearValueCount = (uint)clearValues.Count,
+                ClearValueCount = (uint)clearValueCount,
                 PClearValues = pClears,
             };
             _device.Vk.CmdBeginRenderPass(Handle, &rpBegin, SubpassContents.Inline);
@@ -485,12 +506,79 @@ internal unsafe class VKCommandList : CommandList
             SrcAccessMask = AccessFlags.MemoryWriteBit,
             DstAccessMask = AccessFlags.MemoryReadBit,
         };
-        // Use bottom-of-pipe → top-of-pipe for a full execution+memory barrier.
-        // This is equivalent to AllCommandsBit but more explicit about intent.
+        // Use AllCommandsBit for both src and dst to create a full
+        // execution + memory barrier.  BottomOfPipeBit → TopOfPipeBit
+        // does NOT make memory visible per the Vulkan spec because
+        // TopOfPipeBit has an empty access scope.
         _device.Vk.CmdPipelineBarrier(Handle,
-            PipelineStageFlags.BottomOfPipeBit,
-            PipelineStageFlags.TopOfPipeBit,
+            PipelineStageFlags.AllCommandsBit,
+            PipelineStageFlags.AllCommandsBit,
             0, 1, &barrier, 0, null, 0, null);
+    }
+
+    protected override void GenerateMipmapsCore(Texture texture)
+    {
+        if (texture is not VKTexture vkTex)
+            return;
+
+        uint width = vkTex.Width;
+        uint height = vkTex.Height;
+        uint depth = vkTex.Depth;
+        uint mipLevels = vkTex.MipLevels;
+
+        if (mipLevels <= 1)
+            return;
+
+        // Transition mip 0 to TransferSrc using tracked layout so the
+        // barrier works even when the image starts in Undefined (first use).
+        vkTex.TransitionLayout(Handle, ImageLayout.TransferSrcOptimal, 0, 1, 0, 1);
+
+        for (uint i = 1; i < mipLevels; i++)
+        {
+            uint srcWidth = Math.Max(1, width >> (int)(i - 1));
+            uint srcHeight = Math.Max(1, height >> (int)(i - 1));
+            uint srcDepth = Math.Max(1, depth >> (int)(i - 1));
+            uint dstWidth = Math.Max(1, width >> (int)i);
+            uint dstHeight = Math.Max(1, height >> (int)i);
+            uint dstDepth = Math.Max(1, depth >> (int)i);
+
+            // Transition destination mip to TransferDst using tracked layout
+            // so _mipLayouts stays in sync with actual Vulkan image layouts.
+            vkTex.TransitionLayout(Handle, ImageLayout.TransferDstOptimal, i, 1, 0, 1);
+
+            var blit = new ImageBlit
+            {
+                SrcSubresource = new ImageSubresourceLayers
+                {
+                    AspectMask = ImageAspectFlags.ColorBit,
+                    MipLevel = i - 1,
+                    BaseArrayLayer = 0,
+                    LayerCount = 1,
+                },
+                DstSubresource = new ImageSubresourceLayers
+                {
+                    AspectMask = ImageAspectFlags.ColorBit,
+                    MipLevel = i,
+                    BaseArrayLayer = 0,
+                    LayerCount = 1,
+                },
+            };
+            blit.SrcOffsets[1] = new Offset3D((int)srcWidth, (int)srcHeight, (int)srcDepth);
+            blit.DstOffsets[1] = new Offset3D((int)dstWidth, (int)dstHeight, (int)dstDepth);
+
+            _device.Vk.CmdBlitImage(Handle,
+                vkTex.Image, ImageLayout.TransferSrcOptimal,
+                vkTex.Image, ImageLayout.TransferDstOptimal,
+                1, &blit, Filter.Linear);
+
+            // Transition this mip level to TransferSrc for the next iteration
+            vkTex.TransitionLayout(Handle, ImageLayout.TransferSrcOptimal, i, 1, 0, 1);
+        }
+
+        // Transition all mip levels back to General for compute/shader access.
+        // All mips are now tracked as TransferSrcOptimal, so the batch barrier
+        // correctly uses the right OldLayout.
+        vkTex.TransitionLayout(Handle, ImageLayout.General, 0, mipLevels, 0, 1);
     }
 
     #endregion
@@ -516,11 +604,9 @@ internal unsafe class VKCommandList : CommandList
 
     protected override void DisposeResources()
     {
-        // Framebuffers and the command buffer may still be referenced by an
-        // in-flight submission. Hand them to the device so they are destroyed
-        // only after the current frame's fence has been signaled.
-        _device.RetireCommandListResources(new List<Framebuffer>(_framebuffers), Handle);
-        _framebuffers.Clear();
+        // Framebuffers are now owned by the device's framebuffer cache — do not destroy them here.
+        // Only the command buffer needs to be retired for deferred destruction.
+        _device.RetireCommandListResources(new List<Framebuffer>(), Handle, _sourcePool);
     }
 
     #region Helpers

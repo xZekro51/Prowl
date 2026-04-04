@@ -331,6 +331,7 @@ public static unsafe class Graphics
     public static Dictionary<ulong, int> cachedUniformLocations => RequireGLDevice.CachedUniformLocations;
     public static Dictionary<ulong, int> cachedAttribLocations => RequireGLDevice.CachedAttribLocations;
 
+    [Obsolete("Use CommandList.SetViewport() or CommandList.SetViewportRaw() instead.")]
     public static void Viewport(int x, int y, uint width, uint height)
     {
         GLDevice?.Viewport(x, y, width, height);
@@ -347,8 +348,10 @@ public static unsafe class Graphics
         }
     }
 
+    [Obsolete("Use render pass LoadOp.Clear instead.")]
     public static void Clear(float r, float g, float b, float a, ClearFlags v) => GLDevice?.Clear(r, g, b, a, v);
 
+    [Obsolete("Use PipelineState rasterizer configuration instead.")]
     public static void SetState(RasterizerState state, bool force = false) => GLDevice?.SetState(state, force);
 
     public static RasterizerState GetState() => GLDevice?.GetState() ?? new RasterizerState();
@@ -380,6 +383,9 @@ public static unsafe class Graphics
     public static void BindUniformBuffer(GraphicsProgram program, string blockName, GraphicsBuffer buffer, uint bindingPoint = 0)
         => GLDevice?.BindUniformBuffer(program, blockName, buffer, bindingPoint);
 
+    public static void BindUniformBuffer(GraphicsProgram program, string blockName, Graphite.Buffer graphiteBuffer, uint bindingPoint = 0)
+        => GLDevice?.BindUniformBuffer(program, blockName, graphiteBuffer, bindingPoint);
+
     #endregion
 
     #region Vertex Arrays
@@ -394,6 +400,7 @@ public static unsafe class Graphics
         return new GraphicsVertexArray(format, vertices, indices, instanceFormat, instanceBuffer);
     }
 
+    [Obsolete("Use CommandList.SetMeshBuffers() instead.")]
     public static void BindVertexArray(GraphicsVertexArray? vertexArrayObject) => GLDevice?.BindVertexArray(vertexArrayObject);
 
     #endregion
@@ -403,14 +410,17 @@ public static unsafe class Graphics
 
     public static GraphicsFrameBuffer CreateFramebuffer(GraphicsFrameBuffer.Attachment[] attachments, uint width, uint height) => new GraphicsFrameBuffer(attachments, width, height);
 
+    [Obsolete("Use CommandList.BeginRenderPass() targeting the swapchain instead.")]
     public static void UnbindFramebuffer() => GLDevice?.UnbindFramebuffer();
 
+    [Obsolete("Use CommandList.BeginRenderPass() instead.")]
     public static void BindFramebuffer(GraphicsFrameBuffer frameBuffer, FBOTarget readFramebuffer = FBOTarget.Framebuffer)
         => GLDevice?.BindFramebuffer(frameBuffer, readFramebuffer);
 
     public static GraphicsFrameBuffer? GetCurrentFramebuffer(FBOTarget target = FBOTarget.Framebuffer)
         => GLDevice?.GetCurrentFramebuffer(target);
 
+    [Obsolete("Use CommandList.CopyTextureToTexture() instead.")]
     public static void BlitFramebuffer(int srcX, int srcY, int srcWidth, int srcHeight, int destX, int destY, int destWidth, int destHeight, ClearFlags mask, BlitFilter filter)
         => GLDevice?.BlitFramebuffer(srcX, srcY, srcWidth, srcHeight, destX, destY, destWidth, destHeight, mask, filter);
 
@@ -422,30 +432,40 @@ public static unsafe class Graphics
     #region Shaders
 
     public static GraphicsProgram CompileProgram(string fragment, string vertex, string geometry) => new GraphicsProgram(fragment, vertex, geometry);
+    [Obsolete("Use CommandList.SetPipeline() instead.")]
     public static void BindProgram(GraphicsProgram program) => GLDevice?.BindProgram(program);
 
     public static int GetUniformLocation(GraphicsProgram program, string name) => RequireGLDevice.GetUniformLocation(program, name);
 
     public static int GetAttribLocation(GraphicsProgram program, string name) => RequireGLDevice.GetAttribLocation(program, name);
 
+    [Obsolete("Use BindGroup uniforms instead.")]
     public static void SetUniformF(GraphicsProgram program, string name, float value) => GLDevice?.SetUniformF(program, name, value);
 
+    [Obsolete("Use BindGroup uniforms instead.")]
     public static void SetUniformI(GraphicsProgram program, string name, int value) => GLDevice?.SetUniformI(program, name, value);
 
+    [Obsolete("Use BindGroup uniforms instead.")]
     public static void SetUniformV2(GraphicsProgram program, string name, Float2 value) => GLDevice?.SetUniformV2(program, name, value);
 
+    [Obsolete("Use BindGroup uniforms instead.")]
     public static void SetUniformV3(GraphicsProgram program, string name, Float3 value) => GLDevice?.SetUniformV3(program, name, value);
 
+    [Obsolete("Use BindGroup uniforms instead.")]
     public static void SetUniformV4(GraphicsProgram program, string name, Float4 value) => GLDevice?.SetUniformV4(program, name, value);
 
+    [Obsolete("Use BindGroup uniforms instead.")]
     public static void SetUniformMatrix(GraphicsProgram program, string name, bool transpose, Float4x4 matrix)
         => GLDevice?.SetUniformMatrix(program, name, transpose, matrix);
+    [Obsolete("Use BindGroup uniforms instead.")]
     public static void SetUniformMatrix(GraphicsProgram program, string name, bool transpose, in float matrix)
         => GLDevice?.SetUniformMatrix(program, name, transpose, in matrix);
 
+    [Obsolete("Use BindGroup uniforms instead.")]
     public static void SetUniformMatrix(GraphicsProgram program, string name, uint count, bool transpose, in float matrix)
         => GLDevice?.SetUniformMatrix(program, name, count, transpose, in matrix);
 
+    [Obsolete("Use CommandList.SetBindGroup() with texture entries instead.")]
     public static void SetUniformTexture(GraphicsProgram program, string name, int slot, GraphicsTexture texture)
         => GLDevice?.SetUniformTexture(program, name, slot, texture);
 
@@ -475,16 +495,21 @@ public static unsafe class Graphics
 
     #endregion
 
+    [Obsolete("Use CommandList.Draw() instead.")]
     public static void Draw(Topology primitiveType, uint count) => GLDevice?.Draw(primitiveType, count);
 
+    [Obsolete("Use CommandList.Draw() instead.")]
     public static void Draw(Topology primitiveType, int v, uint count) => GLDevice?.Draw(primitiveType, v, count);
 
+    [Obsolete("Use CommandList.DrawIndexed() instead.")]
     public static unsafe void DrawIndexed(Topology primitiveType, uint indexCount, bool index32bit, void* value)
         => GLDevice?.DrawIndexed(primitiveType, indexCount, index32bit, value);
 
+    [Obsolete("Use CommandList.DrawIndexed() instead.")]
     public static unsafe void DrawIndexed(Topology primitiveType, uint indexCount, int startIndex, int baseVertex, bool index32bit)
         => GLDevice?.DrawIndexed(primitiveType, indexCount, startIndex, baseVertex, index32bit);
 
+    [Obsolete("Use CommandList.DrawIndexedInstanced() instead.")]
     public static unsafe void DrawIndexedInstanced(Topology primitiveType, uint indexCount, uint instanceCount, bool index32bit)
         => GLDevice?.DrawIndexedInstanced(primitiveType, indexCount, instanceCount, index32bit);
 
@@ -496,6 +521,7 @@ public static unsafe class Graphics
     /// cache-aware wrappers (<see cref="GraphicsProgram.Use"/>,
     /// <see cref="GraphicsTexture.Bind"/>, etc.).
     /// </summary>
+    [Obsolete("Legacy GL cache invalidation — will be removed after full Graphite migration.")]
     public static void InvalidateLegacyCaches()
     {
         GraphicsProgram.currentProgram = null;
@@ -509,6 +535,19 @@ public static unsafe class Graphics
 
         _graphiteDevice?.Dispose();
         _graphiteDevice = null;
+    }
+
+    /// <summary>
+    /// Clears all cached GPU state (pipeline states, material binder resources,
+    /// legacy bind caches) after a device-lost event.  Must be called before
+    /// any new rendering occurs so that stale handles from the destroyed device
+    /// are not reused.
+    /// </summary>
+    internal static void OnDeviceLost()
+    {
+        Rendering.PipelineStateCache.Clear();
+        Rendering.GraphiteMaterialBinder.ClearStaticState();
+        InvalidateLegacyCaches();
     }
 
     #endregion

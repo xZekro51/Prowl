@@ -104,6 +104,13 @@ public abstract class GraphiteDevice : IDisposable
 {
     private bool _disposed;
 
+    /// <summary>
+    /// Set to <c>true</c> when the GPU reports an unrecoverable error
+    /// (e.g. Vulkan <c>ErrorDeviceLost</c>). Rendering code should check
+    /// this flag and skip GPU work to prevent cascading failures.
+    /// </summary>
+    public bool IsDeviceLost { get; protected set; }
+
     #region Properties
 
     /// <summary>The backend name (e.g., "OpenGL 4.5", "Vulkan 1.3").</summary>
@@ -257,6 +264,20 @@ public abstract class GraphiteDevice : IDisposable
     /// </summary>
     public abstract void ResizeSwapchain(uint width, uint height);
 
+    /// <summary>
+    /// Retrieves the contents of the backend's pipeline cache as a byte array
+    /// suitable for persisting to disk. Returns <c>null</c> if the backend
+    /// does not support pipeline cache serialization (e.g. OpenGL).
+    /// </summary>
+    public virtual byte[]? GetPipelineCacheData() => null;
+
+    /// <summary>
+    /// Seeds the backend's pipeline cache with previously saved data.
+    /// Call after <see cref="Initialize"/> and before first frame rendering
+    /// for maximum benefit. No-op on backends that don't support pipeline caches.
+    /// </summary>
+    public virtual void LoadPipelineCacheData(ReadOnlySpan<byte> data) { }
+
     #endregion
 
     #region Resource Updates
@@ -327,6 +348,21 @@ public abstract class GraphiteDevice : IDisposable
     /// </summary>
     public virtual bool Present() => true;
 
+    /// <summary>
+    /// Begins batching upload operations (buffer/texture data transfers) into a
+    /// single command submission. Subsequent uploads will be recorded but not
+    /// submitted until <see cref="FlushUploadBatch"/> is called, dramatically
+    /// reducing per-upload GPU stalls. No-op on backends that don't benefit
+    /// from explicit batching (e.g. OpenGL).
+    /// </summary>
+    public virtual void BeginUploadBatch() { }
+
+    /// <summary>
+    /// Submits all uploads batched since the last <see cref="BeginUploadBatch"/>
+    /// call and waits for completion. No-op when no batch is active.
+    /// </summary>
+    public virtual void FlushUploadBatch() { }
+
     #endregion
 
     #region Legacy Immediate-Mode API
@@ -368,6 +404,8 @@ public abstract class GraphiteDevice : IDisposable
     public virtual uint GetBlockIndex(GraphicsProgram program, string blockName) => 0xFFFFFFFF;
 
     public virtual void BindUniformBuffer(GraphicsProgram program, string blockName, GraphicsBuffer buffer, uint bindingPoint = 0) { }
+
+    public virtual void BindUniformBuffer(GraphicsProgram program, string blockName, Buffer graphiteBuffer, uint bindingPoint = 0) { }
 
     // ── Vertex Arrays ─────────────────────────────────────────────
 

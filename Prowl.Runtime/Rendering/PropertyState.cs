@@ -7,6 +7,7 @@ using Prowl.Echo;
 using Prowl.Runtime.Resources;
 using Prowl.Vector;
 
+using Graphite = Prowl.Runtime.Graphite;
 using Texture2D = Prowl.Runtime.Resources.Texture2D;
 
 namespace Prowl.Runtime.Rendering;
@@ -26,7 +27,11 @@ public partial class PropertyState
     [SerializeField] private Dictionary<string, GraphicsBuffer> _buffers = [];
     [SerializeField] private Dictionary<string, uint> _bufferBindings = [];
 
-    //private Dictionary<string, int> textureSlots = new();
+    /// <summary>
+    /// Raw Graphite textures for resources that lack legacy wrappers (e.g. Texture3DRT).
+    /// Not serialized — these are transient per-frame bindings.
+    /// </summary>
+    [SerializeIgnore] internal Dictionary<string, Graphite.Texture> _rawGraphiteTextures = [];
 
     public PropertyState() { }
 
@@ -43,6 +48,7 @@ public partial class PropertyState
         _textures = new(clone._textures);
         _textures3D = new(clone._textures3D);
         _buffers = new(clone._buffers);
+        _rawGraphiteTextures = new(clone._rawGraphiteTextures);
     }
 
     public bool IsEmpty => _colors.Count == 0 && _vectors4.Count == 0 && _vectors3.Count == 0 && _vectors2.Count == 0 && _floats.Count == 0 && _ints.Count == 0 && _matrices.Count == 0 && _textures.Count == 0 && _textures3D.Count == 0;
@@ -101,6 +107,8 @@ public partial class PropertyState
     }
     public void SetTexture(string name, Texture2D value) => _textures[name] = value;
     public void SetTexture3D(string name, Texture3D value) => _textures3D[name] = value;
+    /// <summary>Sets a raw Graphite texture for resources without legacy wrappers (e.g. Texture3DRT).</summary>
+    public void SetRawGraphiteTexture(string name, Graphite.Texture value) => _rawGraphiteTextures[name] = value;
     public void SetBuffer(string name, GraphicsBuffer value, uint bindingPoint = 0)
     {
         _buffers[name] = value;
@@ -117,6 +125,7 @@ public partial class PropertyState
     public Float4x4 GetMatrix(string name) => _matrices.TryGetValue(name, out Float4x4 value) ? (Float4x4)value : Float4x4.Identity;
     public Texture2D? GetTexture(string name) => _textures.TryGetValue(name, out Texture2D value) ? value : null;
     public Texture3D? GetTexture3D(string name) => _textures3D.TryGetValue(name, out Texture3D value) ? value : null;
+    public Graphite.Texture? GetRawGraphiteTexture(string name) => _rawGraphiteTextures.TryGetValue(name, out Graphite.Texture? value) ? value : null;
     public GraphicsBuffer GetBuffer(string name) => _buffers.TryGetValue(name, out GraphicsBuffer value) ? value : null;
     public uint GetBufferBinding(string name) => _bufferBindings.TryGetValue(name, out uint value) ? value : 0;
 
@@ -145,6 +154,7 @@ public partial class PropertyState
         _colors.Clear();
         _buffers.Clear();
         _bufferBindings.Clear();
+        _rawGraphiteTextures.Clear();
     }
 
     public void ApplyOverride(PropertyState properties)
@@ -169,6 +179,8 @@ public partial class PropertyState
             _textures[item.Key] = item.Value;
         foreach (KeyValuePair<string, Texture3D> item in properties._textures3D)
             _textures3D[item.Key] = item.Value;
+        foreach (KeyValuePair<string, Graphite.Texture> item in properties._rawGraphiteTextures)
+            _rawGraphiteTextures[item.Key] = item.Value;
         foreach (KeyValuePair<string, GraphicsBuffer> item in properties._buffers)
             _buffers[item.Key] = item.Value;
         foreach (KeyValuePair<string, uint> item in properties._bufferBindings)
@@ -415,7 +427,7 @@ public partial class PropertyState
         int texSlot = 0;
 
         // Bind the global uniform buffer first
-        GraphicsBuffer globalBuffer = GlobalUniforms.GetBuffer();
+        Graphite.Buffer? globalBuffer = GlobalUniforms.GetBuffer();
         if (globalBuffer != null)
         {
             Graphics.BindUniformBuffer(shader, "GlobalUniforms", globalBuffer, 0);
@@ -691,6 +703,7 @@ public partial class PropertyState
     private static Dictionary<string, System.Numerics.Matrix4x4[]> s_globalMatrixArr = [];
     private static Dictionary<string, Texture2D> s_globalTextures = [];
     private static Dictionary<string, Texture3D> s_globalTextures3D = [];
+    private static Dictionary<string, Graphite.Texture> s_globalRawGraphiteTextures = [];
     private static Dictionary<string, GraphicsBuffer> s_globalBuffers = [];
     private static Dictionary<string, uint> s_globalBufferBindings = [];
 
@@ -711,6 +724,8 @@ public partial class PropertyState
     }
     public static void SetGlobalTexture(string name, Texture2D value) => s_globalTextures[name] = value;
     public static void SetGlobalTexture3D(string name, Texture3D value) => s_globalTextures3D[name] = value;
+    /// <summary>Sets a raw Graphite texture globally for resources without legacy wrappers.</summary>
+    public static void SetGlobalRawGraphiteTexture(string name, Graphite.Texture value) => s_globalRawGraphiteTextures[name] = value;
     public static void SetGlobalBuffer(string name, GraphicsBuffer value, uint bindingPoint = 0)
     {
         s_globalBuffers[name] = value;
@@ -727,6 +742,7 @@ public partial class PropertyState
     public static Float4x4 GetGlobalMatrix(string name) => s_globalMatrices.TryGetValue(name, out Float4x4 value) ? value : Float4x4.Identity;
     public static Texture2D? GetGlobalTexture(string name) => s_globalTextures.TryGetValue(name, out Texture2D value) ? value : null;
     public static Texture3D? GetGlobalTexture3D(string name) => s_globalTextures3D.TryGetValue(name, out Texture3D value) ? value : null;
+    public static Graphite.Texture? GetGlobalRawGraphiteTexture(string name) => s_globalRawGraphiteTextures.TryGetValue(name, out Graphite.Texture? value) ? value : null;
     public static GraphicsBuffer GetGlobalBuffer(string name) => s_globalBuffers.TryGetValue(name, out GraphicsBuffer value) ? value : null;
     public static uint GetGlobalBufferBinding(string name) => s_globalBufferBindings.TryGetValue(name, out uint value) ? value : 0;
 
@@ -734,6 +750,7 @@ public partial class PropertyState
     {
         s_globalTextures.Clear();
         s_globalTextures3D.Clear();
+        s_globalRawGraphiteTextures.Clear();
         s_globalMatrices.Clear();
         s_globalInts.Clear();
         s_globalFloats.Clear();

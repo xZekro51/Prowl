@@ -2,6 +2,7 @@
 // Licensed under the MIT License. See the LICENSE file in the project root for details.
 
 using System;
+using System.Buffers;
 using System.Collections.Generic;
 using System.Linq;
 using System.Runtime.InteropServices;
@@ -26,8 +27,14 @@ internal static class GraphiteMaterialBinder
     /// <summary>Shared linear-repeat sampler for all material texture bindings.</summary>
     private static Sampler? s_defaultSampler;
 
-    /// <summary>Shared 1×1 white fallback texture for missing texture bindings.</summary>
+    /// <summary>Shared 1×1 white fallback texture for missing 2D texture bindings.</summary>
     private static GTexture? s_fallbackTexture;
+
+    /// <summary>Shared 1×1×1 white fallback texture for missing 3D texture bindings.</summary>
+    private static GTexture? s_fallbackTexture3D;
+
+    /// <summary>Shared 1×1 white fallback cube map for missing samplerCube bindings.</summary>
+    private static GTexture? s_fallbackTextureCube;
 
     /// <summary>
     /// Per-frame temporary GPU resources (buffers, bind groups) that must stay
@@ -57,6 +64,36 @@ internal static class GraphiteMaterialBinder
     public static void Retire(IDisposable resource)
     {
         s_retiredResources[s_retireSlot].Add(resource);
+    }
+
+    /// <summary>
+    /// Disposes all cached static GPU resources and retires pending resources.
+    /// Must be called when the graphics device is lost or recreated so that
+    /// stale handles (Vulkan objects from a destroyed device) are released.
+    /// The next frame's rendering calls will lazily recreate them.
+    /// </summary>
+    public static void ClearStaticState()
+    {
+        s_defaultSampler?.Dispose();
+        s_defaultSampler = null;
+
+        s_fallbackTexture?.Dispose();
+        s_fallbackTexture = null;
+
+        s_fallbackTexture3D?.Dispose();
+        s_fallbackTexture3D = null;
+
+        s_fallbackTextureCube?.Dispose();
+        s_fallbackTextureCube = null;
+
+        foreach (List<IDisposable> list in s_retiredResources)
+        {
+            foreach (IDisposable r in list)
+            {
+                try { r.Dispose(); } catch { /* ignore */ }
+            }
+            list.Clear();
+        }
     }
 
     /// <summary>
@@ -133,7 +170,7 @@ internal static class GraphiteMaterialBinder
                     {
                         // Use the per-upload Graphite snapshot so each camera
                         // render binds its own immutable copy of the data.
-                        var globalGraphiteBuf = GlobalUniforms.GetGraphiteBuffer();
+                        var globalGraphiteBuf = GlobalUniforms.GetBuffer();
                         if (globalGraphiteBuf != null)
                         {
                             entries.Add(BindGroupEntry.ForBuffer(
@@ -166,9 +203,9 @@ internal static class GraphiteMaterialBinder
                     break;
 
                 case SpirvReflection.ResourceType.CombinedImageSampler:
-                    var (tex, sampler) = ResolveTexture(binding.Name, materialProps, instanceProps);
+                    var (tex, sampler) = ResolveTexture(binding.Name, binding.ImageDim, materialProps, instanceProps);
                     entries.Add(BindGroupEntry.ForTextureSampler(binding.Binding, tex, sampler));
-                    if (DebugBindGroups) Debug.Log($"[BindGroup]     -> Texture '{binding.Name}' bound: {(tex == s_fallbackTexture ? "FALLBACK" : "OK")}");
+                    if (DebugBindGroups) Debug.Log($"[BindGroup]     -> Texture '{binding.Name}' bound: {(tex == s_fallbackTexture || tex == s_fallbackTexture3D ? "FALLBACK" : "OK")}");
                     break;
             }
         }
@@ -198,18 +235,28 @@ internal static class GraphiteMaterialBinder
         if (binding.Members == null || binding.BufferSize == 0)
             return (null, 0);
 
-        var data = new byte[binding.BufferSize];
-
-        foreach (var member in binding.Members)
+        byte[] data = ArrayPool<byte>.Shared.Rent((int)binding.BufferSize);
+        try
         {
-            if (member.Name == null) continue;
-            WriteMemberValue(data, member, materialProps, instanceProps, objectToWorld, worldToObject);
-        }
+            // Zero the rented region since ArrayPool may return dirty buffers
+            Array.Clear(data, 0, (int)binding.BufferSize);
 
-        // Sub-allocate from the per-frame ring buffer (Vulkan) or
-        // create a temporary CpuToGpu buffer (OpenGL fallback).
-        var (buffer, offset) = Graphics.Graphite.AllocateTransientUniform(data);
-        return (buffer, offset);
+            foreach (var member in binding.Members)
+            {
+                if (member.Name == null) continue;
+                WriteMemberValue(data, member, materialProps, instanceProps, objectToWorld, worldToObject);
+            }
+
+            // Sub-allocate from the per-frame ring buffer (Vulkan) or
+            // create a temporary CpuToGpu buffer (OpenGL fallback).
+            var (buffer, offset) = Graphics.Graphite.AllocateTransientUniform(
+                new ReadOnlySpan<byte>(data, 0, (int)binding.BufferSize));
+            return (buffer, offset);
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(data);
+        }
     }
 
     private static unsafe void WriteMemberValue(
@@ -361,7 +408,7 @@ internal static class GraphiteMaterialBinder
     #region Texture Resolution
 
     private static (GTexture tex, Sampler sampler) ResolveTexture(
-        string? name, PropertyState? materialProps, PropertyState? instanceProps)
+        string? name, uint imageDim, PropertyState? materialProps, PropertyState? instanceProps)
     {
         EnsureDefaults();
 
@@ -380,10 +427,21 @@ internal static class GraphiteMaterialBinder
 
             // Debug: Log if using fallback
             if (graphiteTex == null && DebugBindGroups)
-                Debug.Log($"[BindGroup] Texture '{name}' not found, using fallback white");
+                Debug.Log($"[BindGroup] Texture '{name}' not found, using fallback (dim={imageDim})");
         }
 
-        return (graphiteTex ?? s_fallbackTexture!, s_defaultSampler!);
+        // Choose the correct fallback based on SPIR-V image dimensionality.
+        // Using a 2D ImageView for a sampler3D or samplerCube binding causes
+        // VK_ERROR_DEVICE_LOST on Vulkan — the ImageView type must match.
+        // Dim: 0=1D, 1=2D, 2=3D, 3=Cube.
+        GTexture fallback = imageDim switch
+        {
+            2 => s_fallbackTexture3D!,
+            3 => s_fallbackTextureCube!,
+            _ => s_fallbackTexture!,
+        };
+
+        return (graphiteTex ?? fallback, s_defaultSampler!);
     }
 
     private static GTexture? TryGetGraphiteTexture(string name, PropertyState? props)
@@ -398,6 +456,10 @@ internal static class GraphiteMaterialBinder
         if (tex3d != null && tex3d.IsValid() && tex3d.Handle?.GraphiteTexture != null)
             return tex3d.Handle.GraphiteTexture;
 
+        var rawTex = props.GetRawGraphiteTexture(name);
+        if (rawTex != null && !rawTex.IsDisposed)
+            return rawTex;
+
         return null;
     }
 
@@ -410,6 +472,10 @@ internal static class GraphiteMaterialBinder
         var tex3d = PropertyState.GetGlobalTexture3D(name);
         if (tex3d != null && tex3d.IsValid() && tex3d.Handle?.GraphiteTexture != null)
             return tex3d.Handle.GraphiteTexture;
+
+        var rawTex = PropertyState.GetGlobalRawGraphiteTexture(name);
+        if (rawTex != null && !rawTex.IsDisposed)
+            return rawTex;
 
         return null;
     }
@@ -486,7 +552,7 @@ internal static class GraphiteMaterialBinder
 
         s_defaultSampler = Graphics.Graphite.CreateSampler(SamplerDescriptor.Anisotropic(16));
 
-        // Create a 1×1 white fallback texture
+        // Create a 1×1 white fallback texture (2D)
         var texDesc = new TextureDescriptor
         {
             Width = 1,
@@ -498,6 +564,33 @@ internal static class GraphiteMaterialBinder
         byte[] white = [255, 255, 255, 255];
         var updateDesc = TextureUpdateDescriptor.FullMip(1, 1);
         Graphics.Graphite.UpdateTexture(s_fallbackTexture, in updateDesc, white);
+
+        // Create a 1×1×1 white fallback texture (3D) for sampler3D bindings.
+        // Without this, unset sampler3D bindings fall back to the 2D texture,
+        // causing an ImageView type mismatch on Vulkan → VK_ERROR_DEVICE_LOST.
+        var tex3DDesc = new TextureDescriptor
+        {
+            Width = 1,
+            Height = 1,
+            Depth = 1,
+            Format = TextureFormat.RGBA8Unorm,
+            Dimension = TextureDimension.Texture3D,
+            Usage = TextureUsage.Sampled | TextureUsage.CopyDestination,
+        };
+        s_fallbackTexture3D = Graphics.Graphite.CreateTexture(in tex3DDesc);
+        Graphics.Graphite.UpdateTexture(s_fallbackTexture3D, in updateDesc, white);
+
+        // Create a 1×1×6 white fallback cube map for samplerCube bindings.
+        // Same issue as sampler3D: a 2D ImageView for a samplerCube descriptor
+        // causes VK_ERROR_DEVICE_LOST on Vulkan.
+        var texCubeDesc = TextureDescriptor.Cubemap(1, TextureFormat.RGBA8Unorm,
+            TextureUsage.Sampled | TextureUsage.CopyDestination);
+        s_fallbackTextureCube = Graphics.Graphite.CreateTexture(in texCubeDesc);
+        for (uint face = 0; face < 6; face++)
+        {
+            TextureUpdateDescriptor faceUpdate = TextureUpdateDescriptor.FullMip(1, 1, 0, face);
+            Graphics.Graphite.UpdateTexture(s_fallbackTextureCube, in faceUpdate, white);
+        }
     }
 
     /// <summary>Disposes shared resources during shutdown.</summary>
@@ -507,6 +600,8 @@ internal static class GraphiteMaterialBinder
         s_defaultSampler = null;
         s_fallbackTexture?.Dispose();
         s_fallbackTexture = null;
+        s_fallbackTexture3D?.Dispose();
+        s_fallbackTexture3D = null;
 
         foreach (var list in s_retiredResources)
         {

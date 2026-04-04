@@ -37,6 +37,8 @@ public sealed class PhysicsDemo : Game
         GameObject lightGO = new("Directional Light");
         DirectionalLight light = lightGO.AddComponent<DirectionalLight>();
         light.ShadowQuality = ShadowQuality.Soft;
+        light.OverrideSceneGI = true;
+        light.GIModeOverride = Scene.GlobalIlluminationParams.GIMode.VoxelGI;
         lightGO.Transform.LocalEulerAngles = new Float3(-45, 45, 0);
         scene.Add(lightGO);
 

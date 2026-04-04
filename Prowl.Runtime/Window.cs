@@ -26,6 +26,12 @@ public static class Window
     /// </summary>
     public static GraphicsBackendType ActiveBackend { get; private set; } = GraphicsBackendType.OpenGL;
 
+    /// <summary>
+    /// When <c>true</c>, the GPU device is initialized with validation layers and
+    /// debug markers enabled. Set via <c>--gpu-debug</c> on the command line.
+    /// </summary>
+    public static bool GpuDebug { get; set; }
+
     public static Vector2D<int> Size
     {
         get { return InternalWindow.Size; }
@@ -219,8 +225,8 @@ public static class Window
             Debug.Log($"[SILK] OnLoad fired — creating input context...");
             InternalInput = InternalWindow.CreateInput();
             WindowInputHandler = new DefaultInputHandler(InternalInput);
-            Debug.Log($"[SILK] INITIALIZING GRAPHICS WITH BACKEND: {ActiveBackend}");
-            Graphics.Initialize(ActiveBackend, false);
+            Debug.Log($"[SILK] INITIALIZING GRAPHICS WITH BACKEND: {ActiveBackend}, GpuDebug: {GpuDebug}");
+            Graphics.Initialize(ActiveBackend, GpuDebug);
             Debug.Log($"[SILK] Graphics initialized successfully.");
 
             // Push Default Handler
@@ -245,14 +251,35 @@ public static class Window
         if (_fatalError || !Graphics.IsGraphiteReady)
             return;
 
+        Debug.LogTrace("[Window.OnRender] BeginFrame...");
         if (!Graphics.Graphite.BeginFrame())
             return;
 
         try
         {
+            Debug.LogTrace("[Window.OnRender] BeginFrame succeeded, starting material binder...");
             Rendering.GraphiteMaterialBinder.BeginFrame();
 
+            // Batch lazy resource uploads (mesh/texture data transfers) that
+            // occur during rendering into a single GPU submission, avoiding
+            // per-upload synchronous QueueSubmit+WaitForFences stalls.
+            Graphics.Graphite.BeginUploadBatch();
+
+            Debug.LogTrace("[Window.OnRender] Invoking OnRender event...");
             WindowEvents.InvokeOnRender(new WindowRenderArgs((float)delta));
+
+            // Flush any remaining batched uploads before post-render work.
+            Graphics.Graphite.FlushUploadBatch();
+
+            // If the device was lost during rendering, skip presentation and
+            // post-render work to prevent cascading Vulkan errors.
+            if (Graphics.Graphite.IsDeviceLost)
+            {
+                Graphics.OnDeviceLost();
+                return;
+            }
+
+            Debug.LogTrace("[Window.OnRender] Invoking OnPostRender...");
             WindowEvents.InvokeOnPostRender(new WindowRenderArgs((float)delta));
         }
         catch (Exception ex)
@@ -261,7 +288,9 @@ public static class Window
         }
         finally
         {
+            Debug.LogTrace("[Window.OnRender] Presenting...");
             Graphics.Graphite.Present();
+            Debug.LogTrace("[Window.OnRender] Frame complete.");
         }
     }
 

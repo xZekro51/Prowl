@@ -70,6 +70,7 @@ public class MeshRenderer : MonoBehaviour, IRenderable
     }
 
     public Material GetMaterial() => Material;
+    public Resources.Mesh? GetMesh() => Mesh;
     public int GetLayer() => GameObject.LayerIndex;
     public Float3 GetPosition() => Transform.Position;
 

@@ -89,6 +89,8 @@ public sealed class Material : EngineObject, ISerializationCallbackReceiver
     public void SetMatrix(string name, Float4x4 value) { _properties.SetMatrix(name, value); MarkDirty(); }
     public void SetTexture(string name, Texture2D value) { _properties.SetTexture(name, value); MarkDirty(); }
     public void SetTexture3D(string name, Texture3D value) { _properties.SetTexture3D(name, value); MarkDirty(); }
+    /// <summary>Sets a raw Graphite texture (e.g. from Texture3DRT) for shader sampling.</summary>
+    public void SetRawGraphiteTexture(string name, Graphite.Texture value) { _properties.SetRawGraphiteTexture(name, value); MarkDirty(); }
 
     #region Global Properties
 

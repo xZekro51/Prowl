@@ -28,6 +28,13 @@ internal static class SpirvReflection
         public List<MemberInfo>? Members;
         /// <summary>Total buffer size in bytes, rounded to 16-byte alignment (only for UBOs).</summary>
         public uint BufferSize;
+        /// <summary>
+        /// SPIR-V image dimensionality for sampler/image bindings.
+        /// 0 = 1D, 1 = 2D, 2 = 3D, 3 = Cube. Only meaningful for
+        /// <see cref="ResourceType.CombinedImageSampler"/> and
+        /// <see cref="ResourceType.SampledTexture"/> bindings.
+        /// </summary>
+        public uint ImageDim;
     }
 
     public sealed class MemberInfo
@@ -128,16 +135,26 @@ internal static class SpirvReflection
                         typeInfos[words[i + 1]] = new TypeInfo(TypeKind.Matrix, 0, words[i + 2], words[i + 3]);
                     break;
 
-                case 25: // OpTypeImage
-                    typeInfos[words[i + 1]] = new TypeInfo(TypeKind.Image, 0, 0, 0);
+                case 25: // OpTypeImage — word layout: %result %sampledType Dim Depth Arrayed MS Sampled Format
+                    {
+                        // Dim: 0=1D, 1=2D, 2=3D, 3=Cube, 4=Rect, 5=Buffer, 6=SubpassData
+                        uint dim = wordCount >= 4 ? words[i + 3] : 1;
+                        typeInfos[words[i + 1]] = new TypeInfo(TypeKind.Image, dim, 0, 0);
+                    }
                     break;
 
                 case 26: // OpTypeSampler
                     typeInfos[words[i + 1]] = new TypeInfo(TypeKind.Sampler, 0, 0, 0);
                     break;
 
-                case 27: // OpTypeSampledImage
-                    typeInfos[words[i + 1]] = new TypeInfo(TypeKind.SampledImage, 0, 0, 0);
+                case 27: // OpTypeSampledImage — word layout: %result %imageType
+                    {
+                        uint imageTypeId = wordCount >= 3 ? words[i + 2] : 0;
+                        uint sampledDim = 1; // default 2D
+                        if (imageTypeId != 0 && typeInfos.TryGetValue(imageTypeId, out TypeInfo imgTi) && imgTi.Kind == TypeKind.Image)
+                            sampledDim = imgTi.Size; // Size stores Dim for Image types
+                        typeInfos[words[i + 1]] = new TypeInfo(TypeKind.SampledImage, sampledDim, 0, 0);
+                    }
                     break;
 
                 case 28: // OpTypeArray
@@ -194,6 +211,8 @@ internal static class SpirvReflection
             List<MemberInfo>? members = null;
             uint bufferSize = 0;
 
+            uint imageDim = 1; // default 2D
+
             if (storageClass == 0) // UniformConstant (opaque types: samplers, images)
             {
                 if (typeInfos.TryGetValue(pointeeType, out var ti))
@@ -205,6 +224,9 @@ internal static class SpirvReflection
                         TypeKind.Sampler => ResourceType.Sampler,
                         _ => ResourceType.CombinedImageSampler,
                     };
+                    // Propagate Dim from Image/SampledImage types (stored in Size field)
+                    if (ti.Kind is TypeKind.SampledImage or TypeKind.Image)
+                        imageDim = ti.Size;
                 }
                 else
                 {
@@ -247,6 +269,7 @@ internal static class SpirvReflection
                 Name = name,
                 Members = members,
                 BufferSize = bufferSize,
+                ImageDim = imageDim,
             });
         }
 

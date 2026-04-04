@@ -29,6 +29,7 @@ public class MeshRenderable : IRenderable
     public Material GetMaterial() => _material;
     public int GetLayer() => _layerIndex;
     public int GetSubMeshIndex() => _subMeshIndex;
+    public Mesh GetMesh() => _mesh;
 
     public Float3 GetPosition()
     {

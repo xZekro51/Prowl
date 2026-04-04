@@ -36,11 +36,10 @@ public sealed class TonemapperEffect : ImageEffect
         // Copy depth from current buffer if it has one
         if (context.SceneColor.InternalDepth != null)
         {
-            if (!Graphics.IsOpenGL && Graphics.ActiveGraphiteCmdBuffer is { InRenderPass: false } cmd)
+            if (Graphics.ActiveGraphiteCmdBuffer is { InRenderPass: false } cmd)
             {
-                // Vulkan: copy depth texture via Graphite command
-                var srcDepth = context.SceneColor.frameBuffer.GraphiteDepthAttachment;
-                var dstDepth = ldrBuffer.frameBuffer.GraphiteDepthAttachment;
+                var srcDepth = context.SceneColor.GraphiteDepthTexture;
+                var dstDepth = ldrBuffer.GraphiteDepthTexture;
                 if (srcDepth != null && dstDepth != null)
                 {
                     cmd.ResourceBarrier(new Graphite.ResourceBarrier(
@@ -62,16 +61,6 @@ public sealed class TonemapperEffect : ImageEffect
                     cmd.ResourceBarrier(new Graphite.ResourceBarrier(
                         dstDepth, Graphite.ResourceState.CopyDestination, Graphite.ResourceState.DepthWrite));
                 }
-            }
-            else
-            {
-                Graphics.BindFramebuffer(context.SceneColor.frameBuffer, FBOTarget.Read);
-                Graphics.BindFramebuffer(ldrBuffer.frameBuffer, FBOTarget.Draw);
-                Graphics.BlitFramebuffer(
-                    0, 0, context.Width, context.Height,
-                    0, 0, context.Width, context.Height,
-                    ClearFlags.Depth, BlitFilter.Nearest
-                );
             }
         }
 

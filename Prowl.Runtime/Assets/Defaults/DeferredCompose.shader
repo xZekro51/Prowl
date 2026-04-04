@@ -59,6 +59,9 @@ Pass "Compose"
 		uniform vec4 _AmbientGroundColor;
 		uniform float _AmbientStrength;
 
+		// Global Illumination
+		uniform float _GIActive; // 0.0 = use ambient, 1.0 = GI replaces ambient
+
 		// Ambient Lighting
 		vec3 CalculateAmbient(vec3 worldNormal)
 		{
@@ -127,11 +130,22 @@ Pass "Compose"
 				vec3 emission = gbufferD.rgb;
 				color = albedo + emission;
 			} else {
-				// Lit mode - combine ambient + light accumulation + emissive
-				vec3 worldNormal = normalize((inverse(transpose(PROWL_MATRIX_V)) * vec4(gbufferB.rgb * 2.0 - 1.0, 0.0)).xyz);
-				vec3 ambient = CalculateAmbient(worldNormal) * albedo * ao * _AmbientStrength;
-				color = ambient + lightAccumulation;
-			}
+					// Lit mode - combine ambient + light accumulation + emissive
+					vec3 worldNormal = normalize((inverse(transpose(PROWL_MATRIX_V)) * vec4(gbufferB.rgb * 2.0 - 1.0, 0.0)).xyz);
+
+					vec3 ambient;
+					if (_GIActive < 0.5) {
+						// No GI: use scene ambient as before
+						ambient = CalculateAmbient(worldNormal) * albedo * ao * _AmbientStrength;
+					} else {
+						// GI is active: indirect lighting is already in the accumulation buffer.
+						// Reduce ambient to avoid double-counting indirect light, but keep
+						// enough to prevent total darkness in areas the GI grid doesn't cover.
+						ambient = CalculateAmbient(worldNormal) * albedo * ao * _AmbientStrength * 0.35;
+					}
+
+					color = ambient + lightAccumulation;
+				}
 
 			// Apply fog
 			float depth = texture(_CameraDepthTexture, TexCoords).r;

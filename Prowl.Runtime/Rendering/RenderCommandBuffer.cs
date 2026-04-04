@@ -75,8 +75,8 @@ public sealed class RenderCommandBuffer : IDisposable
     /// <param name="clearDepth">Whether to clear the depth buffer.</param>
     public void BeginRenderPass(RenderTexture target, LoadOp colorLoadOp = LoadOp.Clear, Float4? clearColor = null, bool clearDepth = true)
     {
-        var desc = BuildRenderPassDescriptor(target.frameBuffer, colorLoadOp, clearColor ?? Float4.Zero, clearDepth);
-        _currentRenderPassLayout = GraphiteFormatMapper.MapRenderPassLayout(target.frameBuffer);
+        var desc = BuildRenderPassDescriptor(target, colorLoadOp, clearColor ?? Float4.Zero, clearDepth);
+        _currentRenderPassLayout = GraphiteFormatMapper.MapRenderPassLayout(target);
         _commandList.BeginRenderPass(in desc);
     }
 
@@ -96,7 +96,7 @@ public sealed class RenderCommandBuffer : IDisposable
     /// </summary>
     public void BeginDepthOnlyRenderPass(RenderTexture depthTarget)
     {
-        var depthTex = depthTarget.frameBuffer.GraphiteDepthAttachment;
+        var depthTex = depthTarget.GraphiteDepthTexture;
         if (depthTex == null)
             throw new InvalidOperationException("RenderTexture has no Graphite depth attachment.");
 
@@ -366,8 +366,10 @@ public sealed class RenderCommandBuffer : IDisposable
         if (_debugName != null)
             _commandList.PopDebugGroup();
 
-        //if (_debugSubmitTraceFrames > 0)
-        //    Debug.Log($"[RCB] Submit '{_debugName}', IsPresentTarget={(_commandList is Graphite.Vulkan.VKCommandList vk ? vk.IsPresentTarget : false)}");
+        // Flush any pending upload batch so that textures/buffers uploaded
+        // during command recording are available before this command list
+        // executes on the GPU.
+        Graphics.Graphite.FlushUploadBatch();
 
         _commandList.End();
         Graphics.Graphite.SubmitCommands(_commandList);
@@ -387,6 +389,9 @@ public sealed class RenderCommandBuffer : IDisposable
         if (_debugName != null)
             _commandList.PopDebugGroup();
 
+        // Flush any pending upload batch before submission.
+        Graphics.Graphite.FlushUploadBatch();
+
         _commandList.End();
         Graphics.Graphite.SubmitCommands(_commandList, fence);
     }
@@ -396,13 +401,13 @@ public sealed class RenderCommandBuffer : IDisposable
     #region Helpers
 
     private static RenderPassDescriptor BuildRenderPassDescriptor(
-        GraphicsFrameBuffer frameBuffer,
+        RenderTexture renderTexture,
         LoadOp colorLoadOp,
         Float4 clearColor,
         bool clearDepth)
     {
-        var colorAttachments = frameBuffer.GraphiteColorAttachments;
-        var depthAttachment = frameBuffer.GraphiteDepthAttachment;
+        var colorAttachments = renderTexture.GraphiteColorTextures;
+        var depthAttachment = renderTexture.GraphiteDepthTexture;
 
         // Build color attachments from the shadow textures
         RenderPassColorAttachment[]? colors = null;

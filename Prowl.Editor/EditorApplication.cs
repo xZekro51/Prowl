@@ -108,7 +108,8 @@ public sealed class EditorApplication : Game
     /// </summary>
     protected override bool HandleFrameException(Exception e, string phase)
     {
-        Debug.LogError($"[Editor] Exception in {phase} loop was caught — editor will continue.");
+        Debug.LogError($"[Editor] Exception in {phase} loop (lastPhase: {Debug.LastPhase}) was caught — editor will continue.");
+        Debug.LogError($"[Editor] {e.GetType().Name}: {e.Message}");
         return true;
     }
 
@@ -450,7 +451,11 @@ public sealed class EditorApplication : Game
                 int gh = rh > 0 ? rh : (int)gvp.Size.Y;
 
                 if (gw > 0 && gh > 0)
+                {
+                    Debug.LastPhase = "Render.Editor.GameView";
+                    Debug.LogTrace($"[Editor] Rendering game view ({gw}x{gh})...");
                     rendering.RenderGameView(gw, gh);
+                }
             }
 
             if (_scenePanel != null && _scenePanel.IsOpen)
@@ -461,6 +466,8 @@ public sealed class EditorApplication : Game
 
                 if (w > 0 && h > 0)
                 {
+                    Debug.LastPhase = "Render.Editor.SceneView";
+                    Debug.LogTrace($"[Editor] Rendering scene view ({w}x{h})...");
                     var cam = _scenePanel.Camera;
                     rendering.RenderSceneView(
                         cam.GetPosition(), cam.GetRotation(),
@@ -475,6 +482,8 @@ public sealed class EditorApplication : Game
                     }
                 }
             }
+
+            Debug.LastPhase = "Render.Editor.BeginRenderDone";
         }
         finally
         {

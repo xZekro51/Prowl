@@ -33,6 +33,20 @@ public class DirectionalLight : Light
 
     public float ShadowDistance = 100f;
 
+    // === Global Illumination override ===
+    /// <summary>
+    /// When true, this directional light's GI settings override the scene's
+    /// GlobalIlluminationParams. Useful for per-light testing or artistic control.
+    /// </summary>
+    public bool OverrideSceneGI = false;
+
+    /// <summary>GI mode override (only used when OverrideSceneGI is true).</summary>
+    public Scene.GlobalIlluminationParams.GIMode GIModeOverride =
+        Scene.GlobalIlluminationParams.GIMode.None;
+
+    /// <summary>GI intensity override (only used when OverrideSceneGI is true).</summary>
+    public float GIIntensityOverride = 1.0f;
+
     private Material? _lightMaterial;
 
     // Cascade data (max 4 cascades)

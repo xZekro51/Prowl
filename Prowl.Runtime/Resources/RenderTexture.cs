@@ -9,6 +9,8 @@ using ImageMagick;
 
 using Prowl.Echo;
 
+using Graphite = Prowl.Runtime.Graphite;
+
 namespace Prowl.Runtime.Resources;
 
 public sealed class RenderTexture : EngineObject, ISerializable
@@ -17,6 +19,18 @@ public sealed class RenderTexture : EngineObject, ISerializable
     public Texture2D MainTexture => InternalTextures[0];
     public Texture2D[] InternalTextures { get; private set; }
     public Texture2D InternalDepth { get; private set; }
+
+    /// <summary>
+    /// Graphite textures backing the color attachments.
+    /// Shorthand for <c>frameBuffer.GraphiteColorAttachments</c>.
+    /// </summary>
+    public Graphite.Texture?[] GraphiteColorTextures => frameBuffer?.GraphiteColorAttachments ?? [];
+
+    /// <summary>
+    /// Graphite texture backing the depth attachment, if any.
+    /// Shorthand for <c>frameBuffer.GraphiteDepthAttachment</c>.
+    /// </summary>
+    public Graphite.Texture? GraphiteDepthTexture => frameBuffer?.GraphiteDepthAttachment;
 
     public int Width { get; private set; }
     public int Height { get; private set; }
@@ -63,16 +77,6 @@ public sealed class RenderTexture : EngineObject, ISerializable
         }
 
         frameBuffer = Graphics.CreateFramebuffer(attachments, (uint)Width, (uint)Height);
-    }
-
-    public void Begin()
-    {
-        Graphics.BindFramebuffer(frameBuffer);
-    }
-
-    public void End()
-    {
-        Graphics.UnbindFramebuffer();
     }
 
     public override void OnDispose()

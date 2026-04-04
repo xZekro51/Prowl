@@ -48,6 +48,11 @@ public interface IRenderable
     public void GetCullingData(out bool isRenderable, out AABB bounds);
 
     /// <summary>
+    /// Returns the source mesh for SDF generation, or null if not mesh-based.
+    /// </summary>
+    public Mesh? GetMesh() => null;
+
+    /// <summary>
     /// Gets the sub-mesh index to render. Return -1 to render all indices (the default).
     /// When &gt;= 0, the renderer will use the corresponding <see cref="SubMeshDescriptor"/>
     /// from the mesh to draw only that subset of the index buffer.
@@ -380,7 +385,7 @@ public abstract class RenderPipeline : EngineObject
         if (Graphics.ActiveGraphiteCmdBuffer is not { InRenderPass: false } cmd) return;
         if (!target.IsValid()) return;
 
-        var colorAttachments = target.frameBuffer.GraphiteColorAttachments;
+        var colorAttachments = target.GraphiteColorTextures;
         if (colorAttachments != null)
         {
             foreach (var tex in colorAttachments)
@@ -391,7 +396,7 @@ public abstract class RenderPipeline : EngineObject
             }
         }
 
-        var depthAttachment = target.frameBuffer.GraphiteDepthAttachment;
+        var depthAttachment = target.GraphiteDepthTexture;
         if (depthAttachment != null)
             cmd.ResourceBarrier(new Graphite.ResourceBarrier(
                 depthAttachment, Graphite.ResourceState.DepthWrite, Graphite.ResourceState.ShaderResource));
@@ -409,7 +414,7 @@ public abstract class RenderPipeline : EngineObject
         if (Graphics.ActiveGraphiteCmdBuffer is not { InRenderPass: false } cmd) return;
         if (!target.IsValid()) return;
 
-        var colorAttachments = target.frameBuffer.GraphiteColorAttachments;
+        var colorAttachments = target.GraphiteColorTextures;
         if (colorAttachments != null)
         {
             foreach (var tex in colorAttachments)
@@ -420,7 +425,7 @@ public abstract class RenderPipeline : EngineObject
             }
         }
 
-        var depthAttachment = target.frameBuffer.GraphiteDepthAttachment;
+        var depthAttachment = target.GraphiteDepthTexture;
         if (depthAttachment != null)
             cmd.ResourceBarrier(new Graphite.ResourceBarrier(
                 depthAttachment, Graphite.ResourceState.ShaderResource, Graphite.ResourceState.DepthWrite));
@@ -538,7 +543,7 @@ public abstract class RenderPipeline : EngineObject
         Blit(mat, pass);
     }
 
-    public static void Blit(RenderTexture source, RenderTexture target, Material? mat = null, int pass = 0, bool clearDepth = false, bool clearColor = false, Color color = default)
+    public static void Blit(RenderTexture source, RenderTexture target, Material? mat = null, int pass = 0, bool clearDepth = false, bool clearColor = false, Color color = default, bool preserveContents = false)
     {
         mat ??= BlitMaterial;
 
@@ -553,7 +558,7 @@ public abstract class RenderPipeline : EngineObject
             var temp = RenderTexture.GetTemporaryRT(source.Width, source.Height, false, formats);
             Blit(source, temp);                  // source → temp (default material, simple copy)
             mat.SetTexture("_MainTex", temp.MainTexture);
-            Blit(target, mat, pass, clearDepth, clearColor, color); // temp → target via composite material
+            Blit(target, mat, pass, clearDepth, clearColor, color, preserveContents); // temp → target via composite material
             RenderTexture.ReleaseTemporaryRT(temp);
             return;
         }
@@ -574,17 +579,17 @@ public abstract class RenderPipeline : EngineObject
             TransitionToShaderResource(source);
         }
 
-        Blit(target, mat, pass, clearDepth, clearColor, color);
+        Blit(target, mat, pass, clearDepth, clearColor, color, preserveContents);
     }
 
-    public static void Blit(Texture2D source, RenderTexture target, Material? mat = null, int pass = 0, bool clearDepth = false, bool clearColor = false, Color color = default)
+    public static void Blit(Texture2D source, RenderTexture target, Material? mat = null, int pass = 0, bool clearDepth = false, bool clearColor = false, Color color = default, bool preserveContents = false)
     {
         mat ??= BlitMaterial;
         mat.SetTexture("_MainTex", source);
-        Blit(target, mat, pass, clearDepth, clearColor, color);
+        Blit(target, mat, pass, clearDepth, clearColor, color, preserveContents);
     }
 
-    public static void Blit(RenderTexture target, Material? mat = null, int pass = 0, bool clearDepth = false, bool clearColor = false, Color color = default)
+    public static void Blit(RenderTexture target, Material? mat = null, int pass = 0, bool clearDepth = false, bool clearColor = false, Color color = default, bool preserveContents = false)
     {
         mat ??= BlitMaterial;
 
@@ -595,7 +600,10 @@ public abstract class RenderPipeline : EngineObject
             && Graphics.ActiveGraphiteCmdBuffer is { InRenderPass: false } cmd
             && target.IsValid())
         {
-            var loadOp = clearColor ? LoadOp.Clear : LoadOp.DontCare;
+            // DontCare is the safe default for fullscreen blits that overwrite every pixel.
+            // Load is only needed when the target already has valid content that must be
+            // preserved (e.g. additive GI blending into the light accumulation buffer).
+            var loadOp = clearColor ? LoadOp.Clear : (preserveContents ? LoadOp.Load : LoadOp.DontCare);
             var clearFloat4 = clearColor
                 ? new Float4((float)color.R, (float)color.G, (float)color.B, (float)color.A)
                 : Float4.Zero;
@@ -604,7 +612,8 @@ public abstract class RenderPipeline : EngineObject
             // After a prior TransitionToShaderResource (e.g. self-blit, post-process chain)
             // the attachments may still be in ShaderReadOnlyOptimal, which is incompatible
             // with LoadOp.Load's initialLayout (ColorAttachmentOptimal / DepthStencilAttachmentOptimal).
-            TransitionToRenderTarget(target);
+            if (preserveContents)
+                TransitionToRenderTarget(target);
 
             cmd.BeginRenderPass(target, loadOp, clearFloat4, clearDepth);
             // Use SetViewportRaw (no Y-flip) for fullscreen blits.
@@ -882,7 +891,7 @@ public abstract class RenderPipeline : EngineObject
                 // Bind GlobalUniforms buffer (contains camera matrices, time, lighting data, etc.)
                 // This is done per-batch because each shader variant is a separate GPU program object,
                 // and uniform buffer bindings are per-program in OpenGL.
-                GraphicsBuffer? globalBuffer = GlobalUniforms.GetBuffer();
+                Graphite.Buffer? globalBuffer = GlobalUniforms.GetBuffer();
                 if (globalBuffer != null)
                 {
                     Graphics.BindUniformBuffer(variant, "GlobalUniforms", globalBuffer, 0);
@@ -1036,7 +1045,7 @@ public abstract class RenderPipeline : EngineObject
         if (!isVulkan)
         {
             // Bind GlobalUniforms buffer
-            GraphicsBuffer? globalBuffer = GlobalUniforms.GetBuffer();
+            Graphite.Buffer? globalBuffer = GlobalUniforms.GetBuffer();
             if (globalBuffer != null)
             {
                 Graphics.BindUniformBuffer(variant, "GlobalUniforms", globalBuffer, 0);

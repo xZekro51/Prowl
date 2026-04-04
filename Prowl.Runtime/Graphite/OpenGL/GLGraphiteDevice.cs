@@ -59,6 +59,11 @@ public class GLGraphiteDevice : GraphiteDevice
     private GraphicsFrameBuffer? _currentReadFramebuffer;
     private GraphicsFrameBuffer? _currentDrawFramebuffer;
 
+    // ── FBO Cache ─────────────────────────────────────────────────
+    // Caches GL framebuffer objects by their attachment configuration to avoid
+    // per-render-pass create/delete overhead in GLCommandList.
+    private readonly Dictionary<FBOCacheKey, uint> _fboCache = new();
+
     // Uniform/attribute caches
     public override Dictionary<ulong, uint> CachedBlockLocations { get; } = [];
     public override Dictionary<ulong, int> CachedUniformLocations { get; } = [];
@@ -92,12 +97,9 @@ public class GLGraphiteDevice : GraphiteDevice
         {
             unsafe
             {
-                if (OperatingSystem.IsWindows())
-                {
-                    GLContext.DebugMessageCallback(DebugCallback, null);
-                    GLContext.Enable(EnableCap.DebugOutput);
-                    GLContext.Enable(EnableCap.DebugOutputSynchronous);
-                }
+                GLContext.DebugMessageCallback(DebugCallback, null);
+                GLContext.Enable(EnableCap.DebugOutput);
+                GLContext.Enable(EnableCap.DebugOutputSynchronous);
             }
         }
     }
@@ -242,6 +244,7 @@ public class GLGraphiteDevice : GraphiteDevice
         if (commandList is GLCommandList glCmd)
         {
             glCmd.Execute();
+            ResetToKnownState();
         }
         else
         {
@@ -351,8 +354,285 @@ public class GLGraphiteDevice : GraphiteDevice
 
     protected override void DisposeResources()
     {
+        // Clean up all cached FBOs
+        foreach (uint fbo in _fboCache.Values)
+            GLContext.DeleteFramebuffer(fbo);
+        _fboCache.Clear();
+
         GLContext?.Dispose();
     }
+
+    #region FBO Cache
+
+    /// <summary>
+    /// Cache key for GL framebuffer objects, identified by the attached textures,
+    /// mip levels, and array layers.
+    /// </summary>
+    private readonly struct FBOCacheKey : IEquatable<FBOCacheKey>
+    {
+        // Each slot packs: textureHandle (32 bits) | mip (16 bits) | layer (16 bits)
+        private readonly ulong _c0, _c1, _c2, _c3, _c4, _c5, _c6, _c7;
+        private readonly ulong _depth;
+        private readonly byte _colorCount;
+
+        private static ulong Pack(uint handle, uint mip, uint layer)
+            => (ulong)handle | ((ulong)mip << 32) | ((ulong)layer << 48);
+
+        public FBOCacheKey(in RenderPassDescriptor desc)
+        {
+            _c0 = _c1 = _c2 = _c3 = _c4 = _c5 = _c6 = _c7 = 0;
+            _depth = 0;
+            _colorCount = 0;
+
+            if (desc.ColorAttachments != null)
+            {
+                _colorCount = (byte)desc.ColorAttachments.Length;
+                for (int i = 0; i < desc.ColorAttachments.Length && i < 8; i++)
+                {
+                    RenderPassColorAttachment att = desc.ColorAttachments[i];
+                    ulong packed = Pack(att.Texture.NativeHandle, att.MipLevel, att.ArrayLayer);
+                    switch (i)
+                    {
+                        case 0: _c0 = packed; break;
+                        case 1: _c1 = packed; break;
+                        case 2: _c2 = packed; break;
+                        case 3: _c3 = packed; break;
+                        case 4: _c4 = packed; break;
+                        case 5: _c5 = packed; break;
+                        case 6: _c6 = packed; break;
+                        case 7: _c7 = packed; break;
+                    }
+                }
+            }
+
+            if (desc.DepthStencilAttachment.HasValue)
+            {
+                RenderPassDepthStencilAttachment att = desc.DepthStencilAttachment.Value;
+                _depth = Pack(att.Texture.NativeHandle, att.MipLevel, att.ArrayLayer);
+            }
+        }
+
+        public bool ReferencesTexture(uint handle)
+        {
+            ulong mask = 0xFFFFFFFF;
+            Span<ulong> slots = stackalloc ulong[] { _c0, _c1, _c2, _c3, _c4, _c5, _c6, _c7 };
+            for (int i = 0; i < _colorCount && i < 8; i++)
+            {
+                if ((slots[i] & mask) == handle)
+                    return true;
+            }
+            return (_depth & mask) == handle && _depth != 0;
+        }
+
+        public bool Equals(FBOCacheKey other)
+            => _c0 == other._c0 && _c1 == other._c1 && _c2 == other._c2 && _c3 == other._c3
+            && _c4 == other._c4 && _c5 == other._c5 && _c6 == other._c6 && _c7 == other._c7
+            && _depth == other._depth && _colorCount == other._colorCount;
+
+        public override bool Equals(object? obj) => obj is FBOCacheKey other && Equals(other);
+
+        public override int GetHashCode()
+        {
+            HashCode h = new();
+            h.Add(_colorCount);
+            h.Add(_c0); h.Add(_c1); h.Add(_c2); h.Add(_c3);
+            h.Add(_c4); h.Add(_c5); h.Add(_c6); h.Add(_c7);
+            h.Add(_depth);
+            return h.ToHashCode();
+        }
+    }
+
+    /// <summary>
+    /// Returns a cached GL framebuffer object for the given render pass descriptor,
+    /// creating one if it doesn't exist. Returns 0 for the default framebuffer (swapchain).
+    /// </summary>
+    internal uint GetOrCreateFBO(in RenderPassDescriptor descriptor)
+    {
+        // Default framebuffer for swapchain targets
+        if (descriptor.ColorAttachments != null && descriptor.ColorAttachments.Length > 0
+            && descriptor.ColorAttachments[0].Texture is GLSwapchainTexture)
+            return 0;
+
+        FBOCacheKey key = new(in descriptor);
+        if (_fboCache.TryGetValue(key, out uint cachedFbo))
+            return cachedFbo;
+
+        // Create a new FBO
+        uint fbo = GL.GenFramebuffer();
+        GL.BindFramebuffer(FramebufferTarget.Framebuffer, fbo);
+
+        // Attach color targets
+        if (descriptor.ColorAttachments != null && descriptor.ColorAttachments.Length > 0)
+        {
+            DrawBufferMode[] drawBuffers = new DrawBufferMode[descriptor.ColorAttachments.Length];
+
+            for (int i = 0; i < descriptor.ColorAttachments.Length; i++)
+            {
+                RenderPassColorAttachment attachment = descriptor.ColorAttachments[i];
+                if (attachment.Texture is GLTexture glTex)
+                {
+                    FramebufferAttachment attachmentPoint = FramebufferAttachment.ColorAttachment0 + i;
+                    AttachTextureToFramebuffer(glTex, attachmentPoint, attachment.MipLevel, attachment.ArrayLayer,
+                        FramebufferTarget.Framebuffer);
+                }
+                drawBuffers[i] = DrawBufferMode.ColorAttachment0 + i;
+            }
+
+            GL.DrawBuffers((uint)drawBuffers.Length, drawBuffers);
+        }
+        else
+        {
+            GL.DrawBuffer(DrawBufferMode.None);
+        }
+
+        // Attach depth/stencil
+        if (descriptor.DepthStencilAttachment.HasValue)
+        {
+            RenderPassDepthStencilAttachment attachment = descriptor.DepthStencilAttachment.Value;
+            if (attachment.Texture is GLTexture glTex)
+            {
+                FramebufferAttachment attachmentPoint = glTex.HasStencil
+                    ? FramebufferAttachment.DepthStencilAttachment
+                    : FramebufferAttachment.DepthAttachment;
+
+                AttachTextureToFramebuffer(glTex, attachmentPoint, attachment.MipLevel, attachment.ArrayLayer,
+                    FramebufferTarget.Framebuffer);
+            }
+        }
+
+        // Verify completeness
+        GLEnum status = GL.CheckFramebufferStatus(FramebufferTarget.Framebuffer);
+        if (status != GLEnum.FramebufferComplete)
+        {
+            GL.DeleteFramebuffer(fbo);
+            throw new InvalidOperationException(
+                $"Framebuffer incomplete: {status}. Check that all attachments have compatible formats and dimensions.");
+        }
+
+        _fboCache[key] = fbo;
+        return fbo;
+    }
+
+    /// <summary>
+    /// Removes and deletes all cached FBOs that reference the given GL texture handle.
+    /// Called when a texture is disposed.
+    /// </summary>
+    internal void InvalidateFBOsForTexture(uint textureHandle)
+    {
+        List<FBOCacheKey>? toRemove = null;
+        foreach (KeyValuePair<FBOCacheKey, uint> pair in _fboCache)
+        {
+            if (pair.Key.ReferencesTexture(textureHandle))
+            {
+                toRemove ??= new List<FBOCacheKey>();
+                toRemove.Add(pair.Key);
+            }
+        }
+
+        if (toRemove != null)
+        {
+            foreach (FBOCacheKey key in toRemove)
+            {
+                if (_fboCache.Remove(key, out uint fbo))
+                    GL.DeleteFramebuffer(fbo);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Attaches a texture to the currently bound framebuffer, handling array textures,
+    /// cubemaps, and 3D textures.
+    /// </summary>
+    internal void AttachTextureToFramebuffer(GLTexture texture, FramebufferAttachment attachment,
+        uint mipLevel, uint arrayLayer, FramebufferTarget target)
+    {
+        switch (texture.Target)
+        {
+            case TextureTarget.Texture1D:
+                GL.FramebufferTexture1D(target, attachment,
+                    texture.Target, texture.Handle, (int)mipLevel);
+                break;
+
+            case TextureTarget.Texture1DArray:
+            case TextureTarget.Texture2DArray:
+            case TextureTarget.Texture3D:
+                GL.FramebufferTextureLayer(target, attachment,
+                    texture.Handle, (int)mipLevel, (int)arrayLayer);
+                break;
+
+            case TextureTarget.TextureCubeMap:
+                GL.FramebufferTexture2D(target, attachment,
+                    GetCubemapFaceTarget(arrayLayer), texture.Handle, (int)mipLevel);
+                break;
+
+            case TextureTarget.TextureCubeMapArray:
+                GL.FramebufferTextureLayer(target, attachment,
+                    texture.Handle, (int)mipLevel, (int)arrayLayer);
+                break;
+
+            case TextureTarget.Texture2DMultisample:
+                GL.FramebufferTexture2D(target, attachment,
+                    texture.Target, texture.Handle, 0);
+                break;
+
+            case TextureTarget.Texture2DMultisampleArray:
+                GL.FramebufferTextureLayer(target, attachment,
+                    texture.Handle, 0, (int)arrayLayer);
+                break;
+
+            default:
+                GL.FramebufferTexture2D(target, attachment,
+                    texture.Target, texture.Handle, (int)mipLevel);
+                break;
+        }
+    }
+
+    internal static TextureTarget GetCubemapFaceTarget(uint faceIndex)
+    {
+        if (faceIndex > 5)
+            throw new ArgumentOutOfRangeException(nameof(faceIndex), $"Cubemap face index must be 0-5, got {faceIndex}");
+        return (TextureTarget)((int)TextureTarget.TextureCubeMapPositiveX + (int)faceIndex);
+    }
+
+    /// <summary>
+    /// Resets GL state to known defaults after a Graphite command list execution.
+    /// This keeps the legacy state-tracking variables in sync with actual GL state.
+    /// </summary>
+    internal void ResetToKnownState()
+    {
+        // Unbind resources that the command list may have left bound
+        GL.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
+        GL.UseProgram(0);
+        GL.BindVertexArray(0);
+
+        // Reset capabilities the command list may have toggled
+        GL.Disable(EnableCap.ScissorTest);
+        GL.Disable(EnableCap.FramebufferSrgb);
+
+        // Force-sync all legacy tracked state to initial defaults
+        SetState(new RasterizerState
+        {
+            DepthTest = true,
+            DepthWrite = true,
+            Depth = RasterizerState.DepthMode.Lequal,
+            DoBlend = true,
+            BlendSrc = RasterizerState.Blending.SrcAlpha,
+            BlendDst = RasterizerState.Blending.OneMinusSrcAlpha,
+            Blend = RasterizerState.BlendMode.Add,
+            CullFace = RasterizerState.PolyFace.Back,
+            Winding = RasterizerState.WindingOrder.CW,
+        }, force: true);
+
+        // Clear framebuffer tracking
+        _currentFramebuffer = null;
+        _currentReadFramebuffer = null;
+        _currentDrawFramebuffer = null;
+
+        // Invalidate the static texture bind cache
+        GraphicsTexture.InvalidateBindCache();
+    }
+
+    #endregion
 
     #region Legacy Immediate-Mode API
 
@@ -487,6 +767,17 @@ public class GLGraphiteDevice : GraphiteDevice
         BindProgram(program);
         GLContext.UniformBlockBinding(program.Handle, blockIndex, bindingPoint);
         if (buffer.GraphiteBuffer is GLBuffer glBuf)
+            GLContext.BindBufferBase(BufferTargetARB.UniformBuffer, bindingPoint, glBuf.Handle);
+    }
+
+    public override void BindUniformBuffer(GraphicsProgram program, string blockName, Buffer graphiteBuffer, uint bindingPoint = 0)
+    {
+        uint blockIndex = GetBlockIndex(program, blockName);
+        if (blockIndex == 0xFFFFFFFF) return; // GL_INVALID_INDEX
+
+        BindProgram(program);
+        GLContext.UniformBlockBinding(program.Handle, blockIndex, bindingPoint);
+        if (graphiteBuffer is GLBuffer glBuf)
             GLContext.BindBufferBase(BufferTargetARB.UniformBuffer, bindingPoint, glBuf.Handle);
     }
 

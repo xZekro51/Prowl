@@ -62,7 +62,7 @@ public class GraphicsProgram : IDisposable
     /// When true, only Graphite modules are valid; GL <see cref="Handle"/> is 0.</summary>
     private bool _isGraphiteOnly;
 
-    /// <summary>Merged SPIR-V reflection data (Vulkan only). Null on OpenGL.</summary>
+    /// <summary>Merged SPIR-V reflection data. Populated on both Vulkan and OpenGL backends.</summary>
     internal SpirvReflection.ReflectionResult? Reflection { get; private set; }
 
     /// <summary>Cached bind group layout derived from <see cref="Reflection"/>.</summary>
@@ -224,7 +224,138 @@ public class GraphicsProgram : IDisposable
         {
             Debug.LogWarning($"[GraphicsProgram] Failed to create Graphite shader modules (GL): {ex.Message}");
         }
+
+        // Also cross-compile GLSL → SPIR-V for reflection data.
+        // This populates Reflection so that GetOrCreateBindGroupLayout() works
+        // on OpenGL, enabling the Graphite command list rendering path.
+        GenerateSpirvReflectionForGL(vertexSource, fragmentSource, geometrySource);
     }
+
+    private void GenerateSpirvReflectionForGL(string vertexSource, string fragmentSource, string geometrySource)
+    {
+        SpirvReflection.ReflectionResult? vertRefl = null, fragRefl = null, geomRefl = null;
+
+        try
+        {
+            if (!string.IsNullOrEmpty(vertexSource))
+            {
+                string vkSource = PatchGlslForSpirvReflection(vertexSource);
+                byte[] spirv = Graphite.ShaderCrossCompiler.CompileGLSLToSPIRV(vkSource, Graphite.ShaderStage.Vertex);
+                vertRefl = SpirvReflection.Reflect(spirv);
+            }
+            if (!string.IsNullOrEmpty(fragmentSource))
+            {
+                string vkSource = PatchGlslForSpirvReflection(fragmentSource);
+                byte[] spirv = Graphite.ShaderCrossCompiler.CompileGLSLToSPIRV(vkSource, Graphite.ShaderStage.Fragment);
+                fragRefl = SpirvReflection.Reflect(spirv);
+            }
+            if (!string.IsNullOrEmpty(geometrySource))
+            {
+                string vkSource = PatchGlslForSpirvReflection(geometrySource);
+                byte[] spirv = Graphite.ShaderCrossCompiler.CompileGLSLToSPIRV(vkSource, Graphite.ShaderStage.Geometry);
+                geomRefl = SpirvReflection.Reflect(spirv);
+            }
+        }
+        catch (Exception ex)
+        {
+            Debug.LogWarning($"[GraphicsProgram] SPIR-V cross-compilation for GL reflection failed: {ex.Message}");
+            return;
+        }
+
+        List<SpirvReflection.ReflectionResult> results = [];
+        if (vertRefl != null) results.Add(vertRefl);
+        if (fragRefl != null) results.Add(fragRefl);
+        if (geomRefl != null) results.Add(geomRefl);
+        if (results.Count > 0)
+            Reflection = SpirvReflection.Merge(results.ToArray());
+
+#if DEBUG
+        ValidateBindingsAgainstGL();
+#endif
+    }
+
+    /// <summary>
+    /// Patches OpenGL-targeted GLSL (#version 410) for SPIR-V cross-compilation
+    /// by replacing the version directive with #version 450 and adding the
+    /// PROWL_VULKAN define so conditional blocks match the Vulkan code path.
+    /// </summary>
+    private static string PatchGlslForSpirvReflection(string glslSource)
+    {
+        const string patchedHeader = "#version 450\n#define PROWL_VULKAN 1\n";
+
+        int versionIdx = glslSource.IndexOf("#version", StringComparison.Ordinal);
+        if (versionIdx >= 0)
+        {
+            int endOfLine = glslSource.IndexOf('\n', versionIdx);
+            if (endOfLine >= 0)
+                return patchedHeader + glslSource.Substring(endOfLine + 1);
+        }
+
+        return patchedHeader + glslSource;
+    }
+
+#if DEBUG
+    /// <summary>
+    /// Validates that SPIR-V reflection binding names match the active resources
+    /// in the linked GL program. Logs warnings for any discrepancies that could
+    /// cause incorrect rendering when the Graphite command list path is used on OpenGL.
+    /// </summary>
+    private void ValidateBindingsAgainstGL()
+    {
+        if (Reflection == null || Handle == 0)
+            return;
+
+        GL gl = Graphics.GL;
+        int spirvUboCount = 0;
+
+        foreach (SpirvReflection.ResourceBinding binding in Reflection.Bindings)
+        {
+            if (string.IsNullOrEmpty(binding.Name))
+                continue;
+
+            switch (binding.Type)
+            {
+                case SpirvReflection.ResourceType.UniformBuffer:
+                {
+                    spirvUboCount++;
+                    uint blockIndex = gl.GetUniformBlockIndex(Handle, binding.Name);
+                    if (blockIndex == uint.MaxValue) // GL_INVALID_INDEX
+                    {
+                        Debug.LogWarning(
+                            $"[ShaderBindingValidation] SPIR-V reflection found UBO '{binding.Name}' " +
+                            $"at set={binding.Set} binding={binding.Binding}, but GL program {Handle} " +
+                            $"does not have a matching uniform block (may be optimized away by GL compiler).");
+                    }
+                    break;
+                }
+
+                case SpirvReflection.ResourceType.CombinedImageSampler:
+                case SpirvReflection.ResourceType.SampledTexture:
+                {
+                    int location = gl.GetUniformLocation(Handle, binding.Name);
+                    if (location < 0)
+                    {
+                        Debug.LogWarning(
+                            $"[ShaderBindingValidation] SPIR-V reflection found sampler '{binding.Name}' " +
+                            $"at set={binding.Set} binding={binding.Binding}, but GL program {Handle} " +
+                            $"does not have a matching uniform location (may be optimized away by GL compiler).");
+                    }
+                    break;
+                }
+            }
+        }
+
+        // Compare total UBO counts between GL and SPIR-V reflection
+        gl.GetProgram(Handle, ProgramPropertyARB.ActiveUniformBlocks, out int glBlockCount);
+        if (glBlockCount != spirvUboCount)
+        {
+            Debug.LogWarning(
+                $"[ShaderBindingValidation] GL program {Handle} has {glBlockCount} active uniform blocks, " +
+                $"but SPIR-V reflection found {spirvUboCount} UBO bindings. " +
+                $"Some blocks may be optimized away differently between the GL and SPIR-V compilers.");
+        }
+    }
+#endif
 
     private void CreateGraphiteModulesVulkan(string vertexSource, string fragmentSource, string geometrySource)
     {

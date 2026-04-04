@@ -224,7 +224,7 @@ public class WorldCanvas : MonoBehaviour, IRenderable
         // On Vulkan these are no-ops; PaperRenderer handles everything via Graphite.
         if (Graphics.IsOpenGL)
         {
-            _renderTexture.Begin();
+            Graphics.BindFramebuffer(_renderTexture.frameBuffer);
             Graphics.Clear(0f, 0f, 0f, 0f, ClearFlags.Color);
         }
 
@@ -241,7 +241,7 @@ public class WorldCanvas : MonoBehaviour, IRenderable
 
         // Legacy GL path: unbind framebuffer.
         if (Graphics.IsOpenGL)
-            _renderTexture.End();
+            Graphics.UnbindFramebuffer();
     }
 
     // IRenderable implementation

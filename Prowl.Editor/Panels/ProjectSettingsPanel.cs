@@ -8,6 +8,7 @@ using ImGuiNET;
 using Prowl.Editor.Build;
 using Prowl.Editor.Docking;
 using Prowl.Runtime;
+using Prowl.Runtime.Resources;
 
 namespace Prowl.Editor.Panels;
 
@@ -30,6 +31,7 @@ public sealed class ProjectSettingsPanel : EditorPanel
     [
         "Player",
         "Rendering",
+        "Lighting",
         "Scripting Defines",
     ];
 
@@ -80,10 +82,125 @@ public sealed class ProjectSettingsPanel : EditorPanel
             {
                 case 0: DrawPlayerPage(); break;
                 case 1: DrawRenderingPage(); break;
-                case 2: DrawScriptingDefinesPage(); break;
+                case 2: DrawLightingPage(); break;
+                case 3: DrawScriptingDefinesPage(); break;
             }
         }
         ImGui.EndChild();
+    }
+
+    // ── Lighting Page ────────────────────────────────────────────────
+
+    private void DrawLightingPage()
+    {
+        var scene = Scene.Current;
+        if (scene == null)
+        {
+            ImGui.TextDisabled("No active scene");
+            return;
+        }
+
+        ImGui.TextColored(new Vector4(0.7f, 0.8f, 1f, 1f), "Global Illumination");
+        ImGui.Separator();
+        ImGui.Spacing();
+
+        // GI Mode dropdown
+        Scene.GlobalIlluminationParams gi = scene.GlobalIllumination;
+        string[] modeNames = Enum.GetNames<Scene.GlobalIlluminationParams.GIMode>();
+        int modeIndex = (int)gi.Mode;
+        ImGui.Text("GI Mode");
+        ImGui.SetNextItemWidth(200 * Game.DpiScale);
+        if (ImGui.Combo("##GIMode", ref modeIndex, modeNames, modeNames.Length))
+            gi.Mode = (Scene.GlobalIlluminationParams.GIMode)modeIndex;
+
+        ImGui.Spacing();
+
+        // Shared settings
+        float intensity = gi.Intensity;
+        ImGui.SetNextItemWidth(200 * Game.DpiScale);
+        if (ImGui.SliderFloat("Intensity", ref intensity, 0f, 5f))
+            gi.Intensity = intensity;
+
+        float distance = gi.Distance;
+        ImGui.SetNextItemWidth(200 * Game.DpiScale);
+        if (ImGui.SliderFloat("Distance", ref distance, 10f, 500f))
+            gi.Distance = distance;
+
+        int bounces = gi.BounceCount;
+        ImGui.SetNextItemWidth(200 * Game.DpiScale);
+        if (ImGui.SliderInt("Bounces", ref bounces, 1, 4))
+            gi.BounceCount = bounces;
+
+        float resScale = gi.ResolutionScale;
+        ImGui.SetNextItemWidth(200 * Game.DpiScale);
+        if (ImGui.SliderFloat("Resolution Scale", ref resScale, 0.25f, 1.0f))
+            gi.ResolutionScale = resScale;
+
+        // VoxelGI-specific
+        if (gi.Mode == Scene.GlobalIlluminationParams.GIMode.VoxelGI)
+        {
+            ImGui.Spacing();
+            ImGui.TextColored(new Vector4(0.7f, 0.8f, 1f, 1f), "Voxel Cone Tracing");
+            ImGui.Separator();
+
+            int[] resOptions = [64, 128, 256, 512];
+            int resIdx = Array.IndexOf(resOptions, gi.VoxelResolution);
+            if (resIdx < 0) resIdx = 2;
+            string[] resLabels = ["64", "128", "256", "512"];
+            ImGui.SetNextItemWidth(200 * Game.DpiScale);
+            if (ImGui.Combo("Voxel Resolution", ref resIdx, resLabels, resLabels.Length))
+                gi.VoxelResolution = resOptions[resIdx];
+
+            int coneCount = gi.ConeCount;
+            ImGui.SetNextItemWidth(200 * Game.DpiScale);
+            if (ImGui.SliderInt("Cone Count", ref coneCount, 4, 16))
+                gi.ConeCount = coneCount;
+
+            float coneAngle = gi.ConeAngle;
+            ImGui.SetNextItemWidth(200 * Game.DpiScale);
+            if (ImGui.SliderFloat("Cone Angle", ref coneAngle, 0.1f, 1.0f))
+                gi.ConeAngle = coneAngle;
+
+            bool voxelAO = gi.VoxelAO;
+            if (ImGui.Checkbox("Voxel AO", ref voxelAO))
+                gi.VoxelAO = voxelAO;
+        }
+
+        // SDFGI-specific
+        if (gi.Mode == Scene.GlobalIlluminationParams.GIMode.SDFGI)
+        {
+            ImGui.Spacing();
+            ImGui.TextColored(new Vector4(0.7f, 0.8f, 1f, 1f), "SDF Global Illumination");
+            ImGui.Separator();
+
+            int[] cascadeOptions = [2, 3, 4, 6];
+            int cascIdx = Array.IndexOf(cascadeOptions, gi.SDFCascadeCount);
+            if (cascIdx < 0) cascIdx = 2;
+            string[] cascLabels = ["2", "3", "4", "6"];
+            ImGui.SetNextItemWidth(200 * Game.DpiScale);
+            if (ImGui.Combo("Cascade Count", ref cascIdx, cascLabels, cascLabels.Length))
+                gi.SDFCascadeCount = cascadeOptions[cascIdx];
+
+            int[] probeOptions = [4, 8, 16];
+            int probeIdx = Array.IndexOf(probeOptions, gi.SDFProbeResolution);
+            if (probeIdx < 0) probeIdx = 1;
+            string[] probeLabels = ["4", "8", "16"];
+            ImGui.SetNextItemWidth(200 * Game.DpiScale);
+            if (ImGui.Combo("Probe Resolution", ref probeIdx, probeLabels, probeLabels.Length))
+                gi.SDFProbeResolution = probeOptions[probeIdx];
+
+            float cascadeScale = gi.SDFCascadeScale;
+            ImGui.SetNextItemWidth(200 * Game.DpiScale);
+            if (ImGui.SliderFloat("Cascade Scale", ref cascadeScale, 1.5f, 4.0f))
+                gi.SDFCascadeScale = cascadeScale;
+
+            float occBias = gi.SDFOcclusionBias;
+            ImGui.SetNextItemWidth(200 * Game.DpiScale);
+            if (ImGui.SliderFloat("Occlusion Bias", ref occBias, 0.001f, 0.1f))
+                gi.SDFOcclusionBias = occBias;
+        }
+
+        scene.GlobalIllumination = gi;
     }
 
     // ── Scripting Defines Page ─────────────────────────────────────

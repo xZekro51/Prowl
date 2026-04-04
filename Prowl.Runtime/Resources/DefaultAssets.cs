@@ -34,7 +34,23 @@ public enum DefaultShader
     DebugView,
     SelectionOutline,
     SDF,
-    SDFUI
+    SDFUI,
+
+    // Global Illumination
+    VoxelGI_Voxelize,
+    VoxelGI_InjectLight,
+    VoxelGI_Mipmap,
+    VoxelGI_ConeTrace,
+    SDFGI_GenerateSDF,
+    SDFGI_MergeSDF,
+    SDFGI_ProbeUpdate,
+    SDFGI_ProbeTrace,
+    GI_TemporalBlend,
+
+    // GI Debug Visualization
+    GI_DebugVoxelGrid,
+    GI_DebugSDFSlice,
+    GI_DebugProbeGrid,
 }
 
 /// <summary>
@@ -74,5 +90,6 @@ public enum DefaultShaderInclude
     Random,
     ShaderVariables,
     Shadow,
-    VertexAttributes
+    VertexAttributes,
+    GICommon,
 }

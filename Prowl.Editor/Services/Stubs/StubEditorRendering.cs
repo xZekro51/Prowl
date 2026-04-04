@@ -382,9 +382,12 @@ public sealed class StubEditorRendering : IEditorRendering
 
         try
         {
-            // Bind the RT and set viewport for the UI overlay pass
-            rt.Begin();
-            Graphics.Viewport(0, 0, (uint)width, (uint)height);
+            // Bind the RT and set viewport for the UI overlay pass (GL-only; no-op on Vulkan)
+            if (Graphics.IsOpenGL)
+            {
+                Graphics.BindFramebuffer(rt.frameBuffer);
+                Graphics.Viewport(0, 0, (uint)width, (uint)height);
+            }
 
             paper!.BeginFrame(Time.DeltaTime);
             paperRenderer!.RenderTarget = rt;
@@ -394,7 +397,8 @@ public sealed class StubEditorRendering : IEditorRendering
             // Flush deferred SDF text renders into the game/scene RT
             Runtime.UI.UITextRenderer.FlushPendingRenders(rt);
 
-            rt.End();
+            if (Graphics.IsOpenGL)
+                Graphics.UnbindFramebuffer();
         }
         finally
         {

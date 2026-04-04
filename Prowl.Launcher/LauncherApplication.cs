@@ -59,6 +59,12 @@ public sealed class LauncherApplication : Game
     private SortMode _sortMode = SortMode.LastModified;
     private bool _sortDescending = true;
 
+    // ── GPU debug ────────────────────────────────────────────────────
+    private bool _gpuDebug;
+
+    // ── Debug mode (verbose logging + file log + GPU debug) ─────────
+    private bool _debugMode;
+
     // ── File drop subscription ──────────────────────────────────────
     private IDisposable? _fileDropSub;
 
@@ -339,6 +345,28 @@ public sealed class LauncherApplication : Game
         ImGui.Selectable("  \ue914  Templates", false, ImGuiSelectableFlags.Disabled, new Vector2(width - S(16), S(28)));
         ImGui.Selectable("  \ue272  Settings", false, ImGuiSelectableFlags.Disabled, new Vector2(width - S(16), S(28)));
         ImGui.PopStyleColor();
+
+        ImGui.Spacing();
+        ImGui.Separator();
+        ImGui.Spacing();
+
+        // GPU debug toggle — launches editor with Vulkan validation layers and debug markers
+        ImGui.SetCursorPosX(S(12));
+        if (ImGui.Checkbox("GPU Debug", ref _gpuDebug))
+            RequestRepaint();
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Launch editor with --gpu-debug flag.\nEnables Vulkan validation layers and\nGPU debug markers for crash diagnostics.");
+
+        // Debug mode toggle — verbose logging, file log, GPU debug, crash reports
+        ImGui.SetCursorPosX(S(12));
+        if (ImGui.Checkbox("Debug Mode", ref _debugMode))
+        {
+            if (_debugMode)
+                _gpuDebug = true;
+            RequestRepaint();
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Launch editor with --debug flag.\nEnables verbose logging to Editor.log,\nGPU debug, and crash report generation.\nUse this to diagnose editor crashes.");
 
         // Drag-and-drop hint at bottom of sidebar
         float bottom = ImGui.GetWindowHeight() - S(60);
@@ -1261,6 +1289,13 @@ public sealed class LauncherApplication : Game
         project.LastModified = DateTime.Now;
         _projectManager.Save();
 
+        // Build CLI flags string
+        string extraFlags = string.Empty;
+        if (_debugMode)
+            extraFlags += " --debug";
+        else if (_gpuDebug)
+            extraFlags += " --gpu-debug";
+
         string baseDir = AppDomain.CurrentDomain.BaseDirectory;
 
         string[] candidates =
@@ -1284,7 +1319,7 @@ public sealed class LauncherApplication : Game
                 var psi = new System.Diagnostics.ProcessStartInfo
                 {
                     FileName = "dotnet",
-                    Arguments = $"run --project \"{srcProject}\" -- --project \"{project.Path}\"",
+                    Arguments = $"run --project \"{srcProject}\" -- --project \"{project.Path}\"{extraFlags}",
                     UseShellExecute = false,
                 };
                 System.Diagnostics.Process.Start(psi);
@@ -1300,7 +1335,7 @@ public sealed class LauncherApplication : Game
         var startInfo = new System.Diagnostics.ProcessStartInfo
         {
             FileName = editorPath,
-            Arguments = $"--project \"{project.Path}\"",
+            Arguments = $"--project \"{project.Path}\"{extraFlags}",
             UseShellExecute = false,
         };
 

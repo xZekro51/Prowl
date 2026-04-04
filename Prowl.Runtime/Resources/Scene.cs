@@ -254,6 +254,46 @@ public class Scene : EngineObject, ISerializationCallbackReceiver
 
     public SkyboxParams Skybox = new();
 
+    public struct GlobalIlluminationParams
+    {
+        public enum GIMode
+        {
+            None,       // No GI (ambient-only, current behavior)
+            VoxelGI,    // Voxel Cone Tracing
+            SDFGI       // Signed Distance Field GI
+        }
+
+        public GIMode Mode = GIMode.None;
+
+        // === Shared settings ===
+        public float Intensity = 1.0f;
+        public float Distance = 100.0f;       // World-space radius around camera to cover
+        public int BounceCount = 1;           // Number of indirect light bounces
+
+        // === VoxelGI-specific ===
+        public int VoxelResolution = 256;     // Grid resolution: 64, 128, 256, 512
+        public int ConeCount = 6;             // Diffuse cone count: 4, 6, 9, 16
+        public float ConeAngle = 0.5f;        // Cone half-angle in radians
+        public bool VoxelAO = true;           // Derive ambient occlusion from voxel opacity
+
+        // === SDFGI-specific ===
+        public int SDFCascadeCount = 4;       // Number of SDF cascades: 2, 3, 4, 6
+        public int SDFProbeResolution = 8;    // Probes per cascade axis: 4, 8, 16
+        public float SDFOcclusionBias = 0.01f;
+        public float SDFCascadeScale = 2.0f;  // Size multiplier between cascades
+
+        // === Performance ===
+        /// <summary>
+        /// Resolution scale for GI tracing (0.25 = quarter, 0.5 = half, 1.0 = full).
+        /// Lower values significantly improve performance at the cost of detail.
+        /// </summary>
+        public float ResolutionScale = 0.5f;
+
+        public GlobalIlluminationParams() { }
+    }
+
+    public GlobalIlluminationParams GlobalIllumination = new();
+
     /// <summary> The number of registered objects. </summary>
     public int Count => _allObj.Count;
 

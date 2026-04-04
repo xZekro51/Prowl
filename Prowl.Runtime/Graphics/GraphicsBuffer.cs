@@ -3,6 +3,8 @@
 
 using System;
 
+using Prowl.Runtime.Rendering;
+
 using Silk.NET.OpenGL;
 
 using Graphite = Prowl.Runtime.Graphite;
@@ -71,7 +73,10 @@ public class GraphicsBuffer : IDisposable
         // Shadow: (re)create the Graphite buffer with the same data.
         if (Graphics.IsGraphiteReady)
         {
-            GraphiteBuffer?.Dispose();
+            // Defer disposal — the GPU may still be reading the old buffer
+            // from a previously submitted command buffer.
+            if (GraphiteBuffer != null)
+                GraphiteMaterialBinder.Retire(GraphiteBuffer);
             var desc = new Graphite.BufferDescriptor
             {
                 SizeInBytes = sizeInBytes,
@@ -108,7 +113,9 @@ public class GraphicsBuffer : IDisposable
         if (boundBuffers[(int)OriginalType] == Handle)
             boundBuffers[(int)OriginalType] = 0;
 
-        GraphiteBuffer?.Dispose();
+        // Defer disposal — the GPU may still be referencing this buffer.
+        if (GraphiteBuffer != null)
+            GraphiteMaterialBinder.Retire(GraphiteBuffer);
         GraphiteBuffer = null;
 
         IsDisposed = true;

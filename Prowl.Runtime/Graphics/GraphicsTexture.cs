@@ -4,6 +4,8 @@
 using System;
 using System.Buffers;
 
+using Prowl.Runtime.Rendering;
+
 using Silk.NET.OpenGL;
 
 using Graphite = Prowl.Runtime.Graphite;
@@ -129,7 +131,8 @@ public unsafe class GraphicsTexture : IDisposable
                     updateDesc.Depth = Math.Max(1u, oldTex.Depth);
                     Graphics.Graphite.UpdateTexture(GraphiteTexture, in updateDesc, mip0Data.AsSpan(0, dataSize));
 
-                    oldTex.Dispose();
+                    // Defer disposal — the GPU may still be referencing the old texture.
+                    GraphiteMaterialBinder.Retire(oldTex);
                 }
                 finally
                 {
@@ -247,7 +250,9 @@ public unsafe class GraphicsTexture : IDisposable
         if (currentlyBound == Handle)
             currentlyBound = null;
 
-        GraphiteTexture?.Dispose();
+        // Defer disposal — the GPU may still be referencing this texture.
+        if (GraphiteTexture != null)
+            GraphiteMaterialBinder.Retire(GraphiteTexture);
         GraphiteTexture = null;
 
         if (IsGL)
@@ -273,7 +278,9 @@ public unsafe class GraphicsTexture : IDisposable
         // Create (or recreate) the Graphite texture on mip level 0.
         if (mip == 0 && Graphics.IsGraphiteReady)
         {
-            GraphiteTexture?.Dispose();
+            // Defer disposal — the GPU may still be reading the old texture.
+            if (GraphiteTexture != null)
+                GraphiteMaterialBinder.Retire(GraphiteTexture);
             var desc = Graphite.TextureDescriptor.Texture2D(
                 width, height,
                 GraphiteFormatMapper.MapTextureFormat(ImageFormat),
@@ -300,7 +307,9 @@ public unsafe class GraphicsTexture : IDisposable
         // Create (or recreate) the Graphite texture on mip level 0.
         if (level == 0 && Graphics.IsGraphiteReady)
         {
-            GraphiteTexture?.Dispose();
+            // Defer disposal — the GPU may still be reading the old texture.
+            if (GraphiteTexture != null)
+                GraphiteMaterialBinder.Retire(GraphiteTexture);
             var desc = Graphite.TextureDescriptor.Texture3D(
                 width, height, depth,
                 GraphiteFormatMapper.MapTextureFormat(ImageFormat),
@@ -324,8 +333,8 @@ public unsafe class GraphicsTexture : IDisposable
             Graphics.GL.TexSubImage2D(type, mip, x, y, width, height, PixelFormat, PixelType, data);
         }
 
-        // On non-GL backends, upload to the Graphite texture directly.
-        if (!IsGL && GraphiteTexture != null && data != null)
+        // Sync the Graphite shadow texture on all backends.
+        if (GraphiteTexture != null && data != null)
         {
             uint bpp = GetBytesPerPixel(ImageFormat);
             if (GraphiteFormatMapper.IsRgbFormat(ImageFormat))
@@ -358,8 +367,8 @@ public unsafe class GraphicsTexture : IDisposable
             Graphics.GL.TexSubImage3D(type, level, x, y, z, width, height, depth, PixelFormat, PixelType, data);
         }
 
-        // On non-GL backends, upload to the Graphite texture directly.
-        if (!IsGL && GraphiteTexture != null && data != null)
+        // Sync the Graphite shadow texture on all backends.
+        if (GraphiteTexture != null && data != null)
         {
             uint bpp = GetBytesPerPixel(ImageFormat);
             if (GraphiteFormatMapper.IsRgbFormat(ImageFormat))

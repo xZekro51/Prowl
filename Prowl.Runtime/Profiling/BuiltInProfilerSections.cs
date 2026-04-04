@@ -133,5 +133,41 @@ public static class BuiltInProfilerSections
             "Scripts",
             "Loads the freshly compiled script assembly and resolves " +
             "previously-missing MonoBehaviour components.");
+
+        // ── Global Illumination ──────────────────────────────────
+        Profiler.RegisterSection("VoxelGI.Voxelize",
+            "GI",
+            "Rasterizes opaque geometry into a 3D voxel grid using " +
+            "dominant-axis projection and imageStore.");
+
+        Profiler.RegisterSection("VoxelGI.InjectLight",
+            "GI",
+            "Injects direct illumination from the primary directional " +
+            "light into occupied voxels via compute shader.");
+
+        Profiler.RegisterSection("VoxelGI.Mipmap",
+            "GI",
+            "Generates the anisotropic mipmap chain of the voxel radiance " +
+            "volume for pre-filtered cone tracing.");
+
+        Profiler.RegisterSection("VoxelGI.ConeTrace",
+            "GI",
+            "Traces diffuse and specular cones through the voxel mipmap chain " +
+            "to compute per-pixel indirect illumination.");
+
+        Profiler.RegisterSection("SDFGI.UpdateSDF",
+            "GI",
+            "Merges per-object signed distance fields into global SDF cascades " +
+            "centered around the camera.");
+
+        Profiler.RegisterSection("SDFGI.UpdateProbes",
+            "GI",
+            "Incrementally updates irradiance probes by tracing rays through " +
+            "the global SDF and accumulating spherical harmonics.");
+
+        Profiler.RegisterSection("SDFGI.TraceGI",
+            "GI",
+            "Fullscreen pass that trilinearly interpolates the probe grid to " +
+            "compute per-pixel indirect diffuse illumination.");
     }
 }

@@ -89,6 +89,20 @@ internal static class PipelineStateCache
 #endif
     }
 
+    /// <summary>
+    /// Pre-creates pipeline states for the given configurations to avoid
+    /// first-use stutter during rendering. Configurations already present
+    /// in the cache are skipped cheaply (hash lookup only).
+    /// </summary>
+    public static void WarmUp(ReadOnlySpan<PipelineWarmUpEntry> entries)
+    {
+        foreach (ref readonly PipelineWarmUpEntry entry in entries)
+        {
+            GetOrCreate(entry.Program, entry.VertexLayout, entry.RasterizerState,
+                entry.Topology, entry.RenderPassLayout, entry.BindGroupLayouts);
+        }
+    }
+
     private static UInt128 ComputeHash(
         GraphicsProgram program,
         VertexLayoutDescriptor vertexLayout,
@@ -294,4 +308,18 @@ internal static class PipelineStateCache
         public override int GetHashCode() => HashCode.Combine(_programId, _topology);
     }
 #endif
+}
+
+/// <summary>
+/// Describes a single pipeline configuration to pre-create via
+/// <see cref="PipelineStateCache.WarmUp"/>.
+/// </summary>
+internal struct PipelineWarmUpEntry
+{
+    public GraphicsProgram Program;
+    public VertexLayoutDescriptor VertexLayout;
+    public RasterizerState RasterizerState;
+    public Topology Topology;
+    public RenderPassLayout RenderPassLayout;
+    public BindGroupLayout[]? BindGroupLayouts;
 }

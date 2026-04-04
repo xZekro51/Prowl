@@ -315,6 +315,26 @@ internal static class GraphiteFormatMapper
             depthFormat);
     }
 
+    /// <summary>
+    /// Builds a <see cref="Graphite.RenderPassLayout"/> from a <see cref="Resources.RenderTexture"/>
+    /// by inspecting its Graphite color and depth textures.
+    /// </summary>
+    public static Graphite.RenderPassLayout MapRenderPassLayout(Resources.RenderTexture renderTexture)
+    {
+        var colorFormats = new List<Graphite.TextureFormat>();
+        foreach (var tex in renderTexture.GraphiteColorTextures)
+        {
+            if (tex != null)
+                colorFormats.Add(tex.Format);
+        }
+
+        Graphite.TextureFormat? depthFormat = renderTexture.GraphiteDepthTexture?.Format;
+
+        return new Graphite.RenderPassLayout(
+            colorFormats.ToArray(),
+            depthFormat);
+    }
+
     #endregion
 
     #region Vertex Layout

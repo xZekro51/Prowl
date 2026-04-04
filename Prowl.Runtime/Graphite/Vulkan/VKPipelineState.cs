@@ -269,7 +269,7 @@ internal unsafe class VKPipelineState : PipelineState
                     Subpass = 0,
                 };
 
-                VKGraphiteDevice.Check(device.Vk.CreateGraphicsPipelines(device.Device, default, 1, &pipelineInfo, null, out var pipeline));
+                VKGraphiteDevice.Check(device.Vk.CreateGraphicsPipelines(device.Device, device.PipelineCacheHandle, 1, &pipelineInfo, null, out var pipeline));
                 Handle = pipeline;
 
                 // Set debug name via VK_EXT_debug_utils for GPU debugger visibility
@@ -354,7 +354,7 @@ internal unsafe class VKComputePipelineState : ComputePipelineState
             Layout = PipelineLayoutHandle,
         };
 
-        VKGraphiteDevice.Check(device.Vk.CreateComputePipelines(device.Device, default, 1, &pipelineInfo, null, out var pipeline));
+        VKGraphiteDevice.Check(device.Vk.CreateComputePipelines(device.Device, device.PipelineCacheHandle, 1, &pipelineInfo, null, out var pipeline));
         Handle = pipeline;
 
         SilkMarshal.Free(entryPt);

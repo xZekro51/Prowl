@@ -371,7 +371,7 @@ public class PaperRenderer : ICanvasRenderer
                 // The main pipeline or a prior frame may have left them in ShaderResource.
                 if (!Graphics.IsOpenGL)
                 {
-                    var colorAttachments = RenderTarget.frameBuffer.GraphiteColorAttachments;
+                    var colorAttachments = RenderTarget.GraphiteColorTextures;
                     if (colorAttachments != null)
                     {
                         foreach (var tex in colorAttachments)
@@ -410,7 +410,7 @@ public class PaperRenderer : ICanvasRenderer
         };
 
         var renderPassLayout = RenderTarget != null
-            ? GraphiteFormatMapper.MapRenderPassLayout(RenderTarget.frameBuffer)
+            ? GraphiteFormatMapper.MapRenderPassLayout(RenderTarget)
             : new RenderPassLayout([swapchainTex!.Format]);
 
         var pipeline = PipelineStateCache.GetOrCreate(
@@ -452,7 +452,7 @@ public class PaperRenderer : ICanvasRenderer
         // (e.g. ImGui) can sample it without a Vulkan layout mismatch.
         if (RenderTarget != null && !Graphics.IsOpenGL)
         {
-            var colorAttachments = RenderTarget.frameBuffer.GraphiteColorAttachments;
+            var colorAttachments = RenderTarget.GraphiteColorTextures;
             if (colorAttachments != null)
             {
                 foreach (var tex in colorAttachments)
