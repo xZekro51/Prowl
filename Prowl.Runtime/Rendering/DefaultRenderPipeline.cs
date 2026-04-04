@@ -591,6 +591,11 @@ public class DefaultRenderPipeline : RenderPipeline
         // 10. Transparent geometry (Forward rendered on top of composed result)
         graphiteCmd?.PushDebugGroup("Stage10_Transparents");
         RenderingEvents.InvokeOnTransparentPassBegin(new TransparentPassArgs(composedOutput));
+
+        // Upload forward lighting globals so transparent shaders can evaluate
+        // a single directional light + ambient without reading the GBuffer.
+        SetupForwardLightGlobals(lights, css);
+
         // Begin Graphite render pass for forward transparent (load existing content)
         // Ensure composedOutput is in RenderTarget state for LoadOp.Load
         TransitionToRenderTarget(composedOutput);
@@ -723,6 +728,39 @@ public class DefaultRenderPipeline : RenderPipeline
         RenderTexture.ReleaseTemporaryRT(composedOutput);
 
         }
+
+    /// <summary>
+    /// Uploads global uniforms for forward-rendered transparent objects.
+    /// Exposes the primary directional light and ambient data so transparent
+    /// shaders can evaluate simple PBR lighting without the deferred GBuffer.
+    /// </summary>
+    private static void SetupForwardLightGlobals(IReadOnlyList<IRenderableLight> lights, CameraSnapshot css)
+    {
+        // Find the primary directional light (first one found)
+        DirectionalLight? primaryDir = null;
+        foreach (IRenderableLight light in lights)
+        {
+            if (light is DirectionalLight dl) { primaryDir = dl; break; }
+        }
+
+        if (primaryDir != null)
+        {
+            PropertyState.SetGlobalVector("_ForwardLightDir", primaryDir.Transform.Forward);
+            Float3 lightCol = new((float)primaryDir.Color.R, (float)primaryDir.Color.G, (float)primaryDir.Color.B);
+            PropertyState.SetGlobalVector("_ForwardLightColor", lightCol * primaryDir.Intensity);
+        }
+        else
+        {
+            PropertyState.SetGlobalVector("_ForwardLightDir", new Float3(0f, -1f, 0f));
+            PropertyState.SetGlobalVector("_ForwardLightColor", Float3.Zero);
+        }
+
+        // Ambient parameters
+        Scene.AmbientLightParams ambient = css.Scene.Ambient;
+        PropertyState.SetGlobalVector("_ForwardAmbientColor",
+            new Float3((float)ambient.Color.R, (float)ambient.Color.G, (float)ambient.Color.B));
+        PropertyState.SetGlobalFloat("_ForwardAmbientStrength", (float)ambient.Strength);
+    }
 
     /// <summary>
     /// Blits the composed scene output to the swapchain using Graphite commands.

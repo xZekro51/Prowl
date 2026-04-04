@@ -2,35 +2,47 @@ Shader "Default/Standard"
 
 Properties
 {
-    _MainTex ("Albedo", Texture2D) = "grid"
-    _MainColor ("Tint", Color) = (1.0, 1.0, 1.0, 1.0)
+	_RenderMode ("Render Mode (0=Opaque, 1=Cutout, 2=Transparent)", Float) = 0.0
+	_AlphaCutoff ("Alpha Cutoff", Float) = 0.5
 
-    _NormalTex ("Normal", Texture2D) = "normal"
+	_MainTex ("Albedo", Texture2D) = "grid"
+	_MainColor ("Tint", Color) = (1.0, 1.0, 1.0, 1.0)
+	_UVTiling ("UV Tiling", Vector2) = (1.0, 1.0)
+	_UVOffset ("UV Offset", Vector2) = (0.0, 0.0)
 
-    _SurfaceTex ("Surface (AO, Roughness, Metallicness)", Texture2D) = "surface"
+	_NormalTex ("Normal Map", Texture2D) = "normal"
+	_NormalStrength ("Normal Strength", Float) = 1.0
 
-    _EmissionTex ("Emission", Texture2D) = "emission"
-    _EmissionIntensity ("Emission Intensity", Float) = 1.0
+	_SurfaceTex ("Surface (AO, Roughness, Metallic)", Texture2D) = "surface"
+	_Metallic ("Metallic", Float) = 0.0
+	_Roughness ("Roughness", Float) = 0.5
+	_AOStrength ("AO Strength", Float) = 1.0
+	_Specular ("Specular", Float) = 0.5
+
+	_EmissionTex ("Emission", Texture2D) = "emission"
+	_EmissionColor ("Emission Color", Color) = (0.0, 0.0, 0.0, 1.0)
+	_EmissionIntensity ("Emission Intensity", Float) = 1.0
+
+	_HeightTex ("Height Map", Texture2D) = "black"
+	_HeightScale ("Height Scale", Float) = 0.05
 
 }
 
 Pass "Standard"
 {
-    Tags { "RenderOrder" = "Opaque" }
+	Tags { "RenderOrder" = "Opaque" }
 
-    // Rasterizer culling mode
-    Cull Back
+	Cull Back
 
 	GLSLPROGRAM
 
 		Vertex
 		{
-            #include "Fragment"
-            #include "VertexAttributes"
+			#include "Fragment"
+			#include "VertexAttributes"
 
 			out vec2 texCoord0;
 			out vec3 worldPos;
-
 			out vec4 vColor;
 			out vec3 vNormal;
 			out vec3 vTangent;
@@ -39,33 +51,24 @@ Pass "Standard"
 			void main()
 			{
 #ifdef SKINNED
-				// Apply skinning transformations
 				vec4 skinnedPos = GetSkinnedPosition(vertexPosition);
 				vec3 skinnedNormal = GetSkinnedNormal(vertexNormal);
 
 				gl_Position = PROWL_MATRIX_MVP * skinnedPos;
 				texCoord0 = vertexTexCoord0;
-
 				worldPos = (PROWL_MATRIX_M * skinnedPos).xyz;
-
 				vColor = vertexColor;
-
 				vNormal = normalize(mat3(PROWL_MATRIX_M) * skinnedNormal);
 #ifdef HAS_TANGENTS
-				// For skinned meshes, also transform tangents
 				vec3 skinnedTangent = GetSkinnedNormal(vertexTangent.xyz);
 				vTangent = normalize(mat3(PROWL_MATRIX_M) * skinnedTangent);
 				vBitangent = cross(vNormal, vTangent);
 #endif
 #else
-				// Non-skinned rendering (original code)
 				gl_Position = PROWL_MATRIX_MVP * vec4(vertexPosition, 1.0);
 				texCoord0 = vertexTexCoord0;
-
 				worldPos = (PROWL_MATRIX_M * vec4(vertexPosition, 1.0)).xyz;
-
 				vColor = vertexColor;
-
 				vNormal = normalize(mat3(PROWL_MATRIX_M) * vertexNormal);
 #ifdef HAS_TANGENTS
 				vTangent = normalize(mat3(PROWL_MATRIX_M) * vertexTangent.xyz);
@@ -77,15 +80,13 @@ Pass "Standard"
 
 		Fragment
 		{
-            #include "Fragment"
-
-			//#define USEGENERATEDNORMALS
+			#include "Fragment"
 
 			// GBuffer layout:
 			// BufferA: RGB = Albedo, A = AO
 			// BufferB: RGB = Normal (view space), A = ShadingMode
 			// BufferC: R = Roughness, G = Metalness, B = Specular, A = Unused
-			// BufferD: Custom Data per Shading Mode (e.g., shading mode 0 = Unlit with RGBA as Emissive)
+			// BufferD: Custom Data per Shading Mode
 			layout (location = 0) out vec4 gBufferA;
 			layout (location = 1) out vec4 gBufferB;
 			layout (location = 2) out vec4 gBufferC;
@@ -98,160 +99,144 @@ Pass "Standard"
 			in vec3 vTangent;
 			in vec3 vBitangent;
 
-			uniform sampler2D _MainTex; // diffuse
-			uniform sampler2D _NormalTex; // normal
-			uniform sampler2D _SurfaceTex; // surface - AO, roughness, metallic
-			uniform sampler2D _EmissionTex; // emission
-			uniform float _EmissionIntensity; // emission intensity
+			uniform sampler2D _MainTex;
+			uniform sampler2D _NormalTex;
+			uniform sampler2D _SurfaceTex;
+			uniform sampler2D _EmissionTex;
+			uniform sampler2D _HeightTex;
 
 			uniform vec4 _MainColor;
+			uniform vec2 _UVTiling;
+			uniform vec2 _UVOffset;
+			uniform float _NormalStrength;
+			uniform float _Metallic;
+			uniform float _Roughness;
+			uniform float _AOStrength;
+			uniform float _Specular;
+			uniform vec4 _EmissionColor;
+			uniform float _EmissionIntensity;
+			uniform float _HeightScale;
+			uniform float _RenderMode;
+			uniform float _AlphaCutoff;
 
-            // Generated Normals implementation (unique to Standard shader)
-            const float normalThreshold = 0.05;
-            const float normalClamp = 0.5;
-
-            float GetDif(float lOriginalAlbedo, vec2 offsetCoord) {
-                float lNearbyAlbedo = length(texture(_MainTex, offsetCoord).rgb);
-
-                float dif = lOriginalAlbedo - lNearbyAlbedo;
-
-                if (dif > 0.0) dif = max(dif - normalThreshold, 0.0);
-                else           dif = min(dif + normalThreshold, 0.0);
-
-                return clamp(dif, -normalClamp, normalClamp);
-            }
-
-            vec3 GenerateNormals(vec3 color, mat3 TBN) {
-                // Calculate texture dimensions
-                vec2 texSize = vec2(textureSize(_MainTex, 0));
-                vec2 texelSize = 1.0 / texSize;
-
-                float lOriginalAlbedo = length(color.rgb);
-                float normalMult = 1.0;
-
-                vec3 normalMap = vec3(0.0, 0.0, 1.0);
-
-                // Sample in four directions around current texel
-                vec2 offsetCoord = texCoord0 + vec2(0.0, texelSize.y);
-                normalMap.y += GetDif(lOriginalAlbedo, offsetCoord);
-
-                offsetCoord = texCoord0 + vec2(texelSize.x, 0.0);
-                normalMap.x += GetDif(lOriginalAlbedo, offsetCoord);
-
-                offsetCoord = texCoord0 + vec2(0.0, -texelSize.y);
-                normalMap.y -= GetDif(lOriginalAlbedo, offsetCoord);
-
-                offsetCoord = texCoord0 + vec2(-texelSize.x, 0.0);
-                normalMap.x -= GetDif(lOriginalAlbedo, offsetCoord);
-
-                normalMap.xy *= normalMult;
-                normalMap.xy = clamp(normalMap.xy, vec2(-1.0), vec2(1.0));
-
-                if (normalMap.xy != vec2(0.0, 0.0)) {
-                    return normalize(TBN * normalMap);
-                }
-
-                return normalize(vNormal);
-            }
+			vec2 ParallaxMapping(vec2 uv, vec3 viewDirTS)
+			{
+				float height = texture(_HeightTex, uv).r;
+				vec2 offset = viewDirTS.xy / viewDirTS.z * (height * _HeightScale);
+				return uv - offset;
+			}
 
 			void main()
-				{
-					// Albedo
-					vec4 albedo = texture(_MainTex, texCoord0) * vColor * _MainColor;
+			{
+				// Transparent objects skip the GBuffer pass entirely
+				if (_RenderMode > 1.5) discard;
 
-					// Normals
-					vec3 worldNormal;
+				vec2 uv = texCoord0 * _UVTiling + _UVOffset;
+
 #ifdef HAS_TANGENTS
-				// Create tangent to world matrix
-				mat3 TBN = mat3(normalize(vTangent), normalize(vBitangent), normalize(vNormal));
-
-                // Normal mapping with fallback to generated normals
-                #ifdef USEGENERATEDNORMALS
-                    // Generate normals from albedo texture
-                    worldNormal = GenerateNormals(albedo.rgb, TBN);
-                #else
-                    // Sample the normal map (original approach)
-                    vec3 normalMapSample = texture(_NormalTex, texCoord0).rgb;
-                    // Convert from [0,1] to [-1,1] range
-                    vec3 normalTS = normalMapSample * 2.0 - 1.0;
-                    // Transform normal from tangent space to world space
-                    worldNormal = normalize(TBN * normalTS);
-                #endif
-#else
-                worldNormal = vNormal;
+				// Parallax mapping
+				if (_HeightScale > 0.001)
+				{
+					mat3 TBN = mat3(normalize(vTangent), normalize(vBitangent), normalize(vNormal));
+					vec3 viewDir = normalize(_WorldSpaceCameraPos.xyz - worldPos);
+					vec3 viewDirTS = transpose(TBN) * viewDir;
+					uv = ParallaxMapping(uv, viewDirTS);
+				}
 #endif
-                // Transform to view space
-                vec3 viewNormal = normalize(mat3(PROWL_MATRIX_V) * worldNormal);
 
-				// AO, roughness, metallic
-				vec4 surface = texture(_SurfaceTex, texCoord0);
-				float ao = 1.0 - surface.r;
-				float roughness = surface.g;
-				float metallic = surface.b;
+				// Albedo
+				vec4 albedo = texture(_MainTex, uv) * vColor * _MainColor;
+
+				// Alpha Cutout
+				if (_RenderMode > 0.5 && albedo.a < _AlphaCutoff) discard;
+
+				// Normals
+				vec3 worldNormal;
+#ifdef HAS_TANGENTS
+				mat3 TBN = mat3(normalize(vTangent), normalize(vBitangent), normalize(vNormal));
+				vec3 normalMapSample = texture(_NormalTex, uv).rgb;
+				vec3 normalTS = normalMapSample * 2.0 - 1.0;
+				normalTS.xy *= _NormalStrength;
+				normalTS = normalize(normalTS);
+				worldNormal = normalize(TBN * normalTS);
+#else
+				worldNormal = normalize(vNormal);
+#endif
+				vec3 viewNormal = normalize(mat3(PROWL_MATRIX_V) * worldNormal);
+
+				// Surface properties
+				vec4 surface = texture(_SurfaceTex, uv);
+				float ao = mix(1.0, 1.0 - surface.r, _AOStrength);
+				float roughness = surface.g * _Roughness;
+				float metallic = surface.b + _Metallic;
+				metallic = clamp(metallic, 0.0, 1.0);
 
 				// Emission
-				vec4 emission = texture(_EmissionTex, texCoord0) * _EmissionIntensity;
+				vec3 emission = texture(_EmissionTex, uv).rgb * _EmissionColor.rgb * _EmissionIntensity;
 
 				// Convert albedo to linear space
-				vec3 baseColor = albedo.rgb;
-				baseColor.rgb = gammaToLinearSpace(baseColor.rgb);
+				vec3 baseColor = gammaToLinearSpace(albedo.rgb);
 
-				// Calculate specular from metallic workflow
-				// For non-metals, specular is 0.04 (4% reflectance)
-				// For metals, specular is derived from albedo
-				float specular = mix(0.04, 1.0, metallic);
+				float specular = mix(0.04, 1.0, metallic) * _Specular * 2.0;
 
 				// Output to GBuffer
-				// BufferA: RGB = Albedo, A = AO
 				gBufferA = vec4(baseColor, ao);
-
-				// BufferB: RGB = Normal (view space), A = ShadingMode
-				// ShadingMode: 0 = Unlit, 1 = Lit
-				float shadingMode = 1.0; // Lit by default for Standard shader
-				gBufferB = vec4(viewNormal * 0.5 + 0.5, shadingMode); // Encode normal to [0,1] range
-
-				// BufferC: R = Roughness, G = Metalness, B = Specular, A = Unused
+				gBufferB = vec4(viewNormal * 0.5 + 0.5, 1.0);
 				gBufferC = vec4(roughness, metallic, specular, 0.0);
-
-				// BufferD: Custom Data per Shading Mode
-				// For Lit mode (1), we store emission data
-				gBufferD = vec4(emission.rgb, 0.0);
+				gBufferD = vec4(emission, 0.0);
 			}
 		}
 	ENDGLSL
 }
 
-Pass "StandardShadow"
+Pass "StandardTransparent"
 {
-    Tags { "LightMode" = "ShadowCaster" }
+	Tags { "RenderOrder" = "Transparent" }
 
-    // Rasterizer culling mode
-    Cull Back
+	Blend Alpha
+	ZWrite Off
+	Cull Back
 
 	GLSLPROGRAM
 
 		Vertex
 		{
-            #include "Fragment"
-            #include "VertexAttributes"
+			#include "Fragment"
+			#include "VertexAttributes"
 
+			out vec2 texCoord0;
 			out vec3 worldPos;
-			out vec3 worldNormal;
+			out vec4 vColor;
+			out vec3 vNormal;
+			out vec3 vTangent;
+			out vec3 vBitangent;
 
 			void main()
 			{
 #ifdef SKINNED
-				// Apply skinning for shadows
 				vec4 skinnedPos = GetSkinnedPosition(vertexPosition);
 				vec3 skinnedNormal = GetSkinnedNormal(vertexNormal);
 
 				gl_Position = PROWL_MATRIX_MVP * skinnedPos;
+				texCoord0 = vertexTexCoord0;
 				worldPos = (PROWL_MATRIX_M * skinnedPos).xyz;
-				worldNormal = normalize(mat3(PROWL_MATRIX_M) * skinnedNormal);
+				vColor = vertexColor;
+				vNormal = normalize(mat3(PROWL_MATRIX_M) * skinnedNormal);
+#ifdef HAS_TANGENTS
+				vec3 skinnedTangent = GetSkinnedNormal(vertexTangent.xyz);
+				vTangent = normalize(mat3(PROWL_MATRIX_M) * skinnedTangent);
+				vBitangent = cross(vNormal, vTangent);
+#endif
 #else
 				gl_Position = PROWL_MATRIX_MVP * vec4(vertexPosition, 1.0);
+				texCoord0 = vertexTexCoord0;
 				worldPos = (PROWL_MATRIX_M * vec4(vertexPosition, 1.0)).xyz;
-				worldNormal = normalize(mat3(PROWL_MATRIX_M) * vertexNormal);
+				vColor = vertexColor;
+				vNormal = normalize(mat3(PROWL_MATRIX_M) * vertexNormal);
+#ifdef HAS_TANGENTS
+				vTangent = normalize(mat3(PROWL_MATRIX_M) * vertexTangent.xyz);
+				vBitangent = cross(vNormal, vTangent);
+#endif
 #endif
 			}
 		}
@@ -259,10 +244,175 @@ Pass "StandardShadow"
 		Fragment
 		{
 			#include "Fragment"
+			#include "PBR"
+
+			layout (location = 0) out vec4 finalColor;
+
+			in vec2 texCoord0;
+			in vec3 worldPos;
+			in vec4 vColor;
+			in vec3 vNormal;
+			in vec3 vTangent;
+			in vec3 vBitangent;
+
+			uniform sampler2D _MainTex;
+			uniform sampler2D _NormalTex;
+			uniform sampler2D _SurfaceTex;
+			uniform sampler2D _EmissionTex;
+			uniform sampler2D _HeightTex;
+
+			uniform vec4 _MainColor;
+			uniform vec2 _UVTiling;
+			uniform vec2 _UVOffset;
+			uniform float _NormalStrength;
+			uniform float _Metallic;
+			uniform float _Roughness;
+			uniform float _AOStrength;
+			uniform float _Specular;
+			uniform vec4 _EmissionColor;
+			uniform float _EmissionIntensity;
+			uniform float _HeightScale;
+			uniform float _RenderMode;
+
+			// Forward lighting globals (set by the render pipeline)
+			uniform vec3 _ForwardLightDir;
+			uniform vec3 _ForwardLightColor;
+			uniform vec3 _ForwardAmbientColor;
+			uniform float _ForwardAmbientStrength;
 
 			void main()
 			{
-					gl_FragDepth = gl_FragCoord.z;
+				// Only transparent objects use this pass
+				if (_RenderMode < 1.5) discard;
+
+				vec2 uv = texCoord0 * _UVTiling + _UVOffset;
+
+#ifdef HAS_TANGENTS
+				if (_HeightScale > 0.001)
+				{
+					mat3 TBNp = mat3(normalize(vTangent), normalize(vBitangent), normalize(vNormal));
+					vec3 viewDir = normalize(_WorldSpaceCameraPos.xyz - worldPos);
+					vec3 viewDirTS = transpose(TBNp) * viewDir;
+					float height = texture(_HeightTex, uv).r;
+					uv -= viewDirTS.xy / viewDirTS.z * (height * _HeightScale);
+				}
+#endif
+
+				// Albedo
+				vec4 albedo = texture(_MainTex, uv) * vColor * _MainColor;
+
+				// Normals
+				vec3 worldNormal;
+#ifdef HAS_TANGENTS
+				mat3 TBN = mat3(normalize(vTangent), normalize(vBitangent), normalize(vNormal));
+				vec3 normalMapSample = texture(_NormalTex, uv).rgb;
+				vec3 normalTS = normalMapSample * 2.0 - 1.0;
+				normalTS.xy *= _NormalStrength;
+				normalTS = normalize(normalTS);
+				worldNormal = normalize(TBN * normalTS);
+#else
+				worldNormal = normalize(vNormal);
+#endif
+
+				// Surface properties
+				vec4 surface = texture(_SurfaceTex, uv);
+				float ao = mix(1.0, 1.0 - surface.r, _AOStrength);
+				float roughness = surface.g * _Roughness;
+				float metallic = clamp(surface.b + _Metallic, 0.0, 1.0);
+
+				// Emission
+				vec3 emission = texture(_EmissionTex, uv).rgb * _EmissionColor.rgb * _EmissionIntensity;
+
+				// Convert to linear space
+				vec3 baseColor = gammaToLinearSpace(albedo.rgb);
+
+				// Forward PBR lighting
+				vec3 N = normalize(worldNormal);
+				vec3 V = normalize(_WorldSpaceCameraPos.xyz - worldPos);
+				vec3 L = normalize(-_ForwardLightDir);
+				vec3 H = normalize(V + L);
+
+				float NdotL = max(dot(N, L), 0.0);
+				float NdotV = max(dot(N, V), 0.001);
+
+				vec3 F0 = mix(vec3(0.04), baseColor, metallic);
+
+				// Cook-Torrance specular BRDF
+				float D = DistributionGGX(N, H, roughness);
+				float G = GeometrySmith(N, V, L, roughness);
+				vec3 F = FresnelSchlick(max(dot(H, V), 0.0), F0);
+
+				vec3 numerator = D * G * F;
+				float denominator = 4.0 * NdotV * NdotL + 0.0001;
+				vec3 spec = numerator / denominator;
+
+				vec3 kD = (vec3(1.0) - F) * (1.0 - metallic);
+				vec3 directLighting = (kD * baseColor / PI + spec) * _ForwardLightColor * NdotL;
+
+				// Ambient
+				vec3 ambient = _ForwardAmbientColor * _ForwardAmbientStrength * baseColor * ao;
+
+				vec3 color = ambient + directLighting + emission;
+				finalColor = vec4(color, albedo.a);
+			}
+		}
+	ENDGLSL
+}
+
+Pass "StandardShadow"
+{
+	Tags { "LightMode" = "ShadowCaster" }
+
+	Cull Back
+
+	GLSLPROGRAM
+
+		Vertex
+		{
+			#include "Fragment"
+			#include "VertexAttributes"
+
+			out vec2 texCoord0;
+
+			void main()
+			{
+#ifdef SKINNED
+				vec4 skinnedPos = GetSkinnedPosition(vertexPosition);
+				gl_Position = PROWL_MATRIX_MVP * skinnedPos;
+#else
+				gl_Position = PROWL_MATRIX_MVP * vec4(vertexPosition, 1.0);
+#endif
+				texCoord0 = vertexTexCoord0;
+			}
+		}
+
+		Fragment
+		{
+			#include "Fragment"
+
+			in vec2 texCoord0;
+
+			uniform sampler2D _MainTex;
+			uniform vec4 _MainColor;
+			uniform vec2 _UVTiling;
+			uniform vec2 _UVOffset;
+			uniform float _RenderMode;
+			uniform float _AlphaCutoff;
+
+			void main()
+			{
+				// Transparent objects do not cast shadows by default
+				if (_RenderMode > 1.5) discard;
+
+				// Alpha Cutout: test alpha in shadow pass too
+				if (_RenderMode > 0.5)
+				{
+					vec2 uv = texCoord0 * _UVTiling + _UVOffset;
+					float alpha = texture(_MainTex, uv).a * _MainColor.a;
+					if (alpha < _AlphaCutoff) discard;
+				}
+
+				gl_FragDepth = gl_FragCoord.z;
 			}
 		}
 	ENDGLSL
