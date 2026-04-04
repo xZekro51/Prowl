@@ -349,9 +349,10 @@ finally { Manager.EndBatch(); }
 |--------|------|--------|--------|---------|
 | `GameLoopEvents` | `EventSystem/GameLoopEvents.cs` | ✅ | ✅ | Frame lifecycle (init, begin, end, render, close) |
 | `WindowEvents` | `EventSystem/WindowEvents.cs` | ✅ | ✅ | Platform window lifecycle (load, render, resize, close, file drop) |
-| `RenderingEvents` | `EventSystem/RenderingEvents.cs` | ✅ | ✅ | Render pipeline phases |
+| `RenderingEvents` | `EventSystem/RenderingEvents.cs` | ✅ | ✅ | Render pipeline phases, per-camera stage events (GBuffer, lighting, composition, transparent, stats) |
 | `PhysicsEvents` | `EventSystem/PhysicsEvents.cs` | ✅ | ✅ | Physics step begin/end |
 | `AssetEvents` | `EventSystem/AssetEvents.cs` | ✅ | ✅ | Asset refresh/import/delete (editor) |
+| `GraphiteDeviceEvents` | `EventSystem/GraphiteDeviceEvents.cs` | ✅ | ✅ | GPU device lifecycle, swapchain, frame boundaries, upload windows, validation |
 | `BaseEvents` | `EventSystem/BaseEvents.cs` | ✅ | ❌ | Update/LateUpdate before/after |
 | `SceneManagerEvents` | `EventSystem/SceneManagerEvents.cs` | ✅ | ❌ | Scene load/unload |
 | `DpiEvents` | `EventSystem/DpiEvents.cs` | ✅ | ❌ | DPI scale changes |

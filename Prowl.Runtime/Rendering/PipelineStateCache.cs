@@ -5,6 +5,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 
+using Prowl.Runtime.EventSystem;
 using Prowl.Runtime.Graphite;
 using Prowl.Runtime.Rendering.Shaders;
 
@@ -87,6 +88,17 @@ internal static class PipelineStateCache
 #if DEBUG
         s_debugKeys.Clear();
 #endif
+    }
+
+    /// <summary>
+    /// Subscribes to device lifecycle events so that cached pipeline states are
+    /// automatically cleared on device loss or device disposal.
+    /// Must be called once after the graphics device is initialized.
+    /// </summary>
+    internal static void InitializeEventSubscriptions()
+    {
+        GraphiteDeviceEvents.SubscribeOnDeviceLost(_ => Clear(), priority: -100);
+        GraphiteDeviceEvents.SubscribeOnDeviceDisposing(() => Clear(), priority: -100);
     }
 
     /// <summary>

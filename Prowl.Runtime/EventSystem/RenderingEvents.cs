@@ -1,6 +1,8 @@
 // This file is part of the Prowl Game Engine
 // Licensed under the MIT License. See the LICENSE file in the project root for details.
 
+using Prowl.Runtime.Resources;
+
 namespace Prowl.Runtime.EventSystem;
 
 /// <summary>
@@ -28,6 +30,54 @@ public static partial class RenderingEvents
     /// <summary>Raised after GI probes have been updated (SDFGI only).</summary>
     [EventArgs(typeof(GIUpdateArgs))]
     private static readonly EventKey _OnGIProbesUpdated = new();
+
+    // ── Per-stage pipeline events ──────────────────────────────────────
+
+    /// <summary>Raised at the start of a camera's render pass (after setup, before GBuffer).</summary>
+    [EventArgs(typeof(CameraRenderBeginArgs))]
+    private static readonly EventKey _OnCameraRenderBegin = new();
+
+    /// <summary>Raised after a camera's render pass completes (after blit, before cleanup).</summary>
+    [EventArgs(typeof(CameraRenderEndArgs))]
+    private static readonly EventKey _OnCameraRenderEnd = new();
+
+    /// <summary>Raised when the GBuffer pass begins.</summary>
+    [EventArgs(typeof(GBufferPassArgs))]
+    private static readonly EventKey _OnGBufferPassBegin = new();
+
+    /// <summary>Raised when the GBuffer pass ends.</summary>
+    [EventArgs(typeof(GBufferPassArgs))]
+    private static readonly EventKey _OnGBufferPassEnd = new();
+
+    /// <summary>Raised when the deferred lighting pass begins.</summary>
+    [EventArgs(typeof(LightingPassArgs))]
+    private static readonly EventKey _OnLightingPassBegin = new();
+
+    /// <summary>Raised when the deferred lighting pass ends.</summary>
+    [EventArgs(typeof(LightingPassArgs))]
+    private static readonly EventKey _OnLightingPassEnd = new();
+
+    /// <summary>Raised when the forward transparent pass begins.</summary>
+    [EventArgs(typeof(TransparentPassArgs))]
+    private static readonly EventKey _OnTransparentPassBegin = new();
+
+    /// <summary>Raised after the deferred composition pass completes.</summary>
+    [EventArgs(typeof(CompositionCompleteArgs))]
+    private static readonly EventKey _OnCompositionComplete = new();
+
+    /// <summary>Raised after render stats are swapped at the end of a frame.</summary>
+    [EventArgs(typeof(RenderStatsReadyArgs))]
+    private static readonly EventKey _OnRenderStatsReady = new();
+
+    // \u2500\u2500 GI system events \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+
+    /// <summary>Raised when the GI pass begins (before voxelization/SDF update).</summary>
+    [EventArgs(typeof(GIPassBeginArgs))]
+    private static readonly EventKey _OnGIPassBegin = new();
+
+    /// <summary>Raised when the GI pass ends (after all GI work completes).</summary>
+    [EventArgs(typeof(GIPassEndArgs))]
+    private static readonly EventKey _OnGIPassEnd = new();
 }
 
 /// <summary>
@@ -36,3 +86,33 @@ public static partial class RenderingEvents
 public readonly record struct GIUpdateArgs(
     Runtime.Resources.Scene.GlobalIlluminationParams.GIMode Mode,
     float UpdateTimeMs);
+
+/// <summary>Arguments for the start of a camera render pass.</summary>
+public readonly record struct CameraRenderBeginArgs(uint PixelWidth, uint PixelHeight);
+
+/// <summary>Arguments for the end of a camera render pass.</summary>
+public readonly record struct CameraRenderEndArgs(bool RenderedToSwapchain);
+
+/// <summary>Arguments for GBuffer pass begin/end events.</summary>
+public readonly record struct GBufferPassArgs(RenderTexture GBuffer);
+
+/// <summary>Arguments for lighting pass begin/end events.</summary>
+public readonly record struct LightingPassArgs(RenderTexture GBuffer, RenderTexture LightAccumulation, int LightCount);
+
+/// <summary>Arguments for transparent pass begin event.</summary>
+public readonly record struct TransparentPassArgs(RenderTexture ComposedOutput);
+
+/// <summary>Arguments for the composition complete event.</summary>
+public readonly record struct CompositionCompleteArgs(RenderTexture FinalOutput, RenderTexture GBuffer);
+
+/// <summary>Arguments for render stats ready event.</summary>
+public readonly record struct RenderStatsReadyArgs(int DrawCalls, int Triangles, int Vertices);
+
+/// <summary>Arguments for GI pass begin event.</summary>
+public readonly record struct GIPassBeginArgs(
+    Runtime.Resources.Scene.GlobalIlluminationParams.GIMode Mode,
+    float GIIntensity);
+
+/// <summary>Arguments for GI pass end event.</summary>
+public readonly record struct GIPassEndArgs(
+    Runtime.Resources.Scene.GlobalIlluminationParams.GIMode Mode);

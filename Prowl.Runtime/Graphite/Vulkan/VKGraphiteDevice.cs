@@ -7,6 +7,8 @@ using System.Collections.Generic;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 
+using Prowl.Runtime.EventSystem;
+
 using Silk.NET.Core;
 using Silk.NET.Core.Contexts;
 using Silk.NET.Core.Native;
@@ -62,6 +64,9 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
     // Debug utils extension (available when validation layers are enabled)
     private ExtDebugUtils? _debugUtils;
     internal bool HasDebugUtils => _debugUtils != null;
+    private DebugUtilsMessengerEXT _debugMessenger;
+    // Must be stored as a field to prevent GC of the pinned delegate
+    private PfnDebugUtilsMessengerCallbackEXT _debugCallbackDelegate;
 
     // Swapchain
     private SwapchainKHR _swapchain;
@@ -202,6 +207,9 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
         _capabilities = QueryCapabilities();
         _initialized = true;
         Debug.Log($"[Vulkan] Initialization complete — {_capabilities.DeviceName}");
+
+        GraphiteDeviceEvents.InvokeOnDeviceReady(new DeviceReadyArgs(
+            _capabilities.DeviceName, GraphicsBackendType.Vulkan));
     }
 
     private void CreateInstance(bool enableDebug)
@@ -292,6 +300,27 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
         {
             _debugUtils = debugUtils;
             Debug.Log("[Vulkan] VK_EXT_debug_utils acquired — debug markers and object naming enabled.");
+
+            // Install a debug messenger callback to route Vulkan validation
+            // messages through the engine's event system.
+            _debugCallbackDelegate = new PfnDebugUtilsMessengerCallbackEXT(VulkanDebugCallback);
+            var messengerInfo = new DebugUtilsMessengerCreateInfoEXT
+            {
+                SType = StructureType.DebugUtilsMessengerCreateInfoExt,
+                MessageSeverity = DebugUtilsMessageSeverityFlagsEXT.VerboseBitExt
+                                | DebugUtilsMessageSeverityFlagsEXT.InfoBitExt
+                                | DebugUtilsMessageSeverityFlagsEXT.WarningBitExt
+                                | DebugUtilsMessageSeverityFlagsEXT.ErrorBitExt,
+                MessageType = DebugUtilsMessageTypeFlagsEXT.GeneralBitExt
+                            | DebugUtilsMessageTypeFlagsEXT.ValidationBitExt
+                            | DebugUtilsMessageTypeFlagsEXT.PerformanceBitExt,
+                PfnUserCallback = _debugCallbackDelegate,
+            };
+            if (_debugUtils.CreateDebugUtilsMessenger(VkInstance, &messengerInfo, null, out _debugMessenger) != Result.Success)
+            {
+                Debug.LogWarning("[Vulkan] Failed to create debug messenger.");
+                _debugMessenger = default;
+            }
         }
     }
 
@@ -931,8 +960,14 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
             return;
         }
 
+        uint oldWidth = _swapchainExtent.Width;
+        uint oldHeight = _swapchainExtent.Height;
+
         Vk.DeviceWaitIdle(Device);
         CreateSwapchain(width, height);
+
+        GraphiteDeviceEvents.InvokeOnSwapchainRecreated(new SwapchainRecreatedArgs(
+            oldWidth, oldHeight, width, height));
     }
 
     /// <inheritdoc/>
@@ -1239,6 +1274,10 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
         {
             IsDeviceLost = true;
             Debug.LogError("[Vulkan] Device lost detected waiting for in-flight fence in BeginFrame.");
+            GraphiteDeviceEvents.InvokeOnDeviceLost(new DeviceLostArgs
+            {
+                Reason = "Device lost detected waiting for in-flight fence in BeginFrame."
+            });
             return false;
         }
 
@@ -1266,6 +1305,10 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
         {
             IsDeviceLost = true;
             Debug.LogError("[Vulkan] Device lost detected during swapchain image acquisition.");
+            GraphiteDeviceEvents.InvokeOnDeviceLost(new DeviceLostArgs
+            {
+                Reason = "Device lost detected during swapchain image acquisition."
+            });
             return false;
         }
 
@@ -1347,6 +1390,10 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
         {
             IsDeviceLost = true;
             Debug.LogError("[Vulkan] Device lost detected during Present.");
+            GraphiteDeviceEvents.InvokeOnDeviceLost(new DeviceLostArgs
+            {
+                Reason = "Device lost detected during Present."
+            });
         }
         else if (result != Result.Success)
         {
@@ -1360,6 +1407,11 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
     private void RecreateSwapchain()
     {
         var fbSize = Window.InternalWindow.FramebufferSize;
+
+        // Fire minimized event if the window extent is zero
+        if (fbSize.X == 0 || fbSize.Y == 0)
+            GraphiteDeviceEvents.InvokeOnSwapchainMinimized();
+
         while (fbSize.X == 0 || fbSize.Y == 0)
         {
             // Window is minimised — sleep to avoid burning CPU, then poll for restore.
@@ -1368,8 +1420,18 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
             fbSize = Window.InternalWindow.FramebufferSize;
         }
 
+        // Window has been restored from minimized state
+        GraphiteDeviceEvents.InvokeOnSwapchainRestored(new SwapchainRestoredArgs(
+            (uint)fbSize.X, (uint)fbSize.Y));
+
+        uint oldWidth = _swapchainExtent.Width;
+        uint oldHeight = _swapchainExtent.Height;
+
         Vk.DeviceWaitIdle(Device);
         CreateSwapchain((uint)fbSize.X, (uint)fbSize.Y);
+
+        GraphiteDeviceEvents.InvokeOnSwapchainRecreated(new SwapchainRecreatedArgs(
+            oldWidth, oldHeight, (uint)fbSize.X, (uint)fbSize.Y));
     }
 
     #endregion
@@ -1928,10 +1990,61 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
             throw new InvalidOperationException($"Vulkan error in {caller}: {result}");
     }
 
+    /// <summary>
+    /// Vulkan debug messenger callback. Routes validation layer messages through
+    /// both <see cref="Debug"/> logging and the <see cref="GraphiteDeviceEvents.OnValidationMessage"/> event.
+    /// </summary>
+    private static uint VulkanDebugCallback(
+        DebugUtilsMessageSeverityFlagsEXT severity,
+        DebugUtilsMessageTypeFlagsEXT messageType,
+        DebugUtilsMessengerCallbackDataEXT* callbackData,
+        void* userData)
+    {
+        string message = Marshal.PtrToStringAnsi((nint)callbackData->PMessage) ?? string.Empty;
+        string? messageIdName = callbackData->PMessageIdName != null
+            ? Marshal.PtrToStringAnsi((nint)callbackData->PMessageIdName)
+            : null;
+
+        // Map Vulkan severity to engine severity
+        ValidationSeverity engineSeverity = severity switch
+        {
+            DebugUtilsMessageSeverityFlagsEXT.ErrorBitExt => ValidationSeverity.Error,
+            DebugUtilsMessageSeverityFlagsEXT.WarningBitExt =>
+                messageType.HasFlag(DebugUtilsMessageTypeFlagsEXT.PerformanceBitExt)
+                    ? ValidationSeverity.Performance
+                    : ValidationSeverity.Warning,
+            DebugUtilsMessageSeverityFlagsEXT.InfoBitExt => ValidationSeverity.Info,
+            _ => ValidationSeverity.Info, // Verbose
+        };
+
+        // Route to Debug logging
+        switch (engineSeverity)
+        {
+            case ValidationSeverity.Error:
+                Debug.LogError($"[Vulkan Validation] {messageIdName}: {message}");
+                break;
+            case ValidationSeverity.Warning:
+            case ValidationSeverity.Performance:
+                Debug.LogWarning($"[Vulkan Validation] {messageIdName}: {message}");
+                break;
+            default:
+                Debug.Log($"[Vulkan Validation] {messageIdName}: {message}");
+                break;
+        }
+
+        // Fire the structured event for editor console, CI, and profiling consumers
+        GraphiteDeviceEvents.InvokeOnValidationMessage(new ValidationMessageArgs(
+            engineSeverity, messageIdName ?? string.Empty, message, null));
+
+        return Vk.False;
+    }
+
     #endregion
 
     protected override void DisposeResources()
     {
+        GraphiteDeviceEvents.InvokeOnDeviceDisposing();
+
         // Guard: if Vk API was never obtained, nothing to tear down.
         if (Vk is null)
             return;
@@ -2008,6 +2121,9 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
 
         if (VkInstance.Handle != 0)
             Vk.DestroyInstance(VkInstance, null);
+
+        if (_debugUtils != null && _debugMessenger.Handle != 0 && VkInstance.Handle != 0)
+            _debugUtils.DestroyDebugUtilsMessenger(VkInstance, _debugMessenger, null);
 
         _debugUtils?.Dispose();
         _debugUtils = null;

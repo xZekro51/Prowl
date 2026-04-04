@@ -77,6 +77,9 @@ public class DefaultRenderPipeline : RenderPipeline
     private Graphite.Texture? _graphiteBlitLastSourceTex;
     private Graphite.BindGroup? _graphiteBlitBindGroup;
 
+    // Event subscription handle for swapchain recreation cleanup
+    private IDisposable? _swapchainSub;
+
     // Reusable per-frame collections to avoid GC pressure in GatherImageEffects
     private readonly Dictionary<RenderStage, List<ImageEffect>> _reusableEffectsByStage = new()
     {
@@ -105,6 +108,13 @@ public class DefaultRenderPipeline : RenderPipeline
     public DefaultRenderPipeline(DefaultRenderPipelineAsset asset)
     {
         Asset = asset ?? throw new ArgumentNullException(nameof(asset));
+
+        _swapchainSub = GraphiteDeviceEvents.SubscribeOnSwapchainRecreated(_ =>
+        {
+            _graphiteBlitBindGroup?.Dispose();
+            _graphiteBlitBindGroup = null;
+            _graphiteBlitLastSourceTex = null;
+        }, priority: 0);
     }
 
     /// <summary>
@@ -150,9 +160,6 @@ public class DefaultRenderPipeline : RenderPipeline
             list.Clear();
 
         PropertyState.ClearGlobals();
-
-        // Publish per-frame render stats
-        RenderStats.Instance.SwapFrames();
 
         base.Render(camera, in data);
     }
@@ -242,6 +249,8 @@ public class DefaultRenderPipeline : RenderPipeline
         CameraSnapshot css = new(camera);
         SetupGlobalUniforms(css);
 
+        RenderingEvents.InvokeOnCameraRenderBegin(new CameraRenderBeginArgs(css.PixelWidth, css.PixelHeight));
+
         // =======================================================
         // 3. Cull Renderables based on Snapshot data
         IReadOnlyList<IRenderable> renderables = camera.GameObject.Scene.Renderables;
@@ -265,6 +274,8 @@ public class DefaultRenderPipeline : RenderPipeline
         graphiteCmd?.PushDebugGroup("Stage5.2_GlobalIllumination");
         Scene.GlobalIlluminationParams giParams = css.Scene.GlobalIllumination;
         (Scene.GlobalIlluminationParams.GIMode giMode, float giIntensity) = GIUtils.ResolveGISettings(css.Scene, lights);
+
+        RenderingEvents.InvokeOnGIPassBegin(new GIPassBeginArgs(giMode, giIntensity));
 
         if (giMode == Scene.GlobalIlluminationParams.GIMode.VoxelGI)
         {
@@ -302,6 +313,7 @@ public class DefaultRenderPipeline : RenderPipeline
             RenderingEvents.InvokeOnGIProbesUpdated(new GIUpdateArgs(
                 Scene.GlobalIlluminationParams.GIMode.SDFGI, 0f));
         }
+        RenderingEvents.InvokeOnGIPassEnd(new GIPassEndArgs(giMode));
         graphiteCmd?.PopDebugGroup(); // Stage5.2_GlobalIllumination
 
         // =======================================================
@@ -320,6 +332,7 @@ public class DefaultRenderPipeline : RenderPipeline
 
         // Begin Graphite render pass for GBuffer (clear handled by LoadOp.Clear)
         graphiteCmd?.PushDebugGroup("Stage6_GBuffer");
+        RenderingEvents.InvokeOnGBufferPassBegin(new GBufferPassArgs(gBuffer));
         if (graphiteCmd != null)
         {
             var clearFloat4 = new Float4(
@@ -350,6 +363,7 @@ public class DefaultRenderPipeline : RenderPipeline
         // Transition GBuffer attachments to ShaderResource for lighting sampling
         TransitionToShaderResource(gBuffer);
         graphiteCmd?.PopDebugGroup(); // Stage6_GBuffer
+        RenderingEvents.InvokeOnGBufferPassEnd(new GBufferPassArgs(gBuffer));
 
         // =======================================================
         // 7. Deferred Lighting Pass - Render each light's contribution
@@ -367,6 +381,7 @@ public class DefaultRenderPipeline : RenderPipeline
 
         // Begin Graphite render pass for light accumulation
         graphiteCmd?.PushDebugGroup("Stage7_DeferredLighting");
+        RenderingEvents.InvokeOnLightingPassBegin(new LightingPassArgs(gBuffer, lightAccumulation, lights.Count));
         if (graphiteCmd != null)
         {
             graphiteCmd.BeginRenderPass(lightAccumulation, Graphite.LoadOp.Clear, Float4.Zero, false);
@@ -399,6 +414,7 @@ public class DefaultRenderPipeline : RenderPipeline
         // Transition light accumulation to ShaderResource for compose/effects sampling
         TransitionToShaderResource(lightAccumulation);
         graphiteCmd?.PopDebugGroup(); // Stage7_DeferredLighting
+        RenderingEvents.InvokeOnLightingPassEnd(new LightingPassArgs(gBuffer, lightAccumulation, renderedLightCount));
 
         // 7.1 Global Illumination: cone trace (VoxelGI) or probe lookup (SDFGI) into light accumulation
         graphiteCmd?.PushDebugGroup("Stage7.1_GIConeTrace");
@@ -551,6 +567,7 @@ public class DefaultRenderPipeline : RenderPipeline
         // that may sample it via manually-set textures in Blit(target, mat)
         TransitionToShaderResource(composedOutput);
         graphiteCmd?.PopDebugGroup(); // Stage8_Composition
+        RenderingEvents.InvokeOnCompositionComplete(new CompositionCompleteArgs(composedOutput, gBuffer));
 
         // =======================================================
         // 9. Apply AfterLighting effects (opaque post-processing)
@@ -573,6 +590,7 @@ public class DefaultRenderPipeline : RenderPipeline
         // =======================================================
         // 10. Transparent geometry (Forward rendered on top of composed result)
         graphiteCmd?.PushDebugGroup("Stage10_Transparents");
+        RenderingEvents.InvokeOnTransparentPassBegin(new TransparentPassArgs(composedOutput));
         // Begin Graphite render pass for forward transparent (load existing content)
         // Ensure composedOutput is in RenderTarget state for LoadOp.Load
         TransitionToRenderTarget(composedOutput);
@@ -695,6 +713,8 @@ public class DefaultRenderPipeline : RenderPipeline
         // 14. Post Render
         foreach (ImageEffect effect in allEffects)
             effect.OnPostRender(camera);
+
+        RenderingEvents.InvokeOnCameraRenderEnd(new CameraRenderEndArgs(target == null));
 
         // =======================================================
         // 15. Cleanup temporary render textures
@@ -1094,6 +1114,9 @@ public class DefaultRenderPipeline : RenderPipeline
 
     public override void OnDispose()
     {
+        _swapchainSub?.Dispose();
+        _swapchainSub = null;
+
         _voxelGI?.Dispose();
         _voxelGI = null;
 

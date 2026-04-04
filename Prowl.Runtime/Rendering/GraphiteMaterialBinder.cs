@@ -7,6 +7,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Runtime.InteropServices;
 
+using Prowl.Runtime.EventSystem;
 using Prowl.Runtime.Graphite;
 using Prowl.Runtime.Resources;
 using Prowl.Vector;
@@ -609,6 +610,18 @@ internal static class GraphiteMaterialBinder
                 try { r.Dispose(); } catch { }
             list.Clear();
         }
+    }
+
+    /// <summary>
+    /// Subscribes to device lifecycle events so that cached GPU resources are
+    /// automatically cleared on device loss, device disposal, and frame boundaries.
+    /// Must be called once after the graphics device is initialized.
+    /// </summary>
+    internal static void InitializeEventSubscriptions()
+    {
+        GraphiteDeviceEvents.SubscribeOnDeviceLost(_ => ClearStaticState(), priority: -100);
+        GraphiteDeviceEvents.SubscribeOnDeviceDisposing(() => ClearStaticState(), priority: -100);
+        GraphiteDeviceEvents.SubscribeOnGpuFrameBegin(_ => BeginFrame(), priority: -50);
     }
 
     #endregion

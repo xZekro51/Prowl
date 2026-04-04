@@ -4,6 +4,7 @@
 using System;
 using System.Collections.Generic;
 
+using Prowl.Runtime.EventSystem;
 using Prowl.Vector;
 
 using Silk.NET.Core.Native;
@@ -102,6 +103,9 @@ public class GLGraphiteDevice : GraphiteDevice
                 GLContext.Enable(EnableCap.DebugOutputSynchronous);
             }
         }
+
+        GraphiteDeviceEvents.InvokeOnDeviceReady(new DeviceReadyArgs(
+            _capabilities.DeviceName, GraphicsBackendType.OpenGL));
     }
 
     private static void DebugCallback(GLEnum source, GLEnum type, int id, GLEnum severity, int length, nint message, nint userParam)
@@ -354,6 +358,8 @@ public class GLGraphiteDevice : GraphiteDevice
 
     protected override void DisposeResources()
     {
+        GraphiteDeviceEvents.InvokeOnDeviceDisposing();
+
         // Clean up all cached FBOs
         foreach (uint fbo in _fboCache.Values)
             GLContext.DeleteFramebuffer(fbo);

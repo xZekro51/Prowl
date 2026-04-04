@@ -255,20 +255,24 @@ public static class Window
         if (!Graphics.Graphite.BeginFrame())
             return;
 
+        // Fire GPU frame begin — subscribers (e.g. GraphiteMaterialBinder,
+        // RenderStats) run their per-frame reset logic in priority order.
+        GraphiteDeviceEvents.InvokeOnGpuFrameBegin(new GpuFrameBeginArgs(
+            Graphics.Graphite.CurrentFrameIndex, 0));
+
         try
         {
-            Debug.LogTrace("[Window.OnRender] BeginFrame succeeded, starting material binder...");
-            Rendering.GraphiteMaterialBinder.BeginFrame();
-
             // Batch lazy resource uploads (mesh/texture data transfers) that
             // occur during rendering into a single GPU submission, avoiding
             // per-upload synchronous QueueSubmit+WaitForFences stalls.
             Graphics.Graphite.BeginUploadBatch();
+            GraphiteDeviceEvents.InvokeOnUploadWindowOpen();
 
             Debug.LogTrace("[Window.OnRender] Invoking OnRender event...");
             WindowEvents.InvokeOnRender(new WindowRenderArgs((float)delta));
 
             // Flush any remaining batched uploads before post-render work.
+            GraphiteDeviceEvents.InvokeOnUploadWindowClosing(new UploadWindowClosingArgs(0, 0));
             Graphics.Graphite.FlushUploadBatch();
 
             // If the device was lost during rendering, skip presentation and
@@ -289,7 +293,12 @@ public static class Window
         finally
         {
             Debug.LogTrace("[Window.OnRender] Presenting...");
-            Graphics.Graphite.Present();
+            int frameSlot = Graphics.Graphite.CurrentFrameIndex;
+            bool presentOk = Graphics.Graphite.Present();
+
+            GraphiteDeviceEvents.InvokeOnGpuFrameEnd(new GpuFrameEndArgs(
+                frameSlot, presentOk && !Graphics.Graphite.IsDeviceLost));
+
             Debug.LogTrace("[Window.OnRender] Frame complete.");
         }
     }

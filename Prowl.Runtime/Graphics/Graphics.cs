@@ -324,6 +324,23 @@ public static unsafe class Graphics
 
         _graphiteDevice = device;
         Debug.Log($"[Graphics] Device initialized: {_graphiteDevice.BackendName}");
+
+        // Initialize event-driven subscriptions for GPU resource caches.
+        // These replace the old direct-call pattern in Graphics.OnDeviceLost().
+        Rendering.PipelineStateCache.InitializeEventSubscriptions();
+        Rendering.GraphiteMaterialBinder.InitializeEventSubscriptions();
+        Rendering.PipelineCacheManager.InitializeEventSubscriptions();
+
+        // Swap render stats at frame begin (before any rendering) so the
+        // previous frame's data is available for display.
+        EventSystem.GraphiteDeviceEvents.SubscribeOnGpuFrameBegin(_ =>
+        {
+            Rendering.RenderStats.Instance.SwapFrames();
+            EventSystem.RenderingEvents.InvokeOnRenderStatsReady(new EventSystem.RenderStatsReadyArgs(
+                Rendering.RenderStats.Instance.DrawCalls,
+                Rendering.RenderStats.Instance.Triangles,
+                Rendering.RenderStats.Instance.Vertices));
+        }, priority: -90);
     }
 
     // Backward-compatible cache accessors (delegate to the GL device)
@@ -538,15 +555,15 @@ public static unsafe class Graphics
     }
 
     /// <summary>
-    /// Clears all cached GPU state (pipeline states, material binder resources,
-    /// legacy bind caches) after a device-lost event.  Must be called before
-    /// any new rendering occurs so that stale handles from the destroyed device
-    /// are not reused.
+    /// Called when a device-lost event is detected. Cleanup of cached GPU state
+    /// (pipeline states, material binder resources) is now handled by
+    /// <see cref="EventSystem.GraphiteDeviceEvents.OnDeviceLost"/> subscribers.
+    /// This method is retained for legacy GL cache invalidation during the migration.
     /// </summary>
     internal static void OnDeviceLost()
     {
-        Rendering.PipelineStateCache.Clear();
-        Rendering.GraphiteMaterialBinder.ClearStaticState();
+        // PipelineStateCache and GraphiteMaterialBinder cleanup is now event-driven
+        // via GraphiteDeviceEvents.OnDeviceLost subscribers (see InitializeEventSubscriptions).
         InvalidateLegacyCaches();
     }
 
