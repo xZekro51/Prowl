@@ -2,6 +2,7 @@
 // Licensed under the MIT License. See the LICENSE file in the project root for details.
 
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
@@ -39,6 +40,15 @@ public static class Profiler
 
     /// <summary> Global on/off switch. When false, Begin/End calls are no-ops. </summary>
     public static bool Enabled { get; set; }
+
+    /// <summary>
+    /// When enabled, the profiler automatically instruments every
+    /// <see cref="MonoBehaviour"/> lifecycle call (Start, Update,
+    /// FixedUpdate, LateUpdate, DrawGizmos, OnGui) with a per-component
+    /// section named <c>"TypeName.MethodName"</c>. This provides
+    /// fine-grained per-component timing at the cost of higher overhead.
+    /// </summary>
+    public static bool DeepProfiling { get; set; }
 
     /// <summary>
     /// Optional callback invoked at the end of every frame with the completed
@@ -279,6 +289,29 @@ public static class Profiler
             int cmp = a.StartMs.CompareTo(b.StartMs);
             return cmp != 0 ? cmp : a.Depth.CompareTo(b.Depth);
         };
+
+    // ── Deep profiling helpers ───────────────────────────────────────
+
+    // Cache of "TypeName.MethodName" strings keyed by (Type, method) to avoid
+    // per-frame string allocations on the hot path.
+    private static readonly ConcurrentDictionary<(Type, string), string> s_deepNameCache = new();
+
+    /// <summary>
+    /// Returns a cached section name of the form <c>"TypeName.method"</c> for
+    /// the given component type and lifecycle method. Allocations only happen
+    /// the first time a unique (type, method) pair is encountered.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static string GetDeepSectionName(Type componentType, string method)
+    {
+        (Type, string) key = (componentType, method);
+        if (!s_deepNameCache.TryGetValue(key, out string? name))
+        {
+            name = string.Concat(componentType.Name, ".", method);
+            s_deepNameCache.TryAdd(key, name);
+        }
+        return name;
+    }
 }
 
 /// <summary>

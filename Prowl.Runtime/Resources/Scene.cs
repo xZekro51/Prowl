@@ -793,7 +793,7 @@ public class Scene : EngineObject, ISerializationCallbackReceiver
 
             using (Profiler.Section("Update"))
             {
-                ForeachComponent(activeGOs, s_updateAction, editFilter);
+                ForeachComponent(activeGOs, s_updateAction, editFilter, "Update");
             }
 
             EventSystem.BaseEvents.InvokeOnAfterUpdate();
@@ -802,7 +802,7 @@ public class Scene : EngineObject, ISerializationCallbackReceiver
 
             using (Profiler.Section("LateUpdate"))
             {
-                ForeachComponent(activeGOs, s_lateUpdateAction, editFilter);
+                ForeachComponent(activeGOs, s_lateUpdateAction, editFilter, "LateUpdate");
             }
 
             EventSystem.BaseEvents.InvokeOnAfterLateUpdate();
@@ -884,7 +884,7 @@ public class Scene : EngineObject, ISerializationCallbackReceiver
 
             using (Profiler.Section("FixedUpdate"))
             {
-                ForeachComponent(activeGOs, s_fixedUpdateAction, editFilter);
+                ForeachComponent(activeGOs, s_fixedUpdateAction, editFilter, "FixedUpdate");
             }
 
             Events.InvokeOnAfterFixedUpdate();
@@ -901,7 +901,7 @@ public class Scene : EngineObject, ISerializationCallbackReceiver
         using (Profiler.Section("Scene.DrawGizmos"))
         {
             List<GameObject> activeGOs = GetActiveObjectsNonAlloc();
-            ForeachComponent(activeGOs, s_drawGizmosAction);
+            ForeachComponent(activeGOs, s_drawGizmosAction, methodName: "DrawGizmos");
 
             Flush();
         }
@@ -921,7 +921,7 @@ public class Scene : EngineObject, ISerializationCallbackReceiver
         {
             t_guiPaper = paper;
             List<GameObject> activeGOs = GetActiveObjectsNonAlloc();
-            ForeachComponent(activeGOs, s_onGuiAction);
+            ForeachComponent(activeGOs, s_onGuiAction, methodName: "OnGui");
             t_guiPaper = null;
 
             Flush();
@@ -1013,9 +1013,14 @@ public class Scene : EngineObject, ISerializationCallbackReceiver
     /// <see cref="ShouldRunInEditMode"/> are included.
     /// Uses the deferred add/remove mechanism on each <see cref="GameObject"/> so
     /// the underlying component list can be iterated directly without copies.
+    /// When <see cref="Profiler.DeepProfiling"/> is enabled and a <paramref name="methodName"/>
+    /// is provided, each component call is wrapped in a profiler section named
+    /// <c>"TypeName.methodName"</c> for fine-grained per-component timing.
     /// </summary>
-    private void ForeachComponent(List<GameObject> objs, Action<MonoBehaviour> action, bool editModeFilter = false)
+    private void ForeachComponent(List<GameObject> objs, Action<MonoBehaviour> action, bool editModeFilter = false, string? methodName = null)
     {
+        bool deep = methodName != null && Profiler.DeepProfiling && Profiler.Enabled;
+
         foreach (GameObject go in objs)
         {
             go.BeginComponentIteration();
@@ -1027,7 +1032,19 @@ public class Scene : EngineObject, ISerializationCallbackReceiver
                     MonoBehaviour comp = go._components[i];
                     if (comp.IsDisposed) continue;
                     if (comp.EnabledInHierarchy && (!editModeFilter || ShouldRunInEditMode(comp)))
-                        action.Invoke(comp);
+                    {
+                        if (deep)
+                        {
+                            using (Profiler.Section(Profiler.GetDeepSectionName(comp.GetType(), methodName!)))
+                            {
+                                action.Invoke(comp);
+                            }
+                        }
+                        else
+                        {
+                            action.Invoke(comp);
+                        }
+                    }
                 }
             }
             finally

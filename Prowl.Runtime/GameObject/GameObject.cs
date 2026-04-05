@@ -10,6 +10,7 @@ using System.Runtime.CompilerServices;
 
 using Prowl.Echo;
 using Prowl.Runtime.Prefabs;
+using Prowl.Runtime.Profiling;
 using Prowl.Runtime.Resources;
 using Prowl.Vector;
 
@@ -513,6 +514,7 @@ public class GameObject : EngineObject, ISerializable
         BeginComponentIteration();
         try
         {
+            bool deep = Profiler.DeepProfiling && Profiler.Enabled;
             int count = _components.Count;
             for (int i = 0; i < count; i++)
             {
@@ -522,7 +524,17 @@ public class GameObject : EngineObject, ISerializable
                     if (component.EnabledInHierarchy)
                     {
                         if (filter == null || filter(component))
-                            component.InternalStart();
+                        {
+                            if (deep)
+                            {
+                                using (Profiler.Section(Profiler.GetDeepSectionName(component.GetType(), "Start")))
+                                    component.InternalStart();
+                            }
+                            else
+                            {
+                                component.InternalStart();
+                            }
+                        }
                     }
             }
         }

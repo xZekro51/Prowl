@@ -197,14 +197,17 @@ public class DefaultRenderPipeline : RenderPipeline
 
         // =======================================================
         // 5. Setup Lighting and Shadows
+        Profiler.BeginSection("Pipeline.Shadows");
         graphiteCmd?.PushDebugGroup("Stage5_ShadowAtlas");
         RenderShadowAtlas(css, lights, renderables);
         graphiteCmd?.PopDebugGroup();
+        Profiler.EndSection(); // Pipeline.Shadows
 
         // 5.1 Re-Assign camera matrices (The Lighting can modify these)
         AssignCameraMatrices(css.View, css.Projection);
 
         // 5.2 Global Illumination: voxelize scene (VoxelGI) or update SDF/probes (SDFGI)
+        Profiler.BeginSection("Pipeline.GI");
         graphiteCmd?.PushDebugGroup("Stage5.2_GlobalIllumination");
         Scene.GlobalIlluminationParams giParams = css.Scene.GlobalIllumination;
         (Scene.GlobalIlluminationParams.GIMode giMode, float giIntensity) = GIUtils.ResolveGISettings(css.Scene, lights);
@@ -217,6 +220,7 @@ public class DefaultRenderPipeline : RenderPipeline
 
         RenderingEvents.InvokeOnGIPassEnd(new GIPassEndArgs(giMode));
         graphiteCmd?.PopDebugGroup(); // Stage5.2_GlobalIllumination
+        Profiler.EndSection(); // Pipeline.GI
 
         // =======================================================
         // 6. Create GBuffer for Deferred Rendering
@@ -358,6 +362,7 @@ public class DefaultRenderPipeline : RenderPipeline
 
         // 7.1 Global Illumination: cone trace (VoxelGI) or probe lookup (SDFGI) into light accumulation
         // 7.2 Temporal filtering is applied by GISystemManager via OnGITracePass subscriber
+        Profiler.BeginSection("Pipeline.GI.Trace");
         graphiteCmd?.PushDebugGroup("Stage7.1_GIConeTrace");
         RenderingEvents.InvokeOnGITracePass(new GITracePassArgs(
             giMode, giIntensity, giParams.ConeCount, gBuffer, lightAccumulation, css));
@@ -370,6 +375,7 @@ public class DefaultRenderPipeline : RenderPipeline
             RenderingEvents.InvokeOnGIDebugVisualize(new GIDebugVisualizeArgs(
                 giMode, debugMode, gBuffer, lightAccumulation, css));
         }
+        Profiler.EndSection(); // Pipeline.GI.Trace
 
         // =======================================================
         // 7.5. Apply DuringLighting effects (e.g., SSPT, GTAO that need light accumulation)
@@ -534,6 +540,7 @@ public class DefaultRenderPipeline : RenderPipeline
 
         // =======================================================
         // 11. Apply PostProcess effects (final post-processing)
+        Profiler.BeginSection("Pipeline.PostProcess");
         {
             var postProcessContext = new RenderContext
             {
@@ -564,9 +571,11 @@ public class DefaultRenderPipeline : RenderPipeline
                 }
             }
         }
+        Profiler.EndSection(); // Pipeline.PostProcess
 
         // =======================================================
         // 12. Render Gizmos (needs an active render pass on composedOutput for Vulkan)
+        Profiler.BeginSection("Pipeline.Gizmos");
         graphiteCmd?.PushDebugGroup("Stage12_Gizmos");
         // Ensure composedOutput is in RenderTarget state for LoadOp.Load
         TransitionToRenderTarget(composedOutput);
@@ -582,6 +591,7 @@ public class DefaultRenderPipeline : RenderPipeline
         if (graphiteCmd?.InRenderPass == true)
             graphiteCmd.EndRenderPass();
         graphiteCmd?.PopDebugGroup(); // Stage12_Gizmos
+        Profiler.EndSection(); // Pipeline.Gizmos
 
         // =======================================================
         // 13. Camera Render End — fire while the command buffer is still alive
@@ -590,6 +600,7 @@ public class DefaultRenderPipeline : RenderPipeline
 
         // =======================================================
         // 14. Blit Result to target, If target is null Blit will go to the Screen/Window
+        Profiler.BeginSection("Pipeline.Blit");
         graphiteCmd?.PushDebugGroup("Stage14_BlitToTarget");
         if (target == null)
         {
@@ -634,6 +645,7 @@ public class DefaultRenderPipeline : RenderPipeline
         }
 
         graphiteCmd?.PopDebugGroup(); // Stage14_BlitToTarget
+        Profiler.EndSection(); // Pipeline.Blit
 
         // =======================================================
         // 15. Post Render

@@ -315,6 +315,21 @@ public sealed class ProfilerPanel : EditorPanel
         ImGui.Dummy(new Vector2(12 * Game.DpiScale, 0));
         ImGui.SameLine();
 
+        // ── Deep profiling toggle ───────────────────────────────
+        bool deepEnabled = Profiler.DeepProfiling;
+        if (deepEnabled)
+            ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.20f, 0.72f, 0.20f, 0.60f));
+        if (ImGui.SmallButton("Deep Profile"))
+            Profiler.DeepProfiling = !Profiler.DeepProfiling;
+        if (deepEnabled)
+            ImGui.PopStyleColor();
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("When enabled, instruments every MonoBehaviour\nlifecycle call with per-component profiler sections.");
+
+        ImGui.SameLine();
+        ImGui.Dummy(new Vector2(12 * Game.DpiScale, 0));
+        ImGui.SameLine();
+
         // ── View mode selector ──────────────────────────────────
         ImGui.TextColored(new Vector4(0.6f, 0.6f, 0.6f, 1f), "View:");
         ImGui.SameLine();
