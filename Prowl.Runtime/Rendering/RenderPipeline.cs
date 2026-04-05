@@ -4,6 +4,7 @@
 using System.Collections.Generic;
 
 using Prowl.Runtime.Graphite;
+using Prowl.Runtime.Profiling;
 using Prowl.Runtime.Rendering.Shaders;
 using Prowl.Runtime.Resources;
 using Prowl.Vector;
@@ -692,6 +693,7 @@ public abstract class RenderPipeline : EngineObject
 
         // ========== PHASE 1: Build Batches ==========
         // Group renderables by (material hash, shader pass, mesh) for efficient rendering
+        Profiler.BeginSection("DrawRenderables.Build");
         _reusableBatches.Clear();
         _reusableBatchLookup.Clear();
 
@@ -803,9 +805,11 @@ public abstract class RenderPipeline : EngineObject
         }
 
         RenderStats.Instance.SetRenderableCount(renderables.Count);
+        Profiler.EndSection(); // DrawRenderables.Build
 
         // ========== PHASE 2: Draw Batches ==========
         // For each batch, bind state once then draw all objects in that batch
+        Profiler.BeginSection("DrawRenderables.Draw");
         foreach (RenderBatch batch in _reusableBatches)
         {
             // Handle instanced batches separately
@@ -1000,6 +1004,7 @@ public abstract class RenderPipeline : EngineObject
                 grabRT = null;
             }
         }
+        Profiler.EndSection(); // DrawRenderables.Draw
     }
 
     /// <summary>

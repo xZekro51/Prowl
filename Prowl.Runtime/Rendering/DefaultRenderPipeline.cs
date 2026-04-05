@@ -943,7 +943,9 @@ public class DefaultRenderPipeline : RenderPipeline
 
             if (light is Light lightComponent)
             {
+                Profiler.BeginSection(Profiler.GetDeepSectionName(lightComponent.GetType(), "Shadows"));
                 lightComponent.RenderShadows(this, css.CameraPosition, renderables);
+                Profiler.EndSection();
             }
         }
 
