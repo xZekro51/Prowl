@@ -296,7 +296,11 @@ public sealed class RenderTexture : EngineObject, ISerializable
 
                 if (framesActive > MaxActiveFrames)
                 {
-                    Debug.LogWarning($"RenderTexture leak detected! Texture ({renderTexture.Width}x{renderTexture.Height}) has been active for {framesActive} frames (max: {MaxActiveFrames}). Auto-disposing to prevent memory leak.");
+                    RenderTextureKey key = pair.Key;
+                    string formatStr = key.Format.Length > 0
+                        ? string.Join(", ", key.Format)
+                        : "unknown";
+                    Debug.LogWarning($"RenderTexture leak detected! Texture ({renderTexture.Width}x{renderTexture.Height}, depth={key.HasDepth}, formats=[{formatStr}]) has been active for {framesActive} frames (max: {MaxActiveFrames}). Auto-disposing to prevent memory leak.");
                     s_disposableBuffer.Add(renderTexture);
                     pair.Value.RemoveAt(i);
                 }

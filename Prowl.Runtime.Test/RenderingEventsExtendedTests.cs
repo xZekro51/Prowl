@@ -44,14 +44,14 @@ public class RenderingEventsExtendedTests : IDisposable
         Track(RenderingEvents.SubscribeOnCameraRenderEnd(_ => order.Add("CameraEnd")));
 
         // Simulate the pipeline firing order
-        RenderingEvents.InvokeOnCameraRenderBegin(new CameraRenderBeginArgs(1920, 1080));
-        RenderingEvents.InvokeOnGBufferPassBegin(new GBufferPassArgs(null!));
-        RenderingEvents.InvokeOnGBufferPassEnd(new GBufferPassArgs(null!));
-        RenderingEvents.InvokeOnLightingPassBegin(new LightingPassArgs(null!, null!, 4));
-        RenderingEvents.InvokeOnLightingPassEnd(new LightingPassArgs(null!, null!, 4));
-        RenderingEvents.InvokeOnCompositionComplete(new CompositionCompleteArgs(null!, null!));
-        RenderingEvents.InvokeOnTransparentPassBegin(new TransparentPassArgs(null!));
-        RenderingEvents.InvokeOnCameraRenderEnd(new CameraRenderEndArgs(true));
+        RenderingEvents.InvokeOnCameraRenderBegin(new CameraRenderBeginArgs(1920, 1080, null));
+        RenderingEvents.InvokeOnGBufferPassBegin(new GBufferPassArgs(null!, null));
+        RenderingEvents.InvokeOnGBufferPassEnd(new GBufferPassArgs(null!, null));
+        RenderingEvents.InvokeOnLightingPassBegin(new LightingPassArgs(null!, null!, 4, null));
+        RenderingEvents.InvokeOnLightingPassEnd(new LightingPassArgs(null!, null!, 4, null));
+        RenderingEvents.InvokeOnCompositionComplete(new CompositionCompleteArgs(null!, null!, null));
+        RenderingEvents.InvokeOnTransparentPassBegin(new TransparentPassArgs(null!, null));
+        RenderingEvents.InvokeOnCameraRenderEnd(new CameraRenderEndArgs(true, null));
 
         string[] expected =
         [
@@ -72,7 +72,7 @@ public class RenderingEventsExtendedTests : IDisposable
         CameraRenderBeginArgs? received = null;
         Track(RenderingEvents.SubscribeOnCameraRenderBegin(args => received = args));
 
-        RenderingEvents.InvokeOnCameraRenderBegin(new CameraRenderBeginArgs(2560, 1440));
+        RenderingEvents.InvokeOnCameraRenderBegin(new CameraRenderBeginArgs(2560, 1440, null));
 
         Assert.NotNull(received);
         Assert.Equal(2560u, received!.Value.PixelWidth);
@@ -85,7 +85,7 @@ public class RenderingEventsExtendedTests : IDisposable
         CameraRenderEndArgs? received = null;
         Track(RenderingEvents.SubscribeOnCameraRenderEnd(args => received = args));
 
-        RenderingEvents.InvokeOnCameraRenderEnd(new CameraRenderEndArgs(false));
+        RenderingEvents.InvokeOnCameraRenderEnd(new CameraRenderEndArgs(false, null));
 
         Assert.NotNull(received);
         Assert.False(received!.Value.RenderedToSwapchain);
@@ -101,7 +101,7 @@ public class RenderingEventsExtendedTests : IDisposable
         LightingPassArgs? received = null;
         Track(RenderingEvents.SubscribeOnLightingPassBegin(args => received = args));
 
-        RenderingEvents.InvokeOnLightingPassBegin(new LightingPassArgs(null!, null!, 8));
+        RenderingEvents.InvokeOnLightingPassBegin(new LightingPassArgs(null!, null!, 8, null));
 
         Assert.NotNull(received);
         Assert.Equal(8, received!.Value.LightCount);
@@ -202,7 +202,7 @@ public class RenderingEventsExtendedTests : IDisposable
         IDisposable sub = RenderingEvents.SubscribeOnCameraRenderBegin(_ => called = true);
 
         sub.Dispose();
-        RenderingEvents.InvokeOnCameraRenderBegin(new CameraRenderBeginArgs(100, 100));
+        RenderingEvents.InvokeOnCameraRenderBegin(new CameraRenderBeginArgs(100, 100, null));
 
         Assert.False(called);
     }

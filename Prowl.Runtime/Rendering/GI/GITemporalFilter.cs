@@ -51,7 +51,9 @@ public sealed class GITemporalFilter : IDisposable
         // First frame — no history available, just store current and return
         if (_previousGI == null || _previousGI.IsDisposed)
         {
-            _previousGI = RenderTexture.GetTemporaryRT(
+            // Use a non-pooled RT because the history buffer is held across
+            // frames.  Pooled RTs trigger the leak detector after MaxActiveFrames.
+            _previousGI = new RenderTexture(
                 currentGI.Width, currentGI.Height, false,
                 [TextureImageFormat.Short4]);
 
@@ -63,8 +65,8 @@ public sealed class GITemporalFilter : IDisposable
         // Reallocate history if dimensions changed
         if (_previousGI.Width != currentGI.Width || _previousGI.Height != currentGI.Height)
         {
-            RenderTexture.ReleaseTemporaryRT(_previousGI);
-            _previousGI = RenderTexture.GetTemporaryRT(
+            _previousGI.Dispose();
+            _previousGI = new RenderTexture(
                 currentGI.Width, currentGI.Height, false,
                 [TextureImageFormat.Short4]);
 
@@ -104,7 +106,7 @@ public sealed class GITemporalFilter : IDisposable
 
         if (_previousGI != null)
         {
-            RenderTexture.ReleaseTemporaryRT(_previousGI);
+            _previousGI.Dispose();
             _previousGI = null;
         }
     }

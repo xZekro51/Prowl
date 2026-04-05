@@ -65,6 +65,13 @@ public static unsafe class Graphics
     /// legacy GL rendering.  Legacy draw methods (<c>DrawMeshNow</c>, <c>DrawRenderables</c>)
     /// will record parallel Graphite commands when this is set and a render pass is active.
     /// </summary>
+    /// <remarks>
+    /// <b>Deprecated.</b> Prefer using the <c>CommandBuffer</c> property on event args
+    /// (e.g. <see cref="EventSystem.GBufferPassArgs.CommandBuffer"/>) or
+    /// <see cref="Rendering.RenderContext.CommandBuffer"/> instead of this static accessor.
+    /// This property will be removed in a future release once all consumers are migrated.
+    /// </remarks>
+    [Obsolete("Use the CommandBuffer property from event args or RenderContext instead.")]
     internal static Rendering.RenderCommandBuffer? ActiveGraphiteCmdBuffer { get; set; }
 
     /// <summary>
@@ -361,6 +368,7 @@ public static unsafe class Graphics
         Rendering.PipelineCacheManager.InitializeEventSubscriptions();
         Rendering.GPUProfiler.InitializeEventSubscriptions();
         Rendering.GI.GISystemManager.InitializeEventSubscriptions();
+        Rendering.ImageEffectDispatcher.InitializeEventSubscriptions();
 
         // Track swapchain minimized state so the render loop can skip GPU work.
         EventSystem.GraphiteDeviceEvents.SubscribeOnSwapchainMinimized(() =>

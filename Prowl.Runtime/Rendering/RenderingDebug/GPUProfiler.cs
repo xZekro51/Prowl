@@ -3,7 +3,6 @@
 
 using System;
 using System.Collections.Generic;
-using System.Linq;
 
 using Prowl.Runtime.EventSystem;
 using Prowl.Runtime.Graphite;
@@ -55,53 +54,53 @@ internal static class GPUProfiler
         // Begin queries run at priority -10 (before stage work)
         // End queries run at priority 10 (after stage work)
 
-        RenderingEvents.SubscribeOnGBufferPassBegin(_ =>
+        RenderingEvents.SubscribeOnGBufferPassBegin(args =>
         {
-            CommandList? cmd = Graphics.ActiveGraphiteCmdBuffer?.CommandList;
+            CommandList? cmd = args.CommandBuffer?.CommandList;
             if (cmd != null)
                 Graphics.Graphite.BeginGpuTimerQuery(cmd, "GBuffer");
         }, priority: -10);
 
-        RenderingEvents.SubscribeOnGBufferPassEnd(_ =>
+        RenderingEvents.SubscribeOnGBufferPassEnd(args =>
         {
-            CommandList? cmd = Graphics.ActiveGraphiteCmdBuffer?.CommandList;
+            CommandList? cmd = args.CommandBuffer?.CommandList;
             if (cmd != null)
                 Graphics.Graphite.EndGpuTimerQuery(cmd, "GBuffer");
         }, priority: 10);
 
-        RenderingEvents.SubscribeOnLightingPassBegin(_ =>
+        RenderingEvents.SubscribeOnLightingPassBegin(args =>
         {
-            CommandList? cmd = Graphics.ActiveGraphiteCmdBuffer?.CommandList;
+            CommandList? cmd = args.CommandBuffer?.CommandList;
             if (cmd != null)
                 Graphics.Graphite.BeginGpuTimerQuery(cmd, "Lighting");
         }, priority: -10);
 
-        RenderingEvents.SubscribeOnLightingPassEnd(_ =>
+        RenderingEvents.SubscribeOnLightingPassEnd(args =>
         {
-            CommandList? cmd = Graphics.ActiveGraphiteCmdBuffer?.CommandList;
+            CommandList? cmd = args.CommandBuffer?.CommandList;
             if (cmd != null)
                 Graphics.Graphite.EndGpuTimerQuery(cmd, "Lighting");
         }, priority: 10);
 
-        RenderingEvents.SubscribeOnCompositionComplete(_ =>
+        RenderingEvents.SubscribeOnCompositionComplete(args =>
         {
-            CommandList? cmd = Graphics.ActiveGraphiteCmdBuffer?.CommandList;
+            CommandList? cmd = args.CommandBuffer?.CommandList;
             if (cmd != null)
                 Graphics.Graphite.EndGpuTimerQuery(cmd, "Composition");
         }, priority: 10);
 
-        RenderingEvents.SubscribeOnTransparentPassBegin(_ =>
+        RenderingEvents.SubscribeOnTransparentPassBegin(args =>
         {
-            CommandList? cmd = Graphics.ActiveGraphiteCmdBuffer?.CommandList;
+            CommandList? cmd = args.CommandBuffer?.CommandList;
             if (cmd != null)
                 Graphics.Graphite.BeginGpuTimerQuery(cmd, "Transparent");
         }, priority: -10);
 
         // ── Full-frame timer: begin at camera start, end at camera end ──
 
-        RenderingEvents.SubscribeOnCameraRenderBegin(_ =>
+        RenderingEvents.SubscribeOnCameraRenderBegin(args =>
         {
-            CommandList? cmd = Graphics.ActiveGraphiteCmdBuffer?.CommandList;
+            CommandList? cmd = args.CommandBuffer?.CommandList;
             if (cmd != null)
             {
                 Graphics.Graphite.BeginGpuTimerQuery(cmd, "FullFrame");
@@ -109,9 +108,9 @@ internal static class GPUProfiler
             }
         }, priority: -10);
 
-        RenderingEvents.SubscribeOnCameraRenderEnd(_ =>
+        RenderingEvents.SubscribeOnCameraRenderEnd(args =>
         {
-            CommandList? cmd = Graphics.ActiveGraphiteCmdBuffer?.CommandList;
+            CommandList? cmd = args.CommandBuffer?.CommandList;
             if (cmd != null)
             {
                 Graphics.Graphite.EndGpuTimerQuery(cmd, "Transparent");

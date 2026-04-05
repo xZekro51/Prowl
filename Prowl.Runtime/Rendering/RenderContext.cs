@@ -28,6 +28,12 @@ public sealed class RenderContext : IDisposable
     // Current rendering stage
     public RenderStage CurrentStage { get; set; }
 
+    /// <summary>
+    /// The active command buffer for this camera's render pass.
+    /// May be <c>null</c> when the Graphite device is not ready.
+    /// </summary>
+    public RenderCommandBuffer? CommandBuffer { get; set; }
+
     private readonly List<RenderTexture> _replacedRTs = new();
 
     /// <summary>

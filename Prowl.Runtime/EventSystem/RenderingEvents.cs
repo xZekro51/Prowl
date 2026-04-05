@@ -90,6 +90,17 @@ public static partial class RenderingEvents
     /// <summary>Raised after GI trace for debug visualization overlay.</summary>
     [EventArgs(typeof(GIDebugVisualizeArgs))]
     private static readonly EventKey _OnGIDebugVisualize = new();
+
+    // ── Image effect dispatch events ──────────────────────────────────
+
+    /// <summary>
+    /// Raised at each image effect dispatch stage during the render pipeline.
+    /// The default <c>ImageEffectDispatcher</c> subscriber iterates the active
+    /// camera's <see cref="ImageEffect"/> list for the requested stage.
+    /// External subscribers can hook in before or after via priority.
+    /// </summary>
+    [EventArgs(typeof(ImageEffectsDispatchArgs))]
+    private static readonly EventKey _OnImageEffectsDispatch = new();
 }
 
 /// <summary>
@@ -100,22 +111,22 @@ public readonly record struct GIUpdateArgs(
     float UpdateTimeMs);
 
 /// <summary>Arguments for the start of a camera render pass.</summary>
-public readonly record struct CameraRenderBeginArgs(uint PixelWidth, uint PixelHeight);
+public readonly record struct CameraRenderBeginArgs(uint PixelWidth, uint PixelHeight, RenderCommandBuffer? CommandBuffer);
 
 /// <summary>Arguments for the end of a camera render pass.</summary>
-public readonly record struct CameraRenderEndArgs(bool RenderedToSwapchain);
+public readonly record struct CameraRenderEndArgs(bool RenderedToSwapchain, RenderCommandBuffer? CommandBuffer);
 
 /// <summary>Arguments for GBuffer pass begin/end events.</summary>
-public readonly record struct GBufferPassArgs(RenderTexture GBuffer);
+public readonly record struct GBufferPassArgs(RenderTexture GBuffer, RenderCommandBuffer? CommandBuffer);
 
 /// <summary>Arguments for lighting pass begin/end events.</summary>
-public readonly record struct LightingPassArgs(RenderTexture GBuffer, RenderTexture LightAccumulation, int LightCount);
+public readonly record struct LightingPassArgs(RenderTexture GBuffer, RenderTexture LightAccumulation, int LightCount, RenderCommandBuffer? CommandBuffer);
 
 /// <summary>Arguments for transparent pass begin event.</summary>
-public readonly record struct TransparentPassArgs(RenderTexture ComposedOutput);
+public readonly record struct TransparentPassArgs(RenderTexture ComposedOutput, RenderCommandBuffer? CommandBuffer);
 
 /// <summary>Arguments for the composition complete event.</summary>
-public readonly record struct CompositionCompleteArgs(RenderTexture FinalOutput, RenderTexture GBuffer);
+public readonly record struct CompositionCompleteArgs(RenderTexture FinalOutput, RenderTexture GBuffer, RenderCommandBuffer? CommandBuffer);
 
 /// <summary>Arguments for render stats ready event.</summary>
 public readonly record struct RenderStatsReadyArgs(int DrawCalls, int Triangles, int Vertices, float GpuTimeMs);
@@ -150,3 +161,10 @@ public readonly record struct GIDebugVisualizeArgs(
     RenderTexture GBuffer,
     RenderTexture LightAccumulation,
     RenderPipeline.CameraSnapshot CameraSnapshot);
+
+/// <summary>
+/// Arguments for image effect stage dispatch.
+/// Carries the <see cref="RenderContext"/> so subscribers can execute effects or
+/// inject custom post-processing at the appropriate pipeline stage.
+/// </summary>
+public readonly record struct ImageEffectsDispatchArgs(RenderStage Stage, RenderContext Context);

@@ -71,17 +71,6 @@ public class DefaultRenderPipeline : RenderPipeline
     // Event subscription handle for swapchain recreation cleanup
     private IDisposable? _swapchainSub;
 
-    // Reusable per-frame collections to avoid GC pressure in GatherImageEffects
-    private readonly Dictionary<RenderStage, List<ImageEffect>> _reusableEffectsByStage = new()
-    {
-        { RenderStage.BeforeGBuffer, new List<ImageEffect>() },
-        { RenderStage.AfterGBuffer, new List<ImageEffect>() },
-        { RenderStage.DuringLighting, new List<ImageEffect>() },
-        { RenderStage.AfterLighting, new List<ImageEffect>() },
-        { RenderStage.PostProcess, new List<ImageEffect>() }
-    };
-    private readonly List<ImageEffect> _reusableAllEffects = [];
-
     #endregion
 
     #region Configuration
@@ -145,57 +134,9 @@ public class DefaultRenderPipeline : RenderPipeline
         // Main rendering with correct order of operations
         Internal_Render(camera, data);
 
-        // Clear reusable effect buffers after rendering
-        _reusableAllEffects.Clear();
-        foreach (var list in _reusableEffectsByStage.Values)
-            list.Clear();
-
         PropertyState.ClearGlobals();
 
         base.Render(camera, in data);
-    }
-
-    private Dictionary<RenderStage, List<ImageEffect>> GatherImageEffects(Camera camera)
-    {
-        // Clear reusable lists instead of allocating new ones
-        foreach (var list in _reusableEffectsByStage.Values)
-            list.Clear();
-
-        foreach (ImageEffect effect in camera.Effects)
-        {
-            // Get the stage, with backward compatibility for IsOpaqueEffect
-            RenderStage stage = effect.Stage;
-
-            #pragma warning disable CS0618 // Type or member is obsolete
-            if (effect.IsOpaqueEffect && stage == RenderStage.PostProcess)
-            {
-                // Backward compatibility: IsOpaqueEffect means AfterLighting
-                stage = RenderStage.AfterLighting;
-            }
-            #pragma warning restore CS0618
-
-            _reusableEffectsByStage[stage].Add(effect);
-        }
-
-        return _reusableEffectsByStage;
-    }
-
-    private void ExecuteImageEffects(RenderContext context, List<ImageEffect> effects)
-    {
-        if (effects == null || effects.Count == 0)
-            return;
-
-        foreach (var effect in effects)
-        {
-            try
-            {
-                effect.OnRenderEffect(context);
-            }
-            catch (System.Exception ex)
-            {
-                Debug.LogError($"Image effect {effect.GetType().Name} threw: {ex}");
-            }
-        }
     }
 
     #endregion
@@ -218,11 +159,6 @@ public class DefaultRenderPipeline : RenderPipeline
         // =======================================================
         // 0. Setup variables, and prepare the camera
         bool isHDR = camera.HDR;
-        var effectsByStage = GatherImageEffects(camera);
-        _reusableAllEffects.Clear();
-        foreach (var effects in effectsByStage.Values)
-            _reusableAllEffects.AddRange(effects);
-        var allEffects = _reusableAllEffects;
 
         IReadOnlyList<IRenderableLight> lights = camera.GameObject.Scene.Lights;
         RenderTexture target = camera.UpdateRenderData();
@@ -237,7 +173,7 @@ public class DefaultRenderPipeline : RenderPipeline
 
         // =======================================================
         // 1. Pre Cull
-        foreach (ImageEffect effect in allEffects)
+        foreach (ImageEffect effect in camera.Effects)
             effect.OnPreCull(camera);
 
         // =======================================================
@@ -245,7 +181,7 @@ public class DefaultRenderPipeline : RenderPipeline
         CameraSnapshot css = new(camera);
         SetupGlobalUniforms(css);
 
-        RenderingEvents.InvokeOnCameraRenderBegin(new CameraRenderBeginArgs(css.PixelWidth, css.PixelHeight));
+        RenderingEvents.InvokeOnCameraRenderBegin(new CameraRenderBeginArgs(css.PixelWidth, css.PixelHeight, graphiteCmd));
 
         // =======================================================
         // 3. Cull Renderables based on Snapshot data
@@ -256,7 +192,7 @@ public class DefaultRenderPipeline : RenderPipeline
 
         // =======================================================
         // 4. Pre Render
-        foreach (ImageEffect effect in allEffects)
+        foreach (ImageEffect effect in camera.Effects)
             effect.OnPreRender(camera);
 
         // =======================================================
@@ -284,22 +220,44 @@ public class DefaultRenderPipeline : RenderPipeline
 
         // =======================================================
         // 6. Create GBuffer for Deferred Rendering
+        //
+        // All three major temporary render textures (gBuffer, lightAccumulation,
+        // composedOutput) are wrapped in a try-finally to guarantee they are
+        // returned to the pool even when an exception interrupts the pipeline.
+        RenderTexture? gBuffer = null;
+        RenderTexture? lightAccumulation = null;
+        RenderTexture? composedOutput = null;
+        try
+        {
+
         Profiler.BeginSection("Pipeline.GBuffer");
         // GBuffer layout:
         // BufferA: RGB = Albedo, A = Alpha
         // BufferB: RGB = Normal (view space), A = ShadingMode
         // BufferC: R = Roughness, G = Metalness, B = Specular, A = AO
         // BufferD: Custom Data per Shading Mode (e.g., Emissive for Lit mode)
-        RenderTexture gBuffer = RenderTexture.GetTemporaryRT((int)css.PixelWidth, (int)css.PixelHeight, true, [
+        gBuffer = RenderTexture.GetTemporaryRT((int)css.PixelWidth, (int)css.PixelHeight, true, [
             Asset.GBufferAlbedoFormat, // BufferA - Albedo + Alpha
             Asset.GBufferNormalFormat, // BufferB - Normal + ShadingMode
             Asset.GBufferPBRFormat,    // BufferC - Roughness, Metalness, Specular, AO
             Asset.GBufferCustomFormat, // BufferD - Custom Data (Emissive, etc.)
             ]);
 
+        // 6.0 BeforeGBuffer image effects (e.g., screen-space setup from previous frame data)
+        RenderingEvents.InvokeOnImageEffectsDispatch(new ImageEffectsDispatchArgs(
+            RenderStage.BeforeGBuffer, new RenderContext
+            {
+                GBuffer = gBuffer,
+                Camera = camera,
+                Width = (int)css.PixelWidth,
+                Height = (int)css.PixelHeight,
+                CurrentStage = RenderStage.BeforeGBuffer,
+                CommandBuffer = graphiteCmd
+            }));
+
         // Begin Graphite render pass for GBuffer (clear handled by LoadOp.Clear)
         graphiteCmd?.PushDebugGroup("Stage6_GBuffer");
-        RenderingEvents.InvokeOnGBufferPassBegin(new GBufferPassArgs(gBuffer));
+        RenderingEvents.InvokeOnGBufferPassBegin(new GBufferPassArgs(gBuffer, graphiteCmd));
         if (graphiteCmd != null)
         {
             var clearFloat4 = new Float4(
@@ -330,14 +288,26 @@ public class DefaultRenderPipeline : RenderPipeline
         // Transition GBuffer attachments to ShaderResource for lighting sampling
         TransitionToShaderResource(gBuffer);
         graphiteCmd?.PopDebugGroup(); // Stage6_GBuffer
-        RenderingEvents.InvokeOnGBufferPassEnd(new GBufferPassArgs(gBuffer));
+        RenderingEvents.InvokeOnGBufferPassEnd(new GBufferPassArgs(gBuffer, graphiteCmd));
         Profiler.EndSection(); // Pipeline.GBuffer
+
+        // 6.1 AfterGBuffer image effects (e.g., modifying surface properties before lighting)
+        RenderingEvents.InvokeOnImageEffectsDispatch(new ImageEffectsDispatchArgs(
+            RenderStage.AfterGBuffer, new RenderContext
+            {
+                GBuffer = gBuffer,
+                Camera = camera,
+                Width = (int)css.PixelWidth,
+                Height = (int)css.PixelHeight,
+                CurrentStage = RenderStage.AfterGBuffer,
+                CommandBuffer = graphiteCmd
+            }));
 
         // =======================================================
         // 7. Deferred Lighting Pass - Render each light's contribution
         Profiler.BeginSection("Pipeline.Lighting");
         // Create light accumulation buffer
-        RenderTexture lightAccumulation = RenderTexture.GetTemporaryRT((int)camera.PixelWidth, (int)camera.PixelHeight, false, [
+        lightAccumulation = RenderTexture.GetTemporaryRT((int)camera.PixelWidth, (int)camera.PixelHeight, false, [
             isHDR ? TextureImageFormat.Short4 : TextureImageFormat.Color4b, // Accumulated lighting
             ]);
 
@@ -350,7 +320,7 @@ public class DefaultRenderPipeline : RenderPipeline
 
         // Begin Graphite render pass for light accumulation
         graphiteCmd?.PushDebugGroup("Stage7_DeferredLighting");
-        RenderingEvents.InvokeOnLightingPassBegin(new LightingPassArgs(gBuffer, lightAccumulation, lights.Count));
+        RenderingEvents.InvokeOnLightingPassBegin(new LightingPassArgs(gBuffer, lightAccumulation, lights.Count, graphiteCmd));
         if (graphiteCmd != null)
         {
             graphiteCmd.BeginRenderPass(lightAccumulation, Graphite.LoadOp.Clear, Float4.Zero, false);
@@ -383,7 +353,7 @@ public class DefaultRenderPipeline : RenderPipeline
         // Transition light accumulation to ShaderResource for compose/effects sampling
         TransitionToShaderResource(lightAccumulation);
         graphiteCmd?.PopDebugGroup(); // Stage7_DeferredLighting
-        RenderingEvents.InvokeOnLightingPassEnd(new LightingPassArgs(gBuffer, lightAccumulation, renderedLightCount));
+        RenderingEvents.InvokeOnLightingPassEnd(new LightingPassArgs(gBuffer, lightAccumulation, renderedLightCount, graphiteCmd));
         Profiler.EndSection(); // Pipeline.Lighting
 
         // 7.1 Global Illumination: cone trace (VoxelGI) or probe lookup (SDFGI) into light accumulation
@@ -403,9 +373,8 @@ public class DefaultRenderPipeline : RenderPipeline
 
         // =======================================================
         // 7.5. Apply DuringLighting effects (e.g., SSPT, GTAO that need light accumulation)
-        if (effectsByStage[RenderStage.DuringLighting].Count > 0)
-        {
-            var lightingContext = new RenderContext
+        RenderingEvents.InvokeOnImageEffectsDispatch(new ImageEffectsDispatchArgs(
+            RenderStage.DuringLighting, new RenderContext
             {
                 GBuffer = gBuffer,
                 LightAccumulation = lightAccumulation,
@@ -413,18 +382,16 @@ public class DefaultRenderPipeline : RenderPipeline
                 Camera = camera,
                 Width = (int)css.PixelWidth,
                 Height = (int)css.PixelHeight,
-                CurrentStage = RenderStage.DuringLighting
-            };
-
-            ExecuteImageEffects(lightingContext, effectsByStage[RenderStage.DuringLighting]);
-        }
+                CurrentStage = RenderStage.DuringLighting,
+                CommandBuffer = graphiteCmd
+            }));
 
         // =======================================================
         // 8. Deferred Composition Pass - Combine light accumulation with GBuffer
         Profiler.BeginSection("Pipeline.Compose");
         graphiteCmd?.PushDebugGroup("Stage8_Composition");
         // Create final composition output
-        RenderTexture composedOutput = RenderTexture.GetTemporaryRT((int)camera.PixelWidth, (int)camera.PixelHeight, true, [
+        composedOutput = RenderTexture.GetTemporaryRT((int)camera.PixelWidth, (int)camera.PixelHeight, true, [
             isHDR ? TextureImageFormat.Short4 : TextureImageFormat.Color4b,
             ]);
 
@@ -515,14 +482,13 @@ public class DefaultRenderPipeline : RenderPipeline
         // that may sample it via manually-set textures in Blit(target, mat)
         TransitionToShaderResource(composedOutput);
         graphiteCmd?.PopDebugGroup(); // Stage8_Composition
-        RenderingEvents.InvokeOnCompositionComplete(new CompositionCompleteArgs(composedOutput, gBuffer));
+        RenderingEvents.InvokeOnCompositionComplete(new CompositionCompleteArgs(composedOutput, gBuffer, graphiteCmd));
         Profiler.EndSection(); // Pipeline.Compose
 
         // =======================================================
         // 9. Apply AfterLighting effects (opaque post-processing)
-        if (effectsByStage[RenderStage.AfterLighting].Count > 0)
-        {
-            var afterLightingContext = new RenderContext
+        RenderingEvents.InvokeOnImageEffectsDispatch(new ImageEffectsDispatchArgs(
+            RenderStage.AfterLighting, new RenderContext
             {
                 GBuffer = gBuffer,
                 LightAccumulation = lightAccumulation,
@@ -530,17 +496,15 @@ public class DefaultRenderPipeline : RenderPipeline
                 Camera = camera,
                 Width = (int)css.PixelWidth,
                 Height = (int)css.PixelHeight,
-                CurrentStage = RenderStage.AfterLighting
-            };
-
-            ExecuteImageEffects(afterLightingContext, effectsByStage[RenderStage.AfterLighting]);
-        }
+                CurrentStage = RenderStage.AfterLighting,
+                CommandBuffer = graphiteCmd
+            }));
 
         // =======================================================
         // 10. Transparent geometry (Forward rendered on top of composed result)
         Profiler.BeginSection("Pipeline.Transparents");
         graphiteCmd?.PushDebugGroup("Stage10_Transparents");
-        RenderingEvents.InvokeOnTransparentPassBegin(new TransparentPassArgs(composedOutput));
+        RenderingEvents.InvokeOnTransparentPassBegin(new TransparentPassArgs(composedOutput, graphiteCmd));
 
         // Upload forward lighting globals so transparent shaders can evaluate
         // a single directional light + ambient without reading the GBuffer.
@@ -570,7 +534,6 @@ public class DefaultRenderPipeline : RenderPipeline
 
         // =======================================================
         // 11. Apply PostProcess effects (final post-processing)
-        if (effectsByStage[RenderStage.PostProcess].Count > 0)
         {
             var postProcessContext = new RenderContext
             {
@@ -580,10 +543,12 @@ public class DefaultRenderPipeline : RenderPipeline
                 Camera = camera,
                 Width = (int)css.PixelWidth,
                 Height = (int)css.PixelHeight,
-                CurrentStage = RenderStage.PostProcess
+                CurrentStage = RenderStage.PostProcess,
+                CommandBuffer = graphiteCmd
             };
 
-            ExecuteImageEffects(postProcessContext, effectsByStage[RenderStage.PostProcess]);
+            RenderingEvents.InvokeOnImageEffectsDispatch(new ImageEffectsDispatchArgs(
+                RenderStage.PostProcess, postProcessContext));
 
             // Effects may have replaced the scene color buffer (e.g., HDR to LDR)
             var replacedRTs = postProcessContext.GetReplacedRTs();
@@ -619,8 +584,13 @@ public class DefaultRenderPipeline : RenderPipeline
         graphiteCmd?.PopDebugGroup(); // Stage12_Gizmos
 
         // =======================================================
-        // 13. Blit Result to target, If target is null Blit will go to the Screen/Window
-        graphiteCmd?.PushDebugGroup("Stage13_BlitToTarget");
+        // 13. Camera Render End — fire while the command buffer is still alive
+        // so GPU profiler handlers can insert final timestamp queries.
+        RenderingEvents.InvokeOnCameraRenderEnd(new CameraRenderEndArgs(target == null, graphiteCmd));
+
+        // =======================================================
+        // 14. Blit Result to target, If target is null Blit will go to the Screen/Window
+        graphiteCmd?.PushDebugGroup("Stage14_BlitToTarget");
         if (target == null)
         {
             // Swapchain blit needs a dedicated command buffer because the
@@ -663,20 +633,24 @@ public class DefaultRenderPipeline : RenderPipeline
             }
         }
 
-        graphiteCmd?.PopDebugGroup(); // Stage13_BlitToTarget
+        graphiteCmd?.PopDebugGroup(); // Stage14_BlitToTarget
 
         // =======================================================
-        // 14. Post Render
-        foreach (ImageEffect effect in allEffects)
+        // 15. Post Render
+        foreach (ImageEffect effect in camera.Effects)
             effect.OnPostRender(camera);
 
-        RenderingEvents.InvokeOnCameraRenderEnd(new CameraRenderEndArgs(target == null));
-
-        // =======================================================
-        // 15. Cleanup temporary render textures
-        RenderTexture.ReleaseTemporaryRT(gBuffer);
-        RenderTexture.ReleaseTemporaryRT(lightAccumulation);
-        RenderTexture.ReleaseTemporaryRT(composedOutput);
+        } // end try
+        finally
+        {
+            // =======================================================
+            // 16. Cleanup temporary render textures
+            // Placed in finally so RTs are returned to the pool even when an
+            // exception interrupts the pipeline mid-render.
+            if (gBuffer != null) RenderTexture.ReleaseTemporaryRT(gBuffer);
+            if (lightAccumulation != null) RenderTexture.ReleaseTemporaryRT(lightAccumulation);
+            if (composedOutput != null) RenderTexture.ReleaseTemporaryRT(composedOutput);
+        }
 
         Profiler.EndSection(); // Pipeline.Render
     }
