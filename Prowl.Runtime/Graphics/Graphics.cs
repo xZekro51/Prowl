@@ -76,6 +76,13 @@ public static unsafe class Graphics
     internal static bool SwapchainClearedThisFrame { get; set; }
 
     /// <summary>
+    /// <c>true</c> when the swapchain is in a minimized state (framebuffer 0×0).
+    /// While minimized, GPU rendering should be skipped but game logic (Update,
+    /// FixedUpdate) continues to run.
+    /// </summary>
+    public static bool IsSwapchainMinimized { get; private set; }
+
+    /// <summary>
     /// Injects a pre-configured <see cref="GraphiteDevice"/> instance.
     /// Intended for unit-testing scenarios where the normal initialization flow is bypassed.
     /// </summary>
@@ -352,6 +359,17 @@ public static unsafe class Graphics
         Rendering.PipelineStateCache.InitializeEventSubscriptions();
         Rendering.GraphiteMaterialBinder.InitializeEventSubscriptions();
         Rendering.PipelineCacheManager.InitializeEventSubscriptions();
+        Rendering.GPUProfiler.InitializeEventSubscriptions();
+
+        // Track swapchain minimized state so the render loop can skip GPU work.
+        EventSystem.GraphiteDeviceEvents.SubscribeOnSwapchainMinimized(() =>
+        {
+            IsSwapchainMinimized = true;
+        });
+        EventSystem.GraphiteDeviceEvents.SubscribeOnSwapchainRestored(_ =>
+        {
+            IsSwapchainMinimized = false;
+        });
 
         // Swap render stats at frame begin (before any rendering) so the
         // previous frame's data is available for display.
@@ -361,7 +379,8 @@ public static unsafe class Graphics
             EventSystem.RenderingEvents.InvokeOnRenderStatsReady(new EventSystem.RenderStatsReadyArgs(
                 Rendering.RenderStats.Instance.DrawCalls,
                 Rendering.RenderStats.Instance.Triangles,
-                Rendering.RenderStats.Instance.Vertices));
+                Rendering.RenderStats.Instance.Vertices,
+                Rendering.GPUProfiler.TotalGpuTimeMs));
         }, priority: -90);
     }
 

@@ -115,12 +115,13 @@ public class RenderingEventsExtendedTests : IDisposable
         Track(RenderingEvents.SubscribeOnRenderStatsReady(args => received = args));
 
         RenderingEvents.InvokeOnRenderStatsReady(
-            new RenderStatsReadyArgs(120, 50000, 30000));
+            new RenderStatsReadyArgs(120, 50000, 30000, 8.5f));
 
         Assert.NotNull(received);
         Assert.Equal(120, received!.Value.DrawCalls);
         Assert.Equal(50000, received!.Value.Triangles);
         Assert.Equal(30000, received!.Value.Vertices);
+        Assert.Equal(8.5f, received!.Value.GpuTimeMs);
     }
 
     #endregion

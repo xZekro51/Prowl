@@ -67,7 +67,10 @@ internal unsafe class VKBuffer : Buffer
                 device.EndSingleTimeCommands(cmd);
 
                 if (device.IsUploadBatching)
+                {
                     device.TrackBatchResource(staging);
+                    device.IncrementBatchUploadCounters(span.Length);
+                }
                 else
                     staging.Dispose();
             }

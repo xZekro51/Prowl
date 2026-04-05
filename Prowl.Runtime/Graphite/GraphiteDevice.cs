@@ -363,6 +363,46 @@ public abstract class GraphiteDevice : IDisposable
     /// </summary>
     public virtual void FlushUploadBatch() { }
 
+    /// <summary>
+    /// Number of upload operations staged during the current (or most recent) upload batch.
+    /// Returns 0 on backends that do not track uploads.
+    /// </summary>
+    public virtual int BatchUploadCount => 0;
+
+    /// <summary>
+    /// Total bytes staged for upload during the current (or most recent) upload batch.
+    /// Returns 0 on backends that do not track uploads.
+    /// </summary>
+    public virtual long BatchUploadBytes => 0;
+
+    #endregion
+
+    #region GPU Profiling
+
+    /// <summary>
+    /// Begins a named GPU timer query. Writes a timestamp into the active command buffer.
+    /// Must be paired with a matching <see cref="EndGpuTimerQuery"/> call using the same name.
+    /// No-op on backends that do not support GPU timestamp queries.
+    /// </summary>
+    /// <param name="cmd">The command list currently recording GPU commands.</param>
+    /// <param name="name">A unique name identifying this timing section (e.g. "GBuffer", "Lighting").</param>
+    public virtual void BeginGpuTimerQuery(CommandList cmd, string name) { }
+
+    /// <summary>
+    /// Ends a named GPU timer query. Writes a second timestamp to compute the elapsed duration.
+    /// No-op on backends that do not support GPU timestamp queries.
+    /// </summary>
+    /// <param name="cmd">The command list currently recording GPU commands.</param>
+    /// <param name="name">The name used in the matching <see cref="BeginGpuTimerQuery"/> call.</param>
+    public virtual void EndGpuTimerQuery(CommandList cmd, string name) { }
+
+    /// <summary>
+    /// Returns the GPU timing results from the most recently completed frame.
+    /// Results are read back after the GPU fence is signaled, so they are 1–2 frames behind.
+    /// Returns an empty array on backends that do not support GPU timestamp queries.
+    /// </summary>
+    public virtual GpuTimingResult[] GetGpuTimingResults() => [];
+
     #endregion
 
     #region Legacy Immediate-Mode API
@@ -559,3 +599,8 @@ public abstract class GraphiteDevice : IDisposable
 
     #endregion
 }
+
+/// <summary>
+/// Represents a single GPU timing measurement for a named render pass section.
+/// </summary>
+public readonly record struct GpuTimingResult(string Name, double DurationMs);

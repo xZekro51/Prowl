@@ -269,6 +269,15 @@ public static class Window
         if (_fatalError || !Graphics.IsGraphiteReady)
             return;
 
+        // When the swapchain is minimized (framebuffer 0×0), skip all GPU work.
+        // Game logic (Update/FixedUpdate) continues to run in the main loop.
+        if (Graphics.IsSwapchainMinimized)
+        {
+            // Still call BeginFrame so the Vulkan backend can poll for restore.
+            Graphics.Graphite.BeginFrame();
+            return;
+        }
+
         if (GpuDebug)
         {
             Debug.LogTrace("[Window.OnRender] BeginFrame...");
@@ -327,7 +336,9 @@ public static class Window
         WindowEvents.InvokeOnRender(new WindowRenderArgs((float)delta));
 
         // Flush any remaining batched uploads before post-render work.
-        GraphiteDeviceEvents.InvokeOnUploadWindowClosing(new UploadWindowClosingArgs(0, 0));
+        GraphiteDeviceEvents.InvokeOnUploadWindowClosing(new UploadWindowClosingArgs(
+            Graphics.Graphite.BatchUploadCount,
+            Graphics.Graphite.BatchUploadBytes));
         Graphics.Graphite.FlushUploadBatch();
 
         // If the device was lost during rendering, skip presentation and

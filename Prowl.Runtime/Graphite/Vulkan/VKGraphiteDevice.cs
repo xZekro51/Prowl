@@ -84,6 +84,7 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
     private uint _currentImageIndex;
     private bool _framebufferResized;
     private bool _frameSyncConsumed;
+    private bool _swapchainIsMinimized;
 
     private DeviceCapabilities _capabilities;
     private bool _initialized;
@@ -117,6 +118,18 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
     private bool _isBatching;
     private readonly List<IDisposable> _batchResources = new();
     private VkFence _uploadFence;
+    private int _batchUploadCount;
+    private long _batchUploadBytes;
+
+    // GPU timestamp query infrastructure for profiling
+    private const int MaxTimerQueryPairs = 16;
+    private const int MaxTimerQueries = MaxTimerQueryPairs * 2; // begin + end per pair
+    private Silk.NET.Vulkan.QueryPool[] _timestampQueryPools = [];
+    private float _timestampPeriod; // nanoseconds per timestamp tick
+    private bool _timestampSupported;
+    private int[] _timerQueryCounts = []; // per-frame-slot: how many pairs were recorded
+    private string?[][] _timerQueryNames = []; // per-frame-slot: names of recorded pairs
+    private GpuTimingResult[] _gpuTimingResults = [];
 
     // Per-thread command pools for parallel command recording.
     // Each thread that creates a VKCommandList gets its own VkCommandPool,
@@ -126,6 +139,12 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
 
     /// <summary>Whether upload batching is currently active.</summary>
     internal bool IsUploadBatching => _isBatching;
+
+    /// <inheritdoc />
+    public override int BatchUploadCount => _batchUploadCount;
+
+    /// <inheritdoc />
+    public override long BatchUploadBytes => _batchUploadBytes;
 
     public override string BackendName => "Vulkan 1.3";
     public override GraphicsBackendType BackendType => GraphicsBackendType.Vulkan;
@@ -203,6 +222,9 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
         // Create a reusable fence for upload operations
         var uploadFenceInfo = new FenceCreateInfo { SType = StructureType.FenceCreateInfo };
         Check(Vk.CreateFence(Device, &uploadFenceInfo, null, out _uploadFence));
+
+        // Create per-frame timestamp query pools for GPU profiling
+        CreateTimestampQueryPools();
 
         _capabilities = QueryCapabilities();
         _initialized = true;
@@ -1070,7 +1092,11 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
             EndSingleTimeCommands(cmd);
 
             if (_isBatching)
+            {
                 TrackBatchResource(staging);
+                _batchUploadCount++;
+                _batchUploadBytes += dataSize;
+            }
             else
                 staging.Dispose();
         }
@@ -1120,7 +1146,11 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
         EndSingleTimeCommands(cmd);
 
         if (_isBatching)
+        {
             TrackBatchResource(staging);
+            _batchUploadCount++;
+            _batchUploadBytes += dataSize;
+        }
         else
             staging.Dispose();
     }
@@ -1267,6 +1297,32 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
         if (_khrSwapchain == null)
             return true;
 
+        // If the swapchain was deferred due to minimize, poll framebuffer size.
+        // Return false (skip frame) if still minimized; recreate when restored.
+        if (_swapchainIsMinimized)
+        {
+            var fbSize = Window.InternalWindow.FramebufferSize;
+            if (fbSize.X == 0 || fbSize.Y == 0)
+                return false; // Still minimized — skip frame without blocking
+
+            // Window has been restored — recreate swapchain now
+            _swapchainIsMinimized = false;
+
+            GraphiteDeviceEvents.InvokeOnSwapchainRestored(new SwapchainRestoredArgs(
+                (uint)fbSize.X, (uint)fbSize.Y));
+
+            uint oldWidth = _swapchainExtent.Width;
+            uint oldHeight = _swapchainExtent.Height;
+
+            Vk.DeviceWaitIdle(Device);
+            CreateSwapchain((uint)fbSize.X, (uint)fbSize.Y);
+
+            GraphiteDeviceEvents.InvokeOnSwapchainRecreated(new SwapchainRecreatedArgs(
+                oldWidth, oldHeight, (uint)fbSize.X, (uint)fbSize.Y));
+
+            return false; // Frame was used for recreation — caller should retry next frame
+        }
+
         // Wait for this frame's fence to be signaled (previous use of this frame slot)
         var fence = _inFlightFences[_currentFrame];
         var waitResult = Vk.WaitForFences(Device, 1, &fence, true, ulong.MaxValue);
@@ -1284,6 +1340,9 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
         // Now that the fence is signaled, all GPU work from the previous use of this
         // frame slot has finished — destroy any retired framebuffers / command buffers.
         FlushRetiredResources(_currentFrame);
+
+        // Read GPU timestamp results from this frame slot (now complete) and reset for reuse
+        ReadAndResetTimestampQueries();
 
         // Reset per-frame sub-systems for this frame slot
         DescriptorPoolManager.BeginFrame(_currentFrame);
@@ -1408,21 +1467,14 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
     {
         var fbSize = Window.InternalWindow.FramebufferSize;
 
-        // Fire minimized event if the window extent is zero
+        // If the window is minimized (framebuffer 0×0), defer recreation to
+        // the next BeginFrame call instead of blocking with Thread.Sleep.
         if (fbSize.X == 0 || fbSize.Y == 0)
-            GraphiteDeviceEvents.InvokeOnSwapchainMinimized();
-
-        while (fbSize.X == 0 || fbSize.Y == 0)
         {
-            // Window is minimised — sleep to avoid burning CPU, then poll for restore.
-            System.Threading.Thread.Sleep(100);
-            Window.InternalWindow.DoEvents();
-            fbSize = Window.InternalWindow.FramebufferSize;
+            _swapchainIsMinimized = true;
+            GraphiteDeviceEvents.InvokeOnSwapchainMinimized();
+            return;
         }
-
-        // Window has been restored from minimized state
-        GraphiteDeviceEvents.InvokeOnSwapchainRestored(new SwapchainRestoredArgs(
-            (uint)fbSize.X, (uint)fbSize.Y));
 
         uint oldWidth = _swapchainExtent.Width;
         uint oldHeight = _swapchainExtent.Height;
@@ -1521,6 +1573,139 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
     }
 
     /// <summary>
+    /// Increments batch upload counters from external upload sites (e.g. <see cref="VKBuffer"/> constructor).
+    /// </summary>
+    internal void IncrementBatchUploadCounters(long bytes)
+    {
+        _batchUploadCount++;
+        _batchUploadBytes += bytes;
+    }
+
+    #region GPU Timestamp Profiling
+
+    private void CreateTimestampQueryPools()
+    {
+        Vk.GetPhysicalDeviceProperties(PhysicalDevice, out var props);
+        _timestampPeriod = props.Limits.TimestampPeriod;
+        _timestampSupported = _timestampPeriod > 0 && props.Limits.TimestampComputeAndGraphics;
+
+        if (!_timestampSupported)
+        {
+            Debug.Log("[Vulkan] GPU timestamp queries not supported — GPU profiling disabled.");
+            return;
+        }
+
+        _timestampQueryPools = new Silk.NET.Vulkan.QueryPool[MaxFramesInFlight];
+        _timerQueryCounts = new int[MaxFramesInFlight];
+        _timerQueryNames = new string?[MaxFramesInFlight][];
+
+        for (int i = 0; i < MaxFramesInFlight; i++)
+        {
+            var poolInfo = new QueryPoolCreateInfo
+            {
+                SType = StructureType.QueryPoolCreateInfo,
+                QueryType = QueryType.Timestamp,
+                QueryCount = MaxTimerQueries,
+            };
+            Check(Vk.CreateQueryPool(Device, &poolInfo, null, out _timestampQueryPools[i]));
+            Vk.ResetQueryPool(Device, _timestampQueryPools[i], 0, MaxTimerQueries);
+            _timerQueryNames[i] = new string?[MaxTimerQueryPairs];
+        }
+
+        Debug.Log($"[Vulkan] GPU timestamp query pools created (period={_timestampPeriod}ns, {MaxTimerQueryPairs} pairs/frame).");
+    }
+
+    /// <summary>
+    /// Reads timestamp query results from the current frame slot (whose fence was just signaled)
+    /// and resets the query pool for reuse.
+    /// </summary>
+    private void ReadAndResetTimestampQueries()
+    {
+        if (!_timestampSupported)
+            return;
+
+        int count = _timerQueryCounts[_currentFrame];
+        if (count == 0)
+        {
+            _gpuTimingResults = [];
+            return;
+        }
+
+        uint queryCount = (uint)(count * 2);
+        ulong* timestamps = stackalloc ulong[(int)queryCount];
+
+        Result result = Vk.GetQueryPoolResults(
+            Device, _timestampQueryPools[_currentFrame],
+            0, queryCount,
+            (nuint)(queryCount * sizeof(ulong)), timestamps,
+            (ulong)sizeof(ulong), QueryResultFlags.Result64Bit);
+
+        if (result != Result.Success)
+        {
+            _gpuTimingResults = [];
+        }
+        else
+        {
+            GpuTimingResult[] results = new GpuTimingResult[count];
+            for (int i = 0; i < count; i++)
+            {
+                string name = _timerQueryNames[_currentFrame][i] ?? "Unknown";
+                ulong begin = timestamps[i * 2];
+                ulong end = timestamps[i * 2 + 1];
+                double durationNs = (end - begin) * _timestampPeriod;
+                results[i] = new GpuTimingResult(name, durationNs / 1_000_000.0);
+            }
+            _gpuTimingResults = results;
+        }
+
+        // Reset for next use of this frame slot
+        Vk.ResetQueryPool(Device, _timestampQueryPools[_currentFrame], 0, MaxTimerQueries);
+        _timerQueryCounts[_currentFrame] = 0;
+        Array.Clear(_timerQueryNames[_currentFrame]);
+    }
+
+    /// <inheritdoc />
+    public override void BeginGpuTimerQuery(CommandList cmd, string name)
+    {
+        if (!_timestampSupported || cmd is not VKCommandList vkCmd)
+            return;
+
+        int pairIdx = _timerQueryCounts[_currentFrame];
+        if (pairIdx >= MaxTimerQueryPairs)
+            return; // All query slots exhausted this frame
+
+        _timerQueryNames[_currentFrame][pairIdx] = name;
+        _timerQueryCounts[_currentFrame] = pairIdx + 1;
+
+        Vk.CmdWriteTimestamp(vkCmd.Handle, PipelineStageFlags.AllCommandsBit,
+            _timestampQueryPools[_currentFrame], (uint)(pairIdx * 2));
+    }
+
+    /// <inheritdoc />
+    public override void EndGpuTimerQuery(CommandList cmd, string name)
+    {
+        if (!_timestampSupported || cmd is not VKCommandList vkCmd)
+            return;
+
+        // Find the matching pair by name (search from most recent)
+        int count = _timerQueryCounts[_currentFrame];
+        for (int i = count - 1; i >= 0; i--)
+        {
+            if (string.Equals(_timerQueryNames[_currentFrame][i], name, StringComparison.Ordinal))
+            {
+                Vk.CmdWriteTimestamp(vkCmd.Handle, PipelineStageFlags.AllCommandsBit,
+                    _timestampQueryPools[_currentFrame], (uint)(i * 2 + 1));
+                return;
+            }
+        }
+    }
+
+    /// <inheritdoc />
+    public override GpuTimingResult[] GetGpuTimingResults() => _gpuTimingResults;
+
+    #endregion
+
+    /// <summary>
     /// Begins batching upload operations into a single command buffer.
     /// All subsequent <see cref="BeginSingleTimeCommands"/>/<see cref="EndSingleTimeCommands"/>
     /// calls will record into the shared batch buffer. Call <see cref="FlushUploadBatch"/>
@@ -1530,6 +1715,8 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
     {
         if (_isBatching || IsDeviceLost) return;
         _isBatching = true;
+        _batchUploadCount = 0;
+        _batchUploadBytes = 0;
 
         var allocInfo = new CommandBufferAllocateInfo
         {
@@ -2071,6 +2258,16 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
 
         if (hasDevice && _uploadFence.Handle != 0)
             Vk.DestroyFence(Device, _uploadFence, null);
+
+        // Destroy timestamp query pools
+        if (hasDevice && _timestampQueryPools.Length > 0)
+        {
+            for (int i = 0; i < _timestampQueryPools.Length; i++)
+            {
+                if (_timestampQueryPools[i].Handle != 0)
+                    Vk.DestroyQueryPool(Device, _timestampQueryPools[i], null);
+            }
+        }
 
         // Destroy sync objects
         if (hasDevice)

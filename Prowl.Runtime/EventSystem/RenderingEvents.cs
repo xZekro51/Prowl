@@ -106,7 +106,7 @@ public readonly record struct TransparentPassArgs(RenderTexture ComposedOutput);
 public readonly record struct CompositionCompleteArgs(RenderTexture FinalOutput, RenderTexture GBuffer);
 
 /// <summary>Arguments for render stats ready event.</summary>
-public readonly record struct RenderStatsReadyArgs(int DrawCalls, int Triangles, int Vertices);
+public readonly record struct RenderStatsReadyArgs(int DrawCalls, int Triangles, int Vertices, float GpuTimeMs);
 
 /// <summary>Arguments for GI pass begin event.</summary>
 public readonly record struct GIPassBeginArgs(
