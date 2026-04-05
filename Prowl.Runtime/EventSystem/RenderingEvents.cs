@@ -1,6 +1,10 @@
 // This file is part of the Prowl Game Engine
 // Licensed under the MIT License. See the LICENSE file in the project root for details.
 
+using System.Collections.Generic;
+
+using Prowl.Runtime.Rendering;
+using Prowl.Runtime.Rendering.GI;
 using Prowl.Runtime.Resources;
 
 namespace Prowl.Runtime.EventSystem;
@@ -71,13 +75,21 @@ public static partial class RenderingEvents
 
     // \u2500\u2500 GI system events \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 
-    /// <summary>Raised when the GI pass begins (before voxelization/SDF update).</summary>
+    /// <summary>Raised when the GI data update pass begins (voxelization/SDF update).</summary>
     [EventArgs(typeof(GIPassBeginArgs))]
     private static readonly EventKey _OnGIPassBegin = new();
 
-    /// <summary>Raised when the GI pass ends (after all GI work completes).</summary>
+    /// <summary>Raised when the GI data update pass ends.</summary>
     [EventArgs(typeof(GIPassEndArgs))]
     private static readonly EventKey _OnGIPassEnd = new();
+
+    /// <summary>Raised during lighting for GI trace (cone trace / probe lookup).</summary>
+    [EventArgs(typeof(GITracePassArgs))]
+    private static readonly EventKey _OnGITracePass = new();
+
+    /// <summary>Raised after GI trace for debug visualization overlay.</summary>
+    [EventArgs(typeof(GIDebugVisualizeArgs))]
+    private static readonly EventKey _OnGIDebugVisualize = new();
 }
 
 /// <summary>
@@ -108,11 +120,33 @@ public readonly record struct CompositionCompleteArgs(RenderTexture FinalOutput,
 /// <summary>Arguments for render stats ready event.</summary>
 public readonly record struct RenderStatsReadyArgs(int DrawCalls, int Triangles, int Vertices, float GpuTimeMs);
 
-/// <summary>Arguments for GI pass begin event.</summary>
+/// <summary>Arguments for the GI data update pass begin event.</summary>
 public readonly record struct GIPassBeginArgs(
     Runtime.Resources.Scene.GlobalIlluminationParams.GIMode Mode,
-    float GIIntensity);
+    float GIIntensity,
+    Runtime.Resources.Scene.GlobalIlluminationParams GIParams,
+    IReadOnlyList<IRenderable> Renderables,
+    HashSet<int> CulledRenderableIndices,
+    RenderPipeline.CameraSnapshot CameraSnapshot,
+    IReadOnlyList<IRenderableLight> Lights);
 
-/// <summary>Arguments for GI pass end event.</summary>
+/// <summary>Arguments for the GI data update pass end event.</summary>
 public readonly record struct GIPassEndArgs(
     Runtime.Resources.Scene.GlobalIlluminationParams.GIMode Mode);
+
+/// <summary>Arguments for the GI trace pass (cone trace / probe lookup during lighting).</summary>
+public readonly record struct GITracePassArgs(
+    Runtime.Resources.Scene.GlobalIlluminationParams.GIMode Mode,
+    float GIIntensity,
+    int ConeCount,
+    RenderTexture GBuffer,
+    RenderTexture LightAccumulation,
+    RenderPipeline.CameraSnapshot CameraSnapshot);
+
+/// <summary>Arguments for GI debug visualization overlay.</summary>
+public readonly record struct GIDebugVisualizeArgs(
+    Runtime.Resources.Scene.GlobalIlluminationParams.GIMode Mode,
+    GIDebugMode DebugMode,
+    RenderTexture GBuffer,
+    RenderTexture LightAccumulation,
+    RenderPipeline.CameraSnapshot CameraSnapshot);

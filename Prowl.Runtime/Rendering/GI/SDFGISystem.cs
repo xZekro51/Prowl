@@ -18,9 +18,9 @@ namespace Prowl.Runtime.Rendering.GI;
 /// <summary>
 /// Manages the Signed Distance Field Global Illumination pipeline.
 /// Uses multi-cascade SDFs and irradiance probes for indirect lighting.
-/// Lifecycle: created by DefaultRenderPipeline, updated per-frame, disposed with pipeline.
+/// Implements <see cref="IGISystem"/> for event-driven dispatch via <see cref="GISystemManager"/>.
 /// </summary>
-public sealed class SDFGISystem : IDisposable
+public sealed class SDFGISystem : IGISystem
 {
     private struct SDFCascade
     {
@@ -49,12 +49,19 @@ public sealed class SDFGISystem : IDisposable
 
     private bool _disposed;
 
+    // Debug visualization materials
+    private Material? _debugSDFSliceMat;
+    private Material? _debugProbeGridMat;
+
     /// <summary>
     /// Indicates whether the GI system has produced valid indirect lighting data.
     /// This remains false until compute dispatch is fully integrated and probe textures
     /// are actually populated. Used by the pipeline to decide whether to suppress ambient.
     /// </summary>
     public bool HasValidData { get; private set; }
+
+    /// <inheritdoc />
+    public Scene.GlobalIlluminationParams.GIMode SupportedMode => Scene.GlobalIlluminationParams.GIMode.SDFGI;
 
     // Public accessors for debug visualization
     public int CascadeCount => _cascadeCount;
@@ -435,6 +442,96 @@ public sealed class SDFGISystem : IDisposable
         }
     }
 
+    #region IGISystem Implementation
+
+    /// <inheritdoc />
+    void IGISystem.EnsureResources(Scene.GlobalIlluminationParams giParams)
+    {
+        EnsureResources(giParams.SDFCascadeCount, giParams.Distance,
+            giParams.SDFCascadeScale, giParams.SDFProbeResolution);
+    }
+
+    /// <inheritdoc />
+    void IGISystem.UpdateData(GIDataUpdateContext context)
+    {
+        UpdateGlobalSDF(context.Renderables, context.CameraSnapshot);
+        UpdateProbes(context.Lights, context.CameraSnapshot);
+    }
+
+    /// <inheritdoc />
+    void IGISystem.Trace(GITraceContext context)
+    {
+        TraceGI(context.GBuffer, context.LightAccumulation, context.CameraSnapshot,
+            context.GIIntensity);
+    }
+
+    /// <inheritdoc />
+    public void RenderDebugVisualization(GIDebugMode debugMode, RenderTexture gBuffer,
+        RenderTexture lightAccumulation, RenderPipeline.CameraSnapshot css)
+    {
+        if (debugMode == GIDebugMode.SDFSlice)
+            RenderDebugSDFSlice(gBuffer, lightAccumulation, css);
+        else if (debugMode == GIDebugMode.ProbeGrid)
+            RenderDebugProbeGrid(gBuffer, lightAccumulation, css);
+    }
+
+    private void RenderDebugSDFSlice(RenderTexture gBuffer, RenderTexture lightAccumulation,
+        RenderPipeline.CameraSnapshot css)
+    {
+        _debugSDFSliceMat ??= new Material(Shader.LoadDefault(DefaultShader.GI_DebugSDFSlice));
+
+        Graphite.Texture? sdfTex = GetCascadeSDFTexture(0);
+        if (sdfTex == null)
+            return;
+
+        _debugSDFSliceMat.SetRawGraphiteTexture("_SDFCascade0", sdfTex);
+        _debugSDFSliceMat.SetVector("_CascadeCenter0", GetCascadeCenter(0));
+        _debugSDFSliceMat.SetFloat("_CascadeSize0", GetCascadeSize(0));
+
+        // Compute slice Y: map camera Y into [0,1] within cascade
+        Float3 cascadeCenter = GetCascadeCenter(0);
+        float cascadeSize = GetCascadeSize(0);
+        float sliceY = (css.CameraPosition.Y - cascadeCenter.Y) / (cascadeSize * 2.0f) + 0.5f;
+        sliceY = Math.Clamp(sliceY, 0.0f, 1.0f);
+        _debugSDFSliceMat.SetFloat("_SliceY", sliceY);
+
+        TransitionComputeTextureForSampling(sdfTex);
+
+        RenderPipeline.Blit(gBuffer, lightAccumulation, _debugSDFSliceMat, 0, false, false);
+    }
+
+    private void RenderDebugProbeGrid(RenderTexture gBuffer, RenderTexture lightAccumulation,
+        RenderPipeline.CameraSnapshot css)
+    {
+        _debugProbeGridMat ??= new Material(Shader.LoadDefault(DefaultShader.GI_DebugProbeGrid));
+
+        Graphite.Texture? probeTex = GetCascadeProbeTexture(0);
+        if (probeTex == null)
+            return;
+
+        _debugProbeGridMat.SetRawGraphiteTexture("_ProbeIrradiance0", probeTex);
+        _debugProbeGridMat.SetTexture("_CameraDepthTexture", gBuffer.InternalDepth);
+        _debugProbeGridMat.SetVector("_CascadeCenter0", GetCascadeCenter(0));
+        _debugProbeGridMat.SetFloat("_CascadeSize0", GetCascadeSize(0));
+        _debugProbeGridMat.SetInt("_ProbeResolution", _probeResolution);
+
+        TransitionComputeTextureForSampling(probeTex);
+
+        RenderPipeline.Blit(gBuffer, lightAccumulation, _debugProbeGridMat, 0, false, false);
+    }
+
+    private static void TransitionComputeTextureForSampling(Graphite.Texture texture)
+    {
+        Rendering.RenderCommandBuffer? cb = Graphics.ActiveGraphiteCmdBuffer;
+        if (cb != null && !cb.InRenderPass)
+        {
+            cb.ResourceBarrier(new ResourceBarrier(
+                texture, ResourceState.UnorderedAccess, ResourceState.ShaderResource));
+        }
+    }
+
+    #endregion
+
     private void DisposeCascades()
     {
         if (_cascades == null)
@@ -478,5 +575,11 @@ public sealed class SDFGISystem : IDisposable
 
         _probeTraceMat?.Dispose();
         _probeTraceMat = null;
+
+        _debugSDFSliceMat?.Dispose();
+        _debugSDFSliceMat = null;
+
+        _debugProbeGridMat?.Dispose();
+        _debugProbeGridMat = null;
     }
 }

@@ -360,6 +360,7 @@ public static unsafe class Graphics
         Rendering.GraphiteMaterialBinder.InitializeEventSubscriptions();
         Rendering.PipelineCacheManager.InitializeEventSubscriptions();
         Rendering.GPUProfiler.InitializeEventSubscriptions();
+        Rendering.GI.GISystemManager.InitializeEventSubscriptions();
 
         // Track swapchain minimized state so the render loop can skip GPU work.
         EventSystem.GraphiteDeviceEvents.SubscribeOnSwapchainMinimized(() =>

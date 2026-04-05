@@ -62,16 +62,6 @@ public class DefaultRenderPipeline : RenderPipeline
     private Material _gizmo;
     private Material _deferredCompose;
 
-    // Global Illumination systems
-    private VoxelGISystem? _voxelGI;
-    private SDFGISystem? _sdfGI;
-    private GITemporalFilter? _giTemporalFilter;
-
-    // GI Debug Visualization materials
-    private Material? _debugVoxelGridMat;
-    private Material? _debugSDFSliceMat;
-    private Material? _debugProbeGridMat;
-
     // Graphite resources for swapchain blit
     private Graphite.Sampler? _graphiteBlitSampler;
     private Graphite.BindGroupLayout? _graphiteBlitTexBGL;
@@ -283,44 +273,12 @@ public class DefaultRenderPipeline : RenderPipeline
         Scene.GlobalIlluminationParams giParams = css.Scene.GlobalIllumination;
         (Scene.GlobalIlluminationParams.GIMode giMode, float giIntensity) = GIUtils.ResolveGISettings(css.Scene, lights);
 
-        RenderingEvents.InvokeOnGIPassBegin(new GIPassBeginArgs(giMode, giIntensity));
+        RenderingEvents.InvokeOnGIPassBegin(new GIPassBeginArgs(
+            giMode, giIntensity, giParams, renderables, culledRenderableIndices, css, lights));
 
-        if (giMode == Scene.GlobalIlluminationParams.GIMode.VoxelGI)
-        {
-            _voxelGI ??= new VoxelGISystem();
-            _voxelGI.EnsureResources(giParams.VoxelResolution, giParams.Distance);
-            _voxelGI.Voxelize(renderables, culledRenderableIndices, this, css);
+        // Re-assign camera matrices after GI data update (voxelization may modify them)
+        AssignCameraMatrices(css.View, css.Projection);
 
-            // Find primary directional light for direct light injection
-            DirectionalLight? primaryDirLight = null;
-            foreach (IRenderableLight light in lights)
-            {
-                if (light is DirectionalLight dl) { primaryDirLight = dl; break; }
-            }
-            if (primaryDirLight != null)
-                _voxelGI.InjectDirectLight(primaryDirLight, css);
-
-            _voxelGI.GenerateMipmaps();
-
-            RenderingEvents.InvokeOnGIDataUpdated(new GIUpdateArgs(
-                Scene.GlobalIlluminationParams.GIMode.VoxelGI, 0f));
-
-            // Re-assign camera matrices after voxelization modified them
-            AssignCameraMatrices(css.View, css.Projection);
-        }
-        else if (giMode == Scene.GlobalIlluminationParams.GIMode.SDFGI)
-        {
-            _sdfGI ??= new SDFGISystem();
-            _sdfGI.EnsureResources(giParams.SDFCascadeCount, giParams.Distance,
-                                    giParams.SDFCascadeScale, giParams.SDFProbeResolution);
-            _sdfGI.UpdateGlobalSDF(renderables, css);
-            _sdfGI.UpdateProbes(lights, css);
-
-            RenderingEvents.InvokeOnGIDataUpdated(new GIUpdateArgs(
-                Scene.GlobalIlluminationParams.GIMode.SDFGI, 0f));
-            RenderingEvents.InvokeOnGIProbesUpdated(new GIUpdateArgs(
-                Scene.GlobalIlluminationParams.GIMode.SDFGI, 0f));
-        }
         RenderingEvents.InvokeOnGIPassEnd(new GIPassEndArgs(giMode));
         graphiteCmd?.PopDebugGroup(); // Stage5.2_GlobalIllumination
 
@@ -429,40 +387,18 @@ public class DefaultRenderPipeline : RenderPipeline
         Profiler.EndSection(); // Pipeline.Lighting
 
         // 7.1 Global Illumination: cone trace (VoxelGI) or probe lookup (SDFGI) into light accumulation
+        // 7.2 Temporal filtering is applied by GISystemManager via OnGITracePass subscriber
         graphiteCmd?.PushDebugGroup("Stage7.1_GIConeTrace");
-        if (giMode == Scene.GlobalIlluminationParams.GIMode.VoxelGI && _voxelGI != null)
-        {
-            _voxelGI.ConeTrace(gBuffer, lightAccumulation, css, giIntensity, giParams.ConeCount);
-        }
-        else if (giMode == Scene.GlobalIlluminationParams.GIMode.SDFGI && _sdfGI != null)
-        {
-            _sdfGI.TraceGI(gBuffer, lightAccumulation, css, giIntensity);
-        }
+        RenderingEvents.InvokeOnGITracePass(new GITracePassArgs(
+            giMode, giIntensity, giParams.ConeCount, gBuffer, lightAccumulation, css));
         graphiteCmd?.PopDebugGroup(); // Stage7.1_GIConeTrace
-
-        // 7.2 Apply temporal filtering to GI result to reduce noise
-        if (giMode != Scene.GlobalIlluminationParams.GIMode.None)
-        {
-            _giTemporalFilter ??= new GITemporalFilter();
-            _giTemporalFilter.Apply(lightAccumulation, gBuffer, css);
-        }
 
         // 7.3 GI Debug Visualization — override output if debug mode is active
         GIDebugMode debugMode = GIDebugView.ActiveMode;
-        if (debugMode == GIDebugMode.VoxelGrid && _voxelGI != null &&
-            giMode == Scene.GlobalIlluminationParams.GIMode.VoxelGI)
+        if (debugMode != GIDebugMode.None)
         {
-            RenderGIDebugVoxelGrid(gBuffer, lightAccumulation, css);
-        }
-        else if (debugMode == GIDebugMode.SDFSlice && _sdfGI != null &&
-                 giMode == Scene.GlobalIlluminationParams.GIMode.SDFGI)
-        {
-            RenderGIDebugSDFSlice(gBuffer, lightAccumulation, css);
-        }
-        else if (debugMode == GIDebugMode.ProbeGrid && _sdfGI != null &&
-                 giMode == Scene.GlobalIlluminationParams.GIMode.SDFGI)
-        {
-            RenderGIDebugProbeGrid(gBuffer, lightAccumulation, css);
+            RenderingEvents.InvokeOnGIDebugVisualize(new GIDebugVisualizeArgs(
+                giMode, debugMode, gBuffer, lightAccumulation, css));
         }
 
         // =======================================================
@@ -531,8 +467,7 @@ public class DefaultRenderPipeline : RenderPipeline
 
         // Set GI active flag for composition shader — only suppress ambient
         // when the GI system has actually produced valid indirect lighting data.
-        bool giHasData = (giMode == Scene.GlobalIlluminationParams.GIMode.VoxelGI && _voxelGI?.HasValidData == true)
-                      || (giMode == Scene.GlobalIlluminationParams.GIMode.SDFGI && _sdfGI?.HasValidData == true);
+        bool giHasData = GISystemManager.HasValidData(giMode);
         _deferredCompose.SetFloat("_GIActive", giHasData ? 1.0f : 0.0f);
 
         // Begin Graphite render pass for composition
@@ -1084,87 +1019,6 @@ public class DefaultRenderPipeline : RenderPipeline
         //}
     }
 
-    #region GI Debug Visualization
-
-    private void RenderGIDebugVoxelGrid(RenderTexture gBuffer, RenderTexture lightAccumulation, CameraSnapshot css)
-    {
-        _debugVoxelGridMat ??= new Material(Shader.LoadDefault(DefaultShader.GI_DebugVoxelGrid));
-
-        Graphite.Texture? radianceTex = _voxelGI!.RadianceTexture;
-        if (radianceTex == null)
-            return;
-
-        _debugVoxelGridMat.SetRawGraphiteTexture("_VoxelRadiance", radianceTex);
-        _debugVoxelGridMat.SetTexture("_CameraDepthTexture", gBuffer.InternalDepth);
-        _debugVoxelGridMat.SetVector("_VoxelGridCenter", css.CameraPosition);
-        _debugVoxelGridMat.SetFloat("_VoxelGridSize", _voxelGI.WorldSize);
-        _debugVoxelGridMat.SetInt("_VoxelResolution", _voxelGI.Resolution);
-
-        // Vulkan: transition radiance texture to ShaderResource before sampling
-        TransitionComputeTextureForSampling(radianceTex);
-
-        Blit(gBuffer, lightAccumulation, _debugVoxelGridMat, 0, false, false);
-    }
-
-    private void RenderGIDebugSDFSlice(RenderTexture gBuffer, RenderTexture lightAccumulation, CameraSnapshot css)
-    {
-        _debugSDFSliceMat ??= new Material(Shader.LoadDefault(DefaultShader.GI_DebugSDFSlice));
-
-        Graphite.Texture? sdfTex = _sdfGI!.GetCascadeSDFTexture(0);
-        if (sdfTex == null)
-            return;
-
-        _debugSDFSliceMat.SetRawGraphiteTexture("_SDFCascade0", sdfTex);
-        _debugSDFSliceMat.SetVector("_CascadeCenter0", _sdfGI.GetCascadeCenter(0));
-        _debugSDFSliceMat.SetFloat("_CascadeSize0", _sdfGI.GetCascadeSize(0));
-
-        // Compute slice Y: map camera Y into [0,1] within cascade
-        Float3 cascadeCenter = _sdfGI.GetCascadeCenter(0);
-        float cascadeSize = _sdfGI.GetCascadeSize(0);
-        float sliceY = (css.CameraPosition.Y - cascadeCenter.Y) / (cascadeSize * 2.0f) + 0.5f;
-        sliceY = Math.Clamp(sliceY, 0.0f, 1.0f);
-        _debugSDFSliceMat.SetFloat("_SliceY", sliceY);
-
-        // Vulkan: transition SDF texture to ShaderResource
-        TransitionComputeTextureForSampling(sdfTex);
-
-        Blit(gBuffer, lightAccumulation, _debugSDFSliceMat, 0, false, false);
-    }
-
-    private void RenderGIDebugProbeGrid(RenderTexture gBuffer, RenderTexture lightAccumulation, CameraSnapshot css)
-    {
-        _debugProbeGridMat ??= new Material(Shader.LoadDefault(DefaultShader.GI_DebugProbeGrid));
-
-        Graphite.Texture? probeTex = _sdfGI!.GetCascadeProbeTexture(0);
-        if (probeTex == null)
-            return;
-
-        _debugProbeGridMat.SetRawGraphiteTexture("_ProbeIrradiance0", probeTex);
-        _debugProbeGridMat.SetTexture("_CameraDepthTexture", gBuffer.InternalDepth);
-        _debugProbeGridMat.SetVector("_CascadeCenter0", _sdfGI.GetCascadeCenter(0));
-        _debugProbeGridMat.SetFloat("_CascadeSize0", _sdfGI.GetCascadeSize(0));
-        _debugProbeGridMat.SetInt("_ProbeResolution", _sdfGI.ProbeResolution);
-
-        // Vulkan: transition probe texture to ShaderResource
-        TransitionComputeTextureForSampling(probeTex);
-
-        Blit(gBuffer, lightAccumulation, _debugProbeGridMat, 0, false, false);
-    }
-
-    /// <summary>
-    /// Transitions a compute-written texture to ShaderResource for fragment shader sampling.
-    /// Only issues the barrier if outside an active render pass.
-    /// </summary>
-    private static void TransitionComputeTextureForSampling(Graphite.Texture texture)
-    {
-        RenderCommandBuffer? cb = Graphics.ActiveGraphiteCmdBuffer;
-        if (cb != null && !cb.InRenderPass)
-        {
-            cb.ResourceBarrier(new Graphite.ResourceBarrier(
-                texture, Graphite.ResourceState.UnorderedAccess, Graphite.ResourceState.ShaderResource));
-        }
-    }
-
     #endregion
 
     public override void OnDispose()
@@ -1172,23 +1026,8 @@ public class DefaultRenderPipeline : RenderPipeline
         _swapchainSub?.Dispose();
         _swapchainSub = null;
 
-        _voxelGI?.Dispose();
-        _voxelGI = null;
-
-        _sdfGI?.Dispose();
-        _sdfGI = null;
-
-        _giTemporalFilter?.Dispose();
-        _giTemporalFilter = null;
-
-        _debugVoxelGridMat?.Dispose();
-        _debugSDFSliceMat?.Dispose();
-        _debugProbeGridMat?.Dispose();
-
         _graphiteBlitSampler?.Dispose();
         _graphiteBlitTexBGL?.Dispose();
         _graphiteBlitBindGroup?.Dispose();
     }
-
-    #endregion
 }

@@ -17,9 +17,9 @@ namespace Prowl.Runtime.Rendering.GI;
 
 /// <summary>
 /// Manages the Voxel Cone Tracing GI pipeline.
-/// Lifecycle: created by DefaultRenderPipeline, updated per-frame, disposed with pipeline.
+/// Implements <see cref="IGISystem"/> for event-driven dispatch via <see cref="GISystemManager"/>.
 /// </summary>
-public sealed class VoxelGISystem : IDisposable
+public sealed class VoxelGISystem : IGISystem
 {
     // 3D volume textures
     private Texture3DRT? _voxelRadiance;   // RGBA16F — RGB = radiance, A = opacity
@@ -39,12 +39,18 @@ public sealed class VoxelGISystem : IDisposable
 
     private bool _disposed;
 
+    // Debug visualization material
+    private Material? _debugVoxelGridMat;
+
     /// <summary>
     /// Indicates whether the GI system has produced valid indirect lighting data.
     /// This remains false until compute dispatch is fully integrated and textures
     /// are actually populated. Used by the pipeline to decide whether to suppress ambient.
     /// </summary>
     public bool HasValidData { get; private set; }
+
+    /// <inheritdoc />
+    public Scene.GlobalIlluminationParams.GIMode SupportedMode => Scene.GlobalIlluminationParams.GIMode.VoxelGI;
 
     // Public accessors for debug visualization
     public Graphite.Texture? RadianceTexture => _voxelRadiance?.GraphiteTexture;
@@ -139,7 +145,6 @@ public sealed class VoxelGISystem : IDisposable
     public void Voxelize(
         IReadOnlyList<IRenderable> renderables,
         HashSet<int> culledIndices,
-        RenderPipeline pipeline,
         RenderPipeline.CameraSnapshot css)
     {
         if (_voxelRadiance.IsNotValid() ||
@@ -350,6 +355,75 @@ public sealed class VoxelGISystem : IDisposable
         }
     }
 
+    #region IGISystem Implementation
+
+    /// <inheritdoc />
+    void IGISystem.EnsureResources(Scene.GlobalIlluminationParams giParams)
+    {
+        EnsureResources(giParams.VoxelResolution, giParams.Distance);
+    }
+
+    /// <inheritdoc />
+    void IGISystem.UpdateData(GIDataUpdateContext context)
+    {
+        Voxelize(context.Renderables, context.CulledRenderableIndices, context.CameraSnapshot);
+
+        // Find primary directional light for direct light injection
+        DirectionalLight? primaryDirLight = null;
+        foreach (IRenderableLight light in context.Lights)
+        {
+            if (light is DirectionalLight dl) { primaryDirLight = dl; break; }
+        }
+        if (primaryDirLight != null)
+            InjectDirectLight(primaryDirLight, context.CameraSnapshot);
+
+        GenerateMipmaps();
+    }
+
+    /// <inheritdoc />
+    void IGISystem.Trace(GITraceContext context)
+    {
+        ConeTrace(context.GBuffer, context.LightAccumulation, context.CameraSnapshot,
+            context.GIIntensity, context.ConeCount);
+    }
+
+    /// <inheritdoc />
+    public void RenderDebugVisualization(GIDebugMode debugMode, RenderTexture gBuffer,
+        RenderTexture lightAccumulation, RenderPipeline.CameraSnapshot css)
+    {
+        if (debugMode != GIDebugMode.VoxelGrid)
+            return;
+
+        _debugVoxelGridMat ??= new Material(Shader.LoadDefault(DefaultShader.GI_DebugVoxelGrid));
+
+        Graphite.Texture? radianceTex = RadianceTexture;
+        if (radianceTex == null)
+            return;
+
+        _debugVoxelGridMat.SetRawGraphiteTexture("_VoxelRadiance", radianceTex);
+        _debugVoxelGridMat.SetTexture("_CameraDepthTexture", gBuffer.InternalDepth);
+        _debugVoxelGridMat.SetVector("_VoxelGridCenter", css.CameraPosition);
+        _debugVoxelGridMat.SetFloat("_VoxelGridSize", _currentWorldSize);
+        _debugVoxelGridMat.SetInt("_VoxelResolution", _currentResolution);
+
+        // Vulkan: transition radiance texture to ShaderResource before sampling
+        TransitionComputeTextureForSampling(radianceTex);
+
+        RenderPipeline.Blit(gBuffer, lightAccumulation, _debugVoxelGridMat, 0, false, false);
+    }
+
+    private static void TransitionComputeTextureForSampling(Graphite.Texture texture)
+    {
+        Rendering.RenderCommandBuffer? cb = Graphics.ActiveGraphiteCmdBuffer;
+        if (cb != null && !cb.InRenderPass)
+        {
+            cb.ResourceBarrier(new ResourceBarrier(
+                texture, ResourceState.UnorderedAccess, ResourceState.ShaderResource));
+        }
+    }
+
+    #endregion
+
     private void DisposeVolumes()
     {
         if (_voxelRadiance.IsValid())
@@ -385,6 +459,9 @@ public sealed class VoxelGISystem : IDisposable
 
         _coneTraceMat?.Dispose();
         _coneTraceMat = null;
+
+        _debugVoxelGridMat?.Dispose();
+        _debugVoxelGridMat = null;
     }
 
     }

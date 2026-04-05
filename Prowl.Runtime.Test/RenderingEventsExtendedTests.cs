@@ -1,7 +1,10 @@
 // This file is part of the Prowl Game Engine
 // Licensed under the MIT License. See the LICENSE file in the project root for details.
 
+using System.Collections.Generic;
+
 using Prowl.Runtime.EventSystem;
+using Prowl.Runtime.Rendering;
 
 using Xunit;
 
@@ -134,8 +137,15 @@ public class RenderingEventsExtendedTests : IDisposable
         GIPassBeginArgs? received = null;
         Track(RenderingEvents.SubscribeOnGIPassBegin(args => received = args));
 
+        Resources.Scene.GlobalIlluminationParams giParams = new();
         RenderingEvents.InvokeOnGIPassBegin(new GIPassBeginArgs(
-            Resources.Scene.GlobalIlluminationParams.GIMode.VoxelGI, 1.5f));
+            Resources.Scene.GlobalIlluminationParams.GIMode.VoxelGI,
+            1.5f,
+            giParams,
+            Array.Empty<IRenderable>(),
+            [],
+            default,
+            Array.Empty<IRenderableLight>()));
 
         Assert.NotNull(received);
         Assert.Equal(Resources.Scene.GlobalIlluminationParams.GIMode.VoxelGI, received!.Value.Mode);
