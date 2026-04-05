@@ -169,5 +169,48 @@ public static class BuiltInProfilerSections
             "GI",
             "Fullscreen pass that trilinearly interpolates the probe grid to " +
             "compute per-pixel indirect diffuse illumination.");
+
+        // ── Render Pipeline detail ──────────────────────────────
+        Profiler.RegisterSection("Pipeline.Render",
+            "Rendering",
+            "Full per-camera render pipeline execution including culling, " +
+            "GBuffer, lighting, composition, transparents, post-process, " +
+            "and final blit.");
+
+        Profiler.RegisterSection("Pipeline.Cull",
+            "Rendering",
+            "Frustum and layer-mask culling of scene renderables to " +
+            "determine which objects are visible to this camera.");
+
+        Profiler.RegisterSection("Pipeline.GBuffer",
+            "Rendering",
+            "Creates and fills the GBuffer render targets (albedo, normal, " +
+            "PBR parameters, custom data) using deferred geometry passes.");
+
+        Profiler.RegisterSection("Pipeline.Lighting",
+            "Rendering",
+            "Deferred lighting pass: iterates all visible lights and " +
+            "accumulates their contributions using the GBuffer data.");
+
+        Profiler.RegisterSection("Pipeline.Compose",
+            "Rendering",
+            "Combines the light accumulation buffer with GBuffer albedo, " +
+            "applies ambient lighting, fog, and emissive terms.");
+
+        Profiler.RegisterSection("Pipeline.Transparents",
+            "Rendering",
+            "Forward-renders transparent geometry back-to-front on top " +
+            "of the composed opaque result.");
+
+        // ── Physics detail ───────────────────────────────────────
+        Profiler.RegisterSection("Physics.Configure",
+            "Physics",
+            "Applies physics world settings (gravity, solver iterations, " +
+            "substeps, sleep policy) before the simulation step.");
+
+        Profiler.RegisterSection("Physics.Step",
+            "Physics",
+            "Executes the Jitter2 World.Step: broadphase, narrowphase, " +
+            "constraint solving, integration, and island management.");
     }
 }

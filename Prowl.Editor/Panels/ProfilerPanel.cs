@@ -100,6 +100,9 @@ public sealed class ProfilerPanel : EditorPanel
     // Drill-down state: set of expanded section names (by identity = name + depth)
     private readonly HashSet<string> _expandedSections = new(StringComparer.Ordinal);
 
+    // Hot-path: set of sample indices that belong to the most expensive call chain.
+    private readonly HashSet<int> _hotPathIndices = new();
+
     // Flat view sort
     private enum SortColumn { Name, Total, Self, Avg, Max, Count }
     private SortColumn _flatSortColumn = SortColumn.Total;
@@ -115,6 +118,8 @@ public sealed class ProfilerPanel : EditorPanel
         ["UI"]        = new(0.85f, 0.45f, 0.85f, 1f),
         ["Audio"]     = new(0.55f, 0.80f, 0.85f, 1f),
         ["Editor"]    = new(0.75f, 0.55f, 0.40f, 1f),
+        ["GI"]        = new(0.45f, 0.85f, 0.70f, 1f),
+        ["Scene"]     = new(0.70f, 0.70f, 0.50f, 1f),
     };
 
     private static readonly Vector4 DefaultCategoryColor = new(0.65f, 0.65f, 0.65f, 1f);
@@ -301,6 +306,12 @@ public sealed class ProfilerPanel : EditorPanel
         }
 
         ImGui.SameLine();
+        if (ImGui.SmallButton("Expand Hot Path"))
+        {
+            ExpandHotPath();
+        }
+
+        ImGui.SameLine();
         ImGui.Dummy(new Vector2(12 * Game.DpiScale, 0));
         ImGui.SameLine();
 
@@ -452,19 +463,26 @@ public sealed class ProfilerPanel : EditorPanel
 
     private void DrawSampleTable(ProfilerFrame frame)
     {
+        // Compute the hot path for this frame.
+        ComputeHotPath(frame);
+
+        // Draw call-path breadcrumb above the table.
+        DrawCallPathBreadcrumb(frame);
+
         ImGuiTableFlags flags = ImGuiTableFlags.RowBg | ImGuiTableFlags.BordersInnerH |
                                 ImGuiTableFlags.Resizable | ImGuiTableFlags.ScrollY;
 
         float tableH = ImGui.GetContentRegionAvail().Y;
 
-        if (!ImGui.BeginTable("##ProfilerSamples", 5, flags, new Vector2(0, tableH)))
+        if (!ImGui.BeginTable("##ProfilerSamples", 6, flags, new Vector2(0, tableH)))
             return;
 
-        ImGui.TableSetupColumn("Section",     ImGuiTableColumnFlags.WidthStretch, 0.40f);
+        ImGui.TableSetupColumn("Section",     ImGuiTableColumnFlags.WidthStretch, 0.35f);
         ImGui.TableSetupColumn("Category",    ImGuiTableColumnFlags.WidthFixed, 80 * Game.DpiScale);
         ImGui.TableSetupColumn("Time (ms)",   ImGuiTableColumnFlags.WidthFixed, 70 * Game.DpiScale);
         ImGui.TableSetupColumn("Self (ms)",   ImGuiTableColumnFlags.WidthFixed, 70 * Game.DpiScale);
-        ImGui.TableSetupColumn("% Frame",     ImGuiTableColumnFlags.WidthFixed, 100 * Game.DpiScale);
+        ImGui.TableSetupColumn("% Frame",     ImGuiTableColumnFlags.WidthFixed, 80 * Game.DpiScale);
+        ImGui.TableSetupColumn("% Parent",    ImGuiTableColumnFlags.WidthFixed, 80 * Game.DpiScale);
         ImGui.TableHeadersRow();
 
         var samples = frame.Samples;
@@ -492,6 +510,16 @@ public sealed class ProfilerPanel : EditorPanel
         // Calculate self time (total minus direct children)
         double selfMs = CalculateSelfTime(samples, index);
 
+        // Calculate % Parent
+        double parentDurationMs = frame.TotalMs;
+        if (sample.ParentIndex >= 0 && sample.ParentIndex < samples.Length)
+            parentDurationMs = samples[sample.ParentIndex].DurationMs;
+        float pctParent = parentDurationMs > 0 ? (float)(sample.DurationMs / parentDurationMs) : 0f;
+        pctParent = Math.Clamp(pctParent, 0f, 1f);
+
+        // Check if this sample is on the hot path.
+        bool isHot = _hotPathIndices.Contains(index);
+
         // Unique key for expand state: name + depth + start time.
         string expandKey = $"{sample.Name}#{sample.Depth}#{sample.StartMs:F4}";
         bool isExpanded = _expandedSections.Contains(expandKey);
@@ -506,11 +534,17 @@ public sealed class ProfilerPanel : EditorPanel
 
         Vector4 catColor = GetCategoryColor(sample.Category);
 
+        // Hot-path samples get a fire-orange tint on their text.
+        Vector4 textColor = isHot
+            ? new Vector4(1.0f, 0.75f, 0.20f, 1f)
+            : catColor;
+
         if (hasChildren)
         {
-            ImGui.PushStyleColor(ImGuiCol.Text, catColor);
+            ImGui.PushStyleColor(ImGuiCol.Text, textColor);
             string arrow = isExpanded ? "▼" : "▶";
-            if (ImGui.Selectable($"{arrow} {sample.Name}###{expandKey}", false,
+            string label = isHot ? $"{arrow} \u2731 {sample.Name}###{expandKey}" : $"{arrow} {sample.Name}###{expandKey}";
+            if (ImGui.Selectable(label, false,
                     ImGuiSelectableFlags.SpanAllColumns | ImGuiSelectableFlags.AllowOverlap))
             {
                 if (isExpanded)
@@ -523,20 +557,46 @@ public sealed class ProfilerPanel : EditorPanel
         }
         else
         {
-            ImGui.PushStyleColor(ImGuiCol.Text, catColor);
-            ImGui.Selectable($"    {sample.Name}###{expandKey}", false,
+            ImGui.PushStyleColor(ImGuiCol.Text, textColor);
+            string label = isHot ? $"    \u2731 {sample.Name}###{expandKey}" : $"    {sample.Name}###{expandKey}";
+            ImGui.Selectable(label, false,
                 ImGuiSelectableFlags.SpanAllColumns | ImGuiSelectableFlags.AllowOverlap);
             ImGui.PopStyleColor();
         }
 
-        // Tooltip with detailed description
-        if (ImGui.IsItemHovered() && !string.IsNullOrEmpty(sample.Description))
+        // Tooltip with detailed description and call path
+        if (ImGui.IsItemHovered())
         {
+            _hoveredSampleIndex = index;
             ImGui.BeginTooltip();
-            ImGui.PushTextWrapPos(350 * Game.DpiScale);
+            ImGui.PushTextWrapPos(400 * Game.DpiScale);
             ImGui.TextColored(catColor, sample.Name);
+            if (!string.IsNullOrEmpty(sample.Category))
+            {
+                ImGui.SameLine();
+                ImGui.TextColored(new Vector4(0.5f, 0.5f, 0.5f, 1f), $"[{sample.Category}]");
+            }
             ImGui.Separator();
-            ImGui.TextUnformatted(sample.Description);
+            ImGui.Text($"Duration:  {sample.DurationMs:F3} ms");
+            ImGui.Text($"Self:      {selfMs:F3} ms");
+            ImGui.Text($"Start:     {sample.StartMs:F3} ms");
+            ImGui.Text($"% Frame:   {(frame.TotalMs > 0 ? sample.DurationMs / frame.TotalMs * 100 : 0):F1}%%");
+            ImGui.Text($"% Parent:  {pctParent * 100f:F1}%%");
+
+            // Show call path
+            string callPath = BuildCallPath(samples, index);
+            if (callPath.Length > 0)
+            {
+                ImGui.Separator();
+                ImGui.TextColored(new Vector4(0.6f, 0.8f, 1.0f, 1f), "Call path:");
+                ImGui.TextUnformatted(callPath);
+            }
+
+            if (!string.IsNullOrEmpty(sample.Description))
+            {
+                ImGui.Separator();
+                ImGui.TextUnformatted(sample.Description);
+            }
             ImGui.PopTextWrapPos();
             ImGui.EndTooltip();
         }
@@ -553,14 +613,16 @@ public sealed class ProfilerPanel : EditorPanel
         string durationText = sample.DurationMs < 0.01
             ? "<0.01"
             : sample.DurationMs.ToString("F2");
+        if (isHot) ImGui.PushStyleColor(ImGuiCol.Text, textColor);
         ImGui.TextUnformatted(durationText);
+        if (isHot) ImGui.PopStyleColor();
 
         // ── Self Time ─────────────────────────────────────────
         ImGui.TableSetColumnIndex(3);
         string selfText = selfMs < 0.01 ? "<0.01" : selfMs.ToString("F2");
         ImGui.TextUnformatted(selfText);
 
-        // ── Percentage bar ────────────────────────────────────
+        // ── Percentage of frame bar ───────────────────────────
         ImGui.TableSetColumnIndex(4);
         float pct = frame.TotalMs > 0 ? (float)(sample.DurationMs / frame.TotalMs) : 0f;
         pct = Math.Clamp(pct, 0f, 1f);
@@ -575,6 +637,21 @@ public sealed class ProfilerPanel : EditorPanel
             ImGui.ColorConvertFloat4ToU32(catColor with { W = 0.35f }));
 
         ImGui.TextUnformatted($"{pct * 100f:F1}%%");
+
+        // ── Percentage of parent bar ──────────────────────────
+        ImGui.TableSetColumnIndex(5);
+
+        float parentBarMaxW = ImGui.GetContentRegionAvail().X - 40 * Game.DpiScale;
+        if (parentBarMaxW < 10) parentBarMaxW = 10;
+        Vector2 parentBarPos = ImGui.GetCursorScreenPos();
+
+        Vector4 parentBarColor = pctParent > 0.6f
+            ? new Vector4(0.95f, 0.40f, 0.25f, 0.50f)
+            : catColor with { W = 0.35f };
+        dl.AddRectFilled(parentBarPos, parentBarPos + new Vector2(parentBarMaxW * pctParent, barH),
+            ImGui.ColorConvertFloat4ToU32(parentBarColor));
+
+        ImGui.TextUnformatted($"{pctParent * 100f:F1}%%");
 
         // ── Children ──────────────────────────────────────────
         int next = index + 1;
@@ -835,6 +912,15 @@ public sealed class ProfilerPanel : EditorPanel
                     ImGui.Text($"Depth:    {s.Depth}");
                     double selfMs = CalculateSelfTimeForIndex(frame.Samples, i);
                     ImGui.Text($"Self:     {selfMs:F3} ms");
+                    string callPath = BuildCallPath(frame.Samples, i);
+                    if (callPath.Length > 0)
+                    {
+                        ImGui.Separator();
+                        ImGui.TextColored(new Vector4(0.6f, 0.8f, 1.0f, 1f), "Call path:");
+                        ImGui.PushTextWrapPos(400 * Game.DpiScale);
+                        ImGui.TextUnformatted(callPath);
+                        ImGui.PopTextWrapPos();
+                    }
                     if (!string.IsNullOrEmpty(s.Description))
                     {
                         ImGui.Separator();
@@ -849,6 +935,130 @@ public sealed class ProfilerPanel : EditorPanel
         }
 
         ImGui.EndChild();
+    }
+
+    // ── Hot-path & call-path helpers ────────────────────────────────
+
+    /// <summary>
+    /// Index of the sample the mouse is currently hovering in the hierarchy view.
+    /// Reset to -1 each frame; set by <see cref="DrawSampleRow"/>.
+    /// </summary>
+    private int _hoveredSampleIndex = -1;
+
+    /// <summary>
+    /// Computes the hot-path: at each nesting level, the child with the
+    /// longest duration is marked as "hot". The result is stored in
+    /// <see cref="_hotPathIndices"/>.
+    /// </summary>
+    private void ComputeHotPath(ProfilerFrame frame)
+    {
+        _hotPathIndices.Clear();
+        _hoveredSampleIndex = -1;
+        ProfilerSample[] samples = frame.Samples;
+        if (samples.Length == 0) return;
+
+        // Find the root-level sample with the longest duration.
+        int rootHot = -1;
+        double rootMax = -1;
+        for (int i = 0; i < samples.Length; i++)
+        {
+            if (samples[i].Depth == 0 && samples[i].DurationMs > rootMax)
+            {
+                rootMax = samples[i].DurationMs;
+                rootHot = i;
+            }
+        }
+        if (rootHot < 0) return;
+
+        // Walk down the tree, always picking the heaviest direct child.
+        int current = rootHot;
+        while (current >= 0)
+        {
+            _hotPathIndices.Add(current);
+            int parentDepth = samples[current].Depth;
+
+            // Find the direct child (depth == parentDepth + 1) with max duration.
+            int bestChild = -1;
+            double bestMs = -1;
+            for (int j = current + 1; j < samples.Length && samples[j].Depth > parentDepth; j++)
+            {
+                if (samples[j].Depth == parentDepth + 1 && samples[j].DurationMs > bestMs)
+                {
+                    bestMs = samples[j].DurationMs;
+                    bestChild = j;
+                }
+            }
+            current = bestChild;
+        }
+    }
+
+    /// <summary>
+    /// Expands all sections along the hot path so the user can immediately
+    /// see the most expensive call chain.
+    /// </summary>
+    private void ExpandHotPath()
+    {
+        ProfilerFrame? frame = GetFrame(_selectedFrameAge);
+        if (frame == null) return;
+
+        ComputeHotPath(frame);
+        ProfilerSample[] samples = frame.Samples;
+        foreach (int idx in _hotPathIndices)
+        {
+            ProfilerSample s = samples[idx];
+            string expandKey = $"{s.Name}#{s.Depth}#{s.StartMs:F4}";
+            _expandedSections.Add(expandKey);
+        }
+    }
+
+    /// <summary>
+    /// Builds a human-readable call path string by walking <see cref="ProfilerSample.ParentIndex"/>
+    /// from the given sample up to the root.
+    /// </summary>
+    private static string BuildCallPath(ProfilerSample[] samples, int index)
+    {
+        if (index < 0 || index >= samples.Length) return string.Empty;
+
+        // Collect ancestors.
+        List<string> parts = new(8);
+        int current = index;
+        int safety = 64; // prevent infinite loops from bad data
+        while (current >= 0 && safety-- > 0)
+        {
+            parts.Add(samples[current].Name);
+            current = samples[current].ParentIndex;
+        }
+
+        if (parts.Count <= 1) return string.Empty;
+
+        // Reverse so root is first.
+        parts.Reverse();
+        return string.Join(" → ", parts);
+    }
+
+    /// <summary>
+    /// Draws a breadcrumb bar above the hierarchy table showing the call path
+    /// of the currently hovered sample.
+    /// </summary>
+    private void DrawCallPathBreadcrumb(ProfilerFrame frame)
+    {
+        if (_hoveredSampleIndex < 0 || _hoveredSampleIndex >= frame.Samples.Length)
+        {
+            ImGui.TextColored(new Vector4(0.45f, 0.45f, 0.45f, 1f), "Hover a section to see its call path");
+            ImGui.Spacing();
+            return;
+        }
+
+        string path = BuildCallPath(frame.Samples, _hoveredSampleIndex);
+        if (string.IsNullOrEmpty(path))
+        {
+            ImGui.TextColored(new Vector4(0.6f, 0.8f, 1.0f, 1f), frame.Samples[_hoveredSampleIndex].Name);
+        }
+        else
+        {
+            ImGui.TextColored(new Vector4(0.6f, 0.8f, 1.0f, 1f), path);
+        }
+        ImGui.Spacing();
     }
 
     // ── Aggregation helpers ──────────────────────────────────────

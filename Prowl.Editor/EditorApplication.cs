@@ -462,60 +462,77 @@ public sealed class EditorApplication : Game
         // Game context so rendering code can distinguish editor-chrome GL
         // calls from actual scene/game rendering.
         Graphics.ActiveContext = GraphicsContext.Game;
-        try
+        if (Window.GpuDebug)
         {
-            var rendering = EditorServices.Get<IEditorRendering>();
-
-            // Render game view always — in edit mode this provides a live preview
-            // from the scene's highest-priority camera (sorted by Camera.Depth).
-            if (_gamePanel != null && _gamePanel.IsOpen)
+            try
             {
-                Rect gvp = _gamePanel.ViewportRect;
-                var (rw, rh) = _gamePanel.RenderResolution;
-                int gw = rw > 0 ? rw : (int)gvp.Size.X;
-                int gh = rh > 0 ? rh : (int)gvp.Size.Y;
-
-                if (gw > 0 && gh > 0)
-                {
-                    Debug.LastPhase = "Render.Editor.GameView";
-                    Debug.LogTrace($"[Editor] Rendering game view ({gw}x{gh})...");
-                    rendering.RenderGameView(gw, gh);
-                }
+                ProcessApplicationRendering();
             }
-
-            if (_scenePanel != null && _scenePanel.IsOpen)
+            finally
             {
-                Rect vp = _scenePanel.ViewportRect;
-                int w = (int)vp.Size.X;
-                int h = (int)vp.Size.Y;
-
-                if (w > 0 && h > 0)
-                {
-                    Debug.LastPhase = "Render.Editor.SceneView";
-                    Debug.LogTrace($"[Editor] Rendering scene view ({w}x{h})...");
-                    var cam = _scenePanel.Camera;
-                    rendering.RenderSceneView(
-                        cam.GetPosition(), cam.GetRotation(),
-                        cam.FieldOfView, cam.NearClip, cam.FarClip,
-                        w, h, _scenePanel.ViewMode);
-
-                    // Selection outline (rendered onto the scene RT as a post-process)
-                    var selService = EditorServices.Get<ISelectionService>();
-                    if (selService.ActiveObject is GameObject selectedGo)
-                    {
-                        //rendering.RenderSelectionOutline([selectedGo]);
-                    }
-                }
+                // Restore editor context — everything after BeginRender (Paper UI,
+                // Dear ImGui) is editor chrome and always uses the OpenGL backend.
+                Graphics.ActiveContext = GraphicsContext.Editor;
             }
-
-            Debug.LastPhase = "Render.Editor.BeginRenderDone";
         }
-        finally
+        else
         {
+            ProcessApplicationRendering();
+
             // Restore editor context — everything after BeginRender (Paper UI,
             // Dear ImGui) is editor chrome and always uses the OpenGL backend.
             Graphics.ActiveContext = GraphicsContext.Editor;
         }
+    }
+
+    public void ProcessApplicationRendering()
+    {
+
+        var rendering = EditorServices.Get<IEditorRendering>();
+
+        // Render game view always — in edit mode this provides a live preview
+        // from the scene's highest-priority camera (sorted by Camera.Depth).
+        if (_gamePanel != null && _gamePanel.IsOpen)
+        {
+            Rect gvp = _gamePanel.ViewportRect;
+            var (rw, rh) = _gamePanel.RenderResolution;
+            int gw = rw > 0 ? rw : (int)gvp.Size.X;
+            int gh = rh > 0 ? rh : (int)gvp.Size.Y;
+
+            if (gw > 0 && gh > 0)
+            {
+                Debug.LastPhase = "Render.Editor.GameView";
+                Debug.LogTrace($"[Editor] Rendering game view ({gw}x{gh})...");
+                rendering.RenderGameView(gw, gh);
+            }
+        }
+
+        if (_scenePanel != null && _scenePanel.IsOpen)
+        {
+            Rect vp = _scenePanel.ViewportRect;
+            int w = (int)vp.Size.X;
+            int h = (int)vp.Size.Y;
+
+            if (w > 0 && h > 0)
+            {
+                Debug.LastPhase = "Render.Editor.SceneView";
+                Debug.LogTrace($"[Editor] Rendering scene view ({w}x{h})...");
+                var cam = _scenePanel.Camera;
+                rendering.RenderSceneView(
+                    cam.GetPosition(), cam.GetRotation(),
+                    cam.FieldOfView, cam.NearClip, cam.FarClip,
+                    w, h, _scenePanel.ViewMode);
+
+                // Selection outline (rendered onto the scene RT as a post-process)
+                var selService = EditorServices.Get<ISelectionService>();
+                if (selService.ActiveObject is GameObject selectedGo)
+                {
+                    //rendering.RenderSelectionOutline([selectedGo]);
+                }
+            }
+        }
+
+        Debug.LastPhase = "Render.Editor.BeginRenderDone";
     }
 
     public override void BeginImGui(IUIRenderer ui)

@@ -276,7 +276,7 @@ public static class MaterialInspector
                     break;
 
                 case ShaderPropertyType.Float:
-                    DrawFloatProperty(material, prop.Name, label);
+                    DrawFloatProperty(material, prop, label);
                     anyDrawn = true;
                     break;
 
@@ -359,6 +359,71 @@ public static class MaterialInspector
                 material.SetColor(propName, new Prowl.Vector.Color(nv.X, nv.Y, nv.Z, nv.W));
             }
         });
+    }
+
+    private static void DrawFloatProperty(Material material, ShaderProperty prop, string label)
+    {
+        float value = material._properties.GetFloat(prop.Name);
+
+        if (prop.IsMinMax)
+        {
+            // MinMax range slider editing both X and Y of a Vector2 property
+            Prowl.Vector.Float2 pv = material._properties.GetVector2(prop.Name);
+            float minVal = pv.X;
+            float maxVal = pv.Y;
+
+            DrawRow(label, () =>
+            {
+                float availW = ImGui.GetContentRegionAvail().X;
+                float fieldW = 50f * Game.DpiScale;
+                float sliderW = availW - fieldW * 2 - ImGui.GetStyle().ItemSpacing.X * 2;
+                if (sliderW < 40f) sliderW = 40f;
+
+                ImGui.SetNextItemWidth(fieldW);
+                if (ImGui.DragFloat("##min", ref minVal, 0.01f, prop.RangeMin, maxVal, "%.2f"))
+                {
+                    if (minVal > maxVal) minVal = maxVal;
+                    material.SetVector(prop.Name, new Prowl.Vector.Float2(minVal, maxVal));
+                }
+
+                ImGui.SameLine();
+                ImGui.SetNextItemWidth(sliderW);
+                if (ImGui.DragFloatRange2("##range", ref minVal, ref maxVal, 0.01f, prop.RangeMin, prop.RangeMax, "Min: %.2f", "Max: %.2f"))
+                {
+                    material.SetVector(prop.Name, new Prowl.Vector.Float2(minVal, maxVal));
+                }
+
+                ImGui.SameLine();
+                ImGui.SetNextItemWidth(fieldW);
+                if (ImGui.DragFloat("##max", ref maxVal, 0.01f, minVal, prop.RangeMax, "%.2f"))
+                {
+                    if (maxVal < minVal) maxVal = minVal;
+                    material.SetVector(prop.Name, new Prowl.Vector.Float2(minVal, maxVal));
+                }
+            });
+        }
+        else if (prop.HasRange)
+        {
+            DrawRow(label, () =>
+            {
+                ImGui.SetNextItemWidth(-1);
+                if (ImGui.SliderFloat("##flt", ref value, prop.RangeMin, prop.RangeMax, "%.3f"))
+                {
+                    material.SetFloat(prop.Name, value);
+                }
+            });
+        }
+        else
+        {
+            DrawRow(label, () =>
+            {
+                ImGui.SetNextItemWidth(-1);
+                if (ImGui.DragFloat("##flt", ref value, 0.01f))
+                {
+                    material.SetFloat(prop.Name, value);
+                }
+            });
+        }
     }
 
     private static void DrawFloatProperty(Material material, string propName, string label)

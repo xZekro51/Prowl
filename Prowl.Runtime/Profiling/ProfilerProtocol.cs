@@ -26,6 +26,7 @@ namespace Prowl.Runtime.Profiling;
 ///   [4 bytes]   Depth       (int32)
 ///   [8 bytes]   StartMs     (double)
 ///   [8 bytes]   DurationMs  (double)
+///   [4 bytes]   ParentIndex (int32)
 /// </code>
 /// </para>
 /// </summary>
@@ -62,6 +63,7 @@ public static class ProfilerProtocol
             bw.Write(s.Depth);
             bw.Write(s.StartMs);
             bw.Write(s.DurationMs);
+            bw.Write(s.ParentIndex);
         }
 
         long payloadLength = ms.Position - payloadStart;
@@ -116,6 +118,7 @@ public static class ProfilerProtocol
                 Depth = br.ReadInt32(),
                 StartMs = br.ReadDouble(),
                 DurationMs = br.ReadDouble(),
+                ParentIndex = br.ReadInt32(),
             };
         }
 

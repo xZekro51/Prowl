@@ -19,6 +19,14 @@ public class ShaderProperty
     [field: SerializeField]
     public ShaderPropertyType PropertyType { get; private set; }
 
+    /// <summary> When true, the editor should display a slider clamped to [RangeMin, RangeMax]. </summary>
+    public bool HasRange;
+    public float RangeMin;
+    public float RangeMax;
+
+    /// <summary> When true, the editor should display a min/max range slider over [RangeMin, RangeMax]. </summary>
+    public bool IsMinMax;
+
     public Float4 Value;
     public Float4x4 MatrixValue;
 

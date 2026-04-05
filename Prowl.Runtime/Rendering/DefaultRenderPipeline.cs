@@ -5,6 +5,7 @@ using System;
 using System.Collections.Generic;
 
 using Prowl.Runtime.EventSystem;
+using Prowl.Runtime.Profiling;
 using Prowl.Runtime.Rendering.GI;
 using Prowl.Runtime.Resources;
 using Prowl.Vector;
@@ -213,11 +214,16 @@ public class DefaultRenderPipeline : RenderPipeline
 
     private void Internal_Render(Camera camera, in RenderingData data)
     {
+        Profiler.BeginSection("Pipeline.Render");
+
         // Skip rendering entirely if the GPU device has been lost.
         // Attempting to record or submit commands after device lost would
         // produce cascading errors and crash the editor.
         if (Graphics.IsGraphiteReady && Graphics.Graphite.IsDeviceLost)
+        {
+            Profiler.EndSection();
             return;
+        }
 
         // =======================================================
         // 0. Setup variables, and prepare the camera
@@ -253,8 +259,10 @@ public class DefaultRenderPipeline : RenderPipeline
 
         // =======================================================
         // 3. Cull Renderables based on Snapshot data
+        Profiler.BeginSection("Pipeline.Cull");
         IReadOnlyList<IRenderable> renderables = camera.GameObject.Scene.Renderables;
         HashSet<int> culledRenderableIndices = CullRenderables(renderables, css.WorldFrustum, css.CullingMask);
+        Profiler.EndSection();
 
         // =======================================================
         // 4. Pre Render
@@ -318,6 +326,7 @@ public class DefaultRenderPipeline : RenderPipeline
 
         // =======================================================
         // 6. Create GBuffer for Deferred Rendering
+        Profiler.BeginSection("Pipeline.GBuffer");
         // GBuffer layout:
         // BufferA: RGB = Albedo, A = Alpha
         // BufferB: RGB = Normal (view space), A = ShadingMode
@@ -364,9 +373,11 @@ public class DefaultRenderPipeline : RenderPipeline
         TransitionToShaderResource(gBuffer);
         graphiteCmd?.PopDebugGroup(); // Stage6_GBuffer
         RenderingEvents.InvokeOnGBufferPassEnd(new GBufferPassArgs(gBuffer));
+        Profiler.EndSection(); // Pipeline.GBuffer
 
         // =======================================================
         // 7. Deferred Lighting Pass - Render each light's contribution
+        Profiler.BeginSection("Pipeline.Lighting");
         // Create light accumulation buffer
         RenderTexture lightAccumulation = RenderTexture.GetTemporaryRT((int)camera.PixelWidth, (int)camera.PixelHeight, false, [
             isHDR ? TextureImageFormat.Short4 : TextureImageFormat.Color4b, // Accumulated lighting
@@ -415,6 +426,7 @@ public class DefaultRenderPipeline : RenderPipeline
         TransitionToShaderResource(lightAccumulation);
         graphiteCmd?.PopDebugGroup(); // Stage7_DeferredLighting
         RenderingEvents.InvokeOnLightingPassEnd(new LightingPassArgs(gBuffer, lightAccumulation, renderedLightCount));
+        Profiler.EndSection(); // Pipeline.Lighting
 
         // 7.1 Global Illumination: cone trace (VoxelGI) or probe lookup (SDFGI) into light accumulation
         graphiteCmd?.PushDebugGroup("Stage7.1_GIConeTrace");
@@ -473,6 +485,7 @@ public class DefaultRenderPipeline : RenderPipeline
 
         // =======================================================
         // 8. Deferred Composition Pass - Combine light accumulation with GBuffer
+        Profiler.BeginSection("Pipeline.Compose");
         graphiteCmd?.PushDebugGroup("Stage8_Composition");
         // Create final composition output
         RenderTexture composedOutput = RenderTexture.GetTemporaryRT((int)camera.PixelWidth, (int)camera.PixelHeight, true, [
@@ -568,6 +581,7 @@ public class DefaultRenderPipeline : RenderPipeline
         TransitionToShaderResource(composedOutput);
         graphiteCmd?.PopDebugGroup(); // Stage8_Composition
         RenderingEvents.InvokeOnCompositionComplete(new CompositionCompleteArgs(composedOutput, gBuffer));
+        Profiler.EndSection(); // Pipeline.Compose
 
         // =======================================================
         // 9. Apply AfterLighting effects (opaque post-processing)
@@ -589,6 +603,7 @@ public class DefaultRenderPipeline : RenderPipeline
 
         // =======================================================
         // 10. Transparent geometry (Forward rendered on top of composed result)
+        Profiler.BeginSection("Pipeline.Transparents");
         graphiteCmd?.PushDebugGroup("Stage10_Transparents");
         RenderingEvents.InvokeOnTransparentPassBegin(new TransparentPassArgs(composedOutput));
 
@@ -613,6 +628,7 @@ public class DefaultRenderPipeline : RenderPipeline
         if (graphiteCmd?.InRenderPass == true)
             graphiteCmd.EndRenderPass();
         graphiteCmd?.PopDebugGroup(); // Stage10_Transparents
+        Profiler.EndSection(); // Pipeline.Transparents
 
         // Transition composedOutput to ShaderResource for PostProcess effects
         TransitionToShaderResource(composedOutput);
@@ -727,7 +743,8 @@ public class DefaultRenderPipeline : RenderPipeline
         RenderTexture.ReleaseTemporaryRT(lightAccumulation);
         RenderTexture.ReleaseTemporaryRT(composedOutput);
 
-        }
+        Profiler.EndSection(); // Pipeline.Render
+    }
 
     /// <summary>
     /// Uploads global uniforms for forward-rendered transparent objects.

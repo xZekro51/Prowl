@@ -2,7 +2,9 @@ Shader "Default/Standard"
 
 Properties
 {
+	[Range(0, 2)]
 	_RenderMode ("Render Mode (0=Opaque, 1=Cutout, 2=Transparent)", Float) = 0.0
+	[Range(0, 1)]
 	_AlphaCutoff ("Alpha Cutoff", Float) = 0.5
 
 	_MainTex ("Albedo", Texture2D) = "grid"
@@ -11,19 +13,26 @@ Properties
 	_UVOffset ("UV Offset", Vector2) = (0.0, 0.0)
 
 	_NormalTex ("Normal Map", Texture2D) = "normal"
+	[Range(0, 2)]
 	_NormalStrength ("Normal Strength", Float) = 1.0
 
 	_SurfaceTex ("Surface (AO, Roughness, Metallic)", Texture2D) = "surface"
+	[Range(0, 1)]
 	_Metallic ("Metallic", Float) = 0.0
+	[Range(0, 1)]
 	_Roughness ("Roughness", Float) = 0.5
+	[Range(0, 1)]
 	_AOStrength ("AO Strength", Float) = 1.0
+	[Range(0, 1)]
 	_Specular ("Specular", Float) = 0.5
 
 	_EmissionTex ("Emission", Texture2D) = "emission"
 	_EmissionColor ("Emission Color", Color) = (0.0, 0.0, 0.0, 1.0)
+	[Range(0, 10)]
 	_EmissionIntensity ("Emission Intensity", Float) = 1.0
 
 	_HeightTex ("Height Map", Texture2D) = "black"
+	[Range(0, 0.3)]
 	_HeightScale ("Height Scale", Float) = 0.05
 
 }

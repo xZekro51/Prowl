@@ -10,6 +10,7 @@ using Jitter2.Collision.Shapes;
 using Jitter2.LinearMath;
 
 using Prowl.Runtime.EventSystem;
+using Prowl.Runtime.Profiling;
 using Prowl.Vector;
 
 namespace Prowl.Runtime;
@@ -104,15 +105,21 @@ public class PhysicsWorld
 
     public void Update()
     {
-        // Configure world settings
-        World.AllowDeactivation = AllowSleep;
+        using (Profiler.Section("Physics.Configure"))
+        {
+            // Configure world settings
+            World.AllowDeactivation = AllowSleep;
 
-        World.SubstepCount = Substep;
-        World.SolverIterations = (SolverIterations, RelaxIterations);
+            World.SubstepCount = Substep;
+            World.SolverIterations = (SolverIterations, RelaxIterations);
 
-        World.Gravity = new JVector(Gravity.X, Gravity.Y, Gravity.Z);
+            World.Gravity = new JVector(Gravity.X, Gravity.Y, Gravity.Z);
+        }
 
-        World.Step(Time.FixedDeltaTime, UseMultithreading);
+        using (Profiler.Section("Physics.Step"))
+        {
+            World.Step(Time.FixedDeltaTime, UseMultithreading);
+        }
     }
 
     /// <summary>

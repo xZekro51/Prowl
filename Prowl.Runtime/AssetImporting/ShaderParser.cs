@@ -430,8 +430,64 @@ public static class ShaderParser
 
         ExpectToken("properties", tokenizer, ShaderToken.OpenCurlBrace);
 
+        // Pending attribute state that gets applied to the next property declaration.
+        bool pendingHasRange = false;
+        bool pendingIsMinMax = false;
+        float pendingRangeMin = 0f;
+        float pendingRangeMax = 1f;
+
         while (tokenizer.MoveNext() && tokenizer.TokenType != ShaderToken.CloseCurlBrace)
         {
+            // After parsing a default value the Equals block reads ahead one token.
+            // That token might be '[' (attribute) or '=' (another default), so we
+            // re-enter dispatch here without calling MoveNext() again.
+            recheck:
+
+            // ── Attribute parsing: [Range(min, max)] or [MinMax(min, max)] ──
+            if (tokenizer.TokenType == ShaderToken.OpenSquareBrace)
+            {
+                ExpectToken("property attribute", tokenizer, ShaderToken.Identifier);
+                string attrName = tokenizer.Token.ToString();
+
+                if (attrName.Equals("Range", StringComparison.OrdinalIgnoreCase))
+                {
+                    ExpectToken("Range attribute", tokenizer, ShaderToken.OpenParen);
+                    ExpectToken("Range attribute", tokenizer, ShaderToken.Identifier);
+                    float min = DoubleParse(tokenizer.Token, "Range min");
+                    ExpectToken("Range attribute", tokenizer, ShaderToken.Comma);
+                    ExpectToken("Range attribute", tokenizer, ShaderToken.Identifier);
+                    float max = DoubleParse(tokenizer.Token, "Range max");
+                    ExpectToken("Range attribute", tokenizer, ShaderToken.CloseParen);
+
+                    pendingHasRange = true;
+                    pendingIsMinMax = false;
+                    pendingRangeMin = min;
+                    pendingRangeMax = max;
+                }
+                else if (attrName.Equals("MinMax", StringComparison.OrdinalIgnoreCase))
+                {
+                    ExpectToken("MinMax attribute", tokenizer, ShaderToken.OpenParen);
+                    ExpectToken("MinMax attribute", tokenizer, ShaderToken.Identifier);
+                    float min = DoubleParse(tokenizer.Token, "MinMax min");
+                    ExpectToken("MinMax attribute", tokenizer, ShaderToken.Comma);
+                    ExpectToken("MinMax attribute", tokenizer, ShaderToken.Identifier);
+                    float max = DoubleParse(tokenizer.Token, "MinMax max");
+                    ExpectToken("MinMax attribute", tokenizer, ShaderToken.CloseParen);
+
+                    pendingHasRange = true;
+                    pendingIsMinMax = true;
+                    pendingRangeMin = min;
+                    pendingRangeMax = max;
+                }
+                else
+                {
+                    throw new ParseException("property attribute", $"unknown attribute '{attrName}' (valid attributes: Range, MinMax)");
+                }
+
+                ExpectToken("property attribute", tokenizer, ShaderToken.CloseSquareBrace);
+                continue;
+            }
+
             if (tokenizer.TokenType == ShaderToken.Equals)
             {
                 if (properties.Count == 0)
@@ -443,6 +499,10 @@ public static class ShaderParser
 
                 def.Name = last.Name;
                 def.DisplayName = last.DisplayName;
+                def.HasRange = last.HasRange;
+                def.IsMinMax = last.IsMinMax;
+                def.RangeMin = last.RangeMin;
+                def.RangeMax = last.RangeMax;
 
                 properties[^1] = def;
 
@@ -450,6 +510,10 @@ public static class ShaderParser
 
                 if (tokenizer.TokenType == ShaderToken.CloseCurlBrace)
                     break;
+
+                // The token we just read may be '[' or '=' — re-dispatch
+                // without calling MoveNext() again.
+                goto recheck;
             }
 
             string name = tokenizer.Token.ToString();
@@ -481,6 +545,18 @@ public static class ShaderParser
 
             property.Name = name;
             property.DisplayName = displayName;
+
+            // Apply any pending attribute
+            if (pendingHasRange)
+            {
+                property.HasRange = true;
+                property.IsMinMax = pendingIsMinMax;
+                property.RangeMin = pendingRangeMin;
+                property.RangeMax = pendingRangeMax;
+
+                pendingHasRange = false;
+                pendingIsMinMax = false;
+            }
 
             properties.Add(property);
         }

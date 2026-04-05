@@ -25,4 +25,11 @@ public readonly struct ProfilerSample
 
     /// <summary> Absolute start time relative to frame start, in milliseconds. </summary>
     public double StartMs { get; init; }
+
+    /// <summary>
+    /// Index of the parent sample in the frame's <see cref="ProfilerFrame.Samples"/> array,
+    /// or <c>-1</c> if this is a root-level sample. Enables navigating the call hierarchy
+    /// (caller chains, "% Parent" calculations, hot-path tracing).
+    /// </summary>
+    public int ParentIndex { get; init; }
 }
