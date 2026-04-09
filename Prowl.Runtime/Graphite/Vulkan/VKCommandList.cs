@@ -38,21 +38,13 @@ internal unsafe class VKCommandList : CommandList
     private readonly List<VKTexture> _currentRPColorAttachments = new();
     private VKTexture? _currentRPDepthAttachment;
     private bool _currentRPIsPresentTarget;
+    private bool _currentRPColorFinalShaderRead;
 
     internal VKCommandList(VKGraphiteDevice device)
     {
         _device = device;
         _sourcePool = device.GetGraphicsCommandPool();
-
-        var allocInfo = new CommandBufferAllocateInfo
-        {
-            SType = StructureType.CommandBufferAllocateInfo,
-            CommandPool = _sourcePool,
-            Level = CommandBufferLevel.Primary,
-            CommandBufferCount = 1,
-        };
-        VKGraphiteDevice.Check(device.Vk.AllocateCommandBuffers(device.Device, &allocInfo, out var cb));
-        Handle = cb;
+        Handle = device.RentCommandBuffer(_sourcePool);
     }
 
     #region Recording
@@ -148,7 +140,9 @@ internal unsafe class VKCommandList : CommandList
         }
 
         rpKey.IsPresentTarget = isPresentTarget;
+        rpKey.ColorFinalLayoutShaderRead = !isPresentTarget && descriptor.HintNextUsageShaderRead;
         _currentRPIsPresentTarget = isPresentTarget;
+        _currentRPColorFinalShaderRead = rpKey.ColorFinalLayoutShaderRead;
         if (isPresentTarget)
             IsPresentTarget = true;
         _currentRenderPass = _device.GetOrCreateRenderPass(in rpKey);
@@ -239,9 +233,14 @@ internal unsafe class VKCommandList : CommandList
         // Sync tracked layouts with the render pass's finalLayout.
         // Without this, VKTexture._mipLayouts would remain stale after
         // the render pass automatically transitions image layouts.
-        var colorFinalLayout = _currentRPIsPresentTarget
-            ? ImageLayout.PresentSrcKhr
-            : ImageLayout.ColorAttachmentOptimal;
+        ImageLayout colorFinalLayout;
+        if (_currentRPIsPresentTarget)
+            colorFinalLayout = ImageLayout.PresentSrcKhr;
+        else if (_currentRPColorFinalShaderRead)
+            colorFinalLayout = ImageLayout.ShaderReadOnlyOptimal;
+        else
+            colorFinalLayout = ImageLayout.ColorAttachmentOptimal;
+
         foreach (var tex in _currentRPColorAttachments)
             tex.SetTrackedLayout(colorFinalLayout);
 
@@ -498,6 +497,74 @@ internal unsafe class VKCommandList : CommandList
         }
     }
 
+    protected override void ResourceBarriersCore(ReadOnlySpan<Graphite.ResourceBarrier> barriers)
+    {
+        // Batch all image layout transitions and buffer memory barriers into a single
+        // vkCmdPipelineBarrier call to avoid per-barrier driver overhead.
+        // Worst case: each texture has divergent per-mip layouts, but typically 1 barrier per resource.
+        int maxImageBarriers = 0;
+        int bufferCount = 0;
+        foreach (ref readonly Graphite.ResourceBarrier b in barriers)
+        {
+            if (b.Resource is VKTexture tex)
+                maxImageBarriers += (int)(tex.MipLevels * tex.ArrayLayers);
+            else if (b.Resource is VKBuffer)
+                bufferCount++;
+        }
+
+        Span<ImageMemoryBarrier> imageBarriers = maxImageBarriers <= 16
+            ? stackalloc ImageMemoryBarrier[maxImageBarriers]
+            : new ImageMemoryBarrier[maxImageBarriers];
+        Span<Silk.NET.Vulkan.BufferMemoryBarrier> bufferBarriers = bufferCount <= 8
+            ? stackalloc Silk.NET.Vulkan.BufferMemoryBarrier[bufferCount]
+            : new Silk.NET.Vulkan.BufferMemoryBarrier[bufferCount];
+
+        PipelineStageFlags combinedSrcStage = 0;
+        PipelineStageFlags combinedDstStage = 0;
+        int imgIdx = 0;
+        int bufIdx = 0;
+
+        foreach (ref readonly Graphite.ResourceBarrier b in barriers)
+        {
+            if (b.Resource is VKTexture tex)
+            {
+                ImageLayout newLayout = ToImageLayout(b.StateAfter);
+                imgIdx += tex.CollectTransitionBarriers(newLayout, imageBarriers, imgIdx,
+                    ref combinedSrcStage, ref combinedDstStage);
+            }
+            else if (b.Resource is VKBuffer buf)
+            {
+                PipelineStageFlags srcStage = ToPipelineStageFlags(b.StateBefore);
+                PipelineStageFlags dstStage = ToPipelineStageFlags(b.StateAfter);
+                combinedSrcStage |= srcStage;
+                combinedDstStage |= dstStage;
+                bufferBarriers[bufIdx++] = new Silk.NET.Vulkan.BufferMemoryBarrier
+                {
+                    SType = StructureType.BufferMemoryBarrier,
+                    Buffer = buf.Handle,
+                    Offset = 0,
+                    Size = Vk.WholeSize,
+                    SrcAccessMask = ToAccessFlags(b.StateBefore),
+                    DstAccessMask = ToAccessFlags(b.StateAfter),
+                    SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                    DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                };
+            }
+        }
+
+        if (imgIdx == 0 && bufIdx == 0) return;
+
+        fixed (ImageMemoryBarrier* pImg = imageBarriers)
+        fixed (Silk.NET.Vulkan.BufferMemoryBarrier* pBuf = bufferBarriers)
+        {
+            _device.Vk.CmdPipelineBarrier(Handle,
+                combinedSrcStage, combinedDstStage, 0,
+                0, null,
+                (uint)bufIdx, pBuf,
+                (uint)imgIdx, pImg);
+        }
+    }
+
     protected override void MemoryBarrierCore()
     {
         var barrier = new MemoryBarrier
@@ -506,13 +573,14 @@ internal unsafe class VKCommandList : CommandList
             SrcAccessMask = AccessFlags.MemoryWriteBit,
             DstAccessMask = AccessFlags.MemoryReadBit,
         };
-        // Use AllCommandsBit for both src and dst to create a full
-        // execution + memory barrier.  BottomOfPipeBit → TopOfPipeBit
-        // does NOT make memory visible per the Vulkan spec because
-        // TopOfPipeBit has an empty access scope.
+        // Narrow the pipeline stages to graphics + compute, which covers all
+        // engine use cases (render passes, compute dispatches, image effects).
+        // AllCommandsBit unnecessarily stalls transfer and host stages, killing
+        // GPU parallelism between render passes and compute dispatches.
+        const PipelineStageFlags stages =
+            PipelineStageFlags.AllGraphicsBit | PipelineStageFlags.ComputeShaderBit;
         _device.Vk.CmdPipelineBarrier(Handle,
-            PipelineStageFlags.AllCommandsBit,
-            PipelineStageFlags.AllCommandsBit,
+            stages, stages,
             0, 1, &barrier, 0, null, 0, null);
     }
 
@@ -604,9 +672,8 @@ internal unsafe class VKCommandList : CommandList
 
     protected override void DisposeResources()
     {
-        // Framebuffers are now owned by the device's framebuffer cache — do not destroy them here.
-        // Only the command buffer needs to be retired for deferred destruction.
-        _device.RetireCommandListResources(new List<Framebuffer>(), Handle, _sourcePool);
+        // Retire the command buffer for deferred recycling once the GPU fence signals.
+        _device.RetireCommandListResources(Handle, _sourcePool);
     }
 
     #region Helpers
@@ -641,15 +708,20 @@ internal unsafe class VKCommandList : CommandList
 
     private static PipelineStageFlags ToPipelineStageFlags(ResourceState state) => state switch
     {
-        ResourceState.Common => PipelineStageFlags.TopOfPipeBit,
+        // Common/General may follow any kind of GPU work — use AllCommandsBit so
+        // we correctly wait for all prior writes (TopOfPipeBit was too narrow and
+        // could miss in-flight graphics/compute/transfer work).
+        ResourceState.Common => PipelineStageFlags.AllCommandsBit,
         ResourceState.RenderTarget => PipelineStageFlags.ColorAttachmentOutputBit,
         ResourceState.DepthWrite => PipelineStageFlags.EarlyFragmentTestsBit | PipelineStageFlags.LateFragmentTestsBit,
         ResourceState.DepthRead => PipelineStageFlags.EarlyFragmentTestsBit | PipelineStageFlags.LateFragmentTestsBit,
-        ResourceState.ShaderResource => PipelineStageFlags.VertexShaderBit | PipelineStageFlags.FragmentShaderBit,
-        ResourceState.UnorderedAccess => PipelineStageFlags.ComputeShaderBit,
+        ResourceState.ShaderResource => PipelineStageFlags.VertexShaderBit | PipelineStageFlags.FragmentShaderBit | PipelineStageFlags.ComputeShaderBit,
+        ResourceState.UnorderedAccess => PipelineStageFlags.ComputeShaderBit | PipelineStageFlags.FragmentShaderBit,
         ResourceState.CopySource => PipelineStageFlags.TransferBit,
         ResourceState.CopyDestination => PipelineStageFlags.TransferBit,
-        ResourceState.Present => PipelineStageFlags.BottomOfPipeBit,
+        // Present must synchronise with color attachment output so the
+        // semaphore/barrier interaction with the presentation engine works.
+        ResourceState.Present => PipelineStageFlags.ColorAttachmentOutputBit,
         _ => PipelineStageFlags.AllCommandsBit,
     };
 

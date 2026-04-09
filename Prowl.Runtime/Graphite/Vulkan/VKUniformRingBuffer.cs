@@ -28,6 +28,10 @@ internal unsafe class VKUniformRingBuffer : IDisposable
     // Minimum UBO offset alignment (from device limits)
     private readonly uint _minAlignment;
 
+    // Track peak usage per frame slot to pre-size the next frame's buffer,
+    // avoiding mid-frame GrowFrameBuffer stalls.
+    private readonly uint[] _peakUsagePerSlot;
+
     // Old buffers that were replaced by GrowFrameBuffer mid-frame.
     // Descriptor sets already written this frame still reference these handles,
     // so they must stay alive until the GPU finishes the frame (i.e. until the
@@ -44,6 +48,7 @@ internal unsafe class VKUniformRingBuffer : IDisposable
         if (_minAlignment == 0) _minAlignment = 256; // safe default
 
         _retiredBuffers = new List<(VkBuffer, DeviceMemory)>[framesInFlight];
+        _peakUsagePerSlot = new uint[framesInFlight];
         for (int i = 0; i < framesInFlight; i++)
         {
             _frameBuffers[i] = CreateFrameBuffer(bufferSize);
@@ -57,12 +62,27 @@ internal unsafe class VKUniformRingBuffer : IDisposable
     /// </summary>
     internal void BeginFrame(int frameIndex)
     {
+        // Record peak usage from the finishing frame before resetting.
+        // This is the frame that just completed GPU-side (fence waited).
+        uint peakThisSlot = _peakUsagePerSlot[frameIndex];
+
         _currentFrame = frameIndex;
         _frameBuffers[_currentFrame].Offset = 0;
+        _peakUsagePerSlot[_currentFrame] = 0;
 
         // Destroy any retired buffers from the previous use of this slot.
         // The fence wait in BeginFrame guarantees the GPU is done with them.
         FlushRetiredBuffers(_currentFrame);
+
+        // If the previous cycle's peak usage significantly exceeds the current
+        // buffer size, pre-grow now to avoid mid-frame reallocation.
+        // Use 1.5× peak as the target to give headroom for variance.
+        ref FrameBuffer fb = ref _frameBuffers[_currentFrame];
+        uint targetSize = (uint)(peakThisSlot * 1.5);
+        if (targetSize > fb.Size)
+        {
+            GrowFrameBuffer(ref fb, targetSize);
+        }
     }
 
     /// <summary>
@@ -92,6 +112,11 @@ internal unsafe class VKUniformRingBuffer : IDisposable
         }
 
         fb.Offset = alignedOffset + size;
+
+        // Track peak usage for pre-sizing in the next BeginFrame cycle
+        if (fb.Offset > _peakUsagePerSlot[_currentFrame])
+            _peakUsagePerSlot[_currentFrame] = fb.Offset;
+
         return (fb.Wrapper, alignedOffset);
     }
 

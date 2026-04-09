@@ -42,10 +42,10 @@ public sealed class TonemapperEffect : ImageEffect
                 var dstDepth = ldrBuffer.GraphiteDepthTexture;
                 if (srcDepth != null && dstDepth != null)
                 {
-                    cmd.ResourceBarrier(new Graphite.ResourceBarrier(
-                        srcDepth, Graphite.ResourceState.DepthWrite, Graphite.ResourceState.CopySource));
-                    cmd.ResourceBarrier(new Graphite.ResourceBarrier(
-                        dstDepth, Graphite.ResourceState.DepthWrite, Graphite.ResourceState.CopyDestination));
+                    cmd.ResourceBarriers([
+                        new Graphite.ResourceBarrier(srcDepth, Graphite.ResourceState.DepthWrite, Graphite.ResourceState.CopySource),
+                        new Graphite.ResourceBarrier(dstDepth, Graphite.ResourceState.DepthWrite, Graphite.ResourceState.CopyDestination),
+                    ]);
 
                     cmd.CopyTextureToTexture(new Graphite.TextureTextureCopy
                     {
@@ -56,10 +56,10 @@ public sealed class TonemapperEffect : ImageEffect
                         Depth = 1,
                     });
 
-                    cmd.ResourceBarrier(new Graphite.ResourceBarrier(
-                        srcDepth, Graphite.ResourceState.CopySource, Graphite.ResourceState.ShaderResource));
-                    cmd.ResourceBarrier(new Graphite.ResourceBarrier(
-                        dstDepth, Graphite.ResourceState.CopyDestination, Graphite.ResourceState.DepthWrite));
+                    cmd.ResourceBarriers([
+                        new Graphite.ResourceBarrier(srcDepth, Graphite.ResourceState.CopySource, Graphite.ResourceState.ShaderResource),
+                        new Graphite.ResourceBarrier(dstDepth, Graphite.ResourceState.CopyDestination, Graphite.ResourceState.DepthWrite),
+                    ]);
                 }
             }
         }

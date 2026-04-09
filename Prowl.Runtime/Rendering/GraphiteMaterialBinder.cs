@@ -5,6 +5,7 @@ using System;
 using System.Buffers;
 using System.Collections.Generic;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 
 using Prowl.Runtime.EventSystem;
@@ -46,6 +47,14 @@ internal static class GraphiteMaterialBinder
     private static int s_retireSlot;
 
     /// <summary>
+    /// Per-frame cache of resolved (GTexture, Sampler) tuples keyed by
+    /// (material identity hash, texture name, SPIR-V image dimensionality).
+    /// Avoids redundant dictionary lookups when many draw calls share a material.
+    /// Cleared at the start of each frame in <see cref="BeginFrame"/>.
+    /// </summary>
+    private static readonly Dictionary<(int, string, uint), (GTexture, Sampler)> s_textureResolveCache = new();
+
+    /// <summary>
     /// Call at the start of each frame (after <c>GraphiteDevice.BeginFrame</c>
     /// has waited on the fence).  Disposes resources from 2 frames ago.
     /// </summary>
@@ -57,6 +66,7 @@ internal static class GraphiteMaterialBinder
             try { r.Dispose(); } catch { /* ignore */ }
         }
         s_retiredResources[s_retireSlot].Clear();
+        s_textureResolveCache.Clear();
     }
 
     /// <summary>
@@ -95,6 +105,7 @@ internal static class GraphiteMaterialBinder
             }
             list.Clear();
         }
+        s_textureResolveCache.Clear();
     }
 
     /// <summary>
@@ -103,31 +114,42 @@ internal static class GraphiteMaterialBinder
     /// </summary>
     public static BindGroupLayout CreateBindGroupLayout(SpirvReflection.ReflectionResult reflection)
     {
-        var entries = new List<BindGroupLayoutEntry>();
-
-        foreach (var binding in reflection.Bindings)
+        int maxEntries = reflection.Bindings.Count;
+        BindGroupLayoutEntry[] rented = ArrayPool<BindGroupLayoutEntry>.Shared.Rent(maxEntries);
+        int count = 0;
+        try
         {
-            switch (binding.Type)
+            foreach (var binding in reflection.Bindings)
             {
-                case SpirvReflection.ResourceType.UniformBuffer:
-                    entries.Add(BindGroupLayoutEntry.UniformBuffer(
-                        binding.Binding, ShaderStage.AllGraphics, false, binding.Name));
-                    break;
+                switch (binding.Type)
+                {
+                    case SpirvReflection.ResourceType.UniformBuffer:
+                        rented[count++] = BindGroupLayoutEntry.UniformBuffer(
+                            binding.Binding, ShaderStage.AllGraphics, false, binding.Name);
+                        break;
 
-                case SpirvReflection.ResourceType.CombinedImageSampler:
-                    entries.Add(BindGroupLayoutEntry.CombinedTextureSampler(
-                        binding.Binding, ShaderStage.Fragment, binding.Name));
-                    break;
+                    case SpirvReflection.ResourceType.CombinedImageSampler:
+                        rented[count++] = BindGroupLayoutEntry.CombinedTextureSampler(
+                            binding.Binding, ShaderStage.Fragment, binding.Name);
+                        break;
 
-                case SpirvReflection.ResourceType.StorageBuffer:
-                    entries.Add(BindGroupLayoutEntry.StorageBuffer(
-                        binding.Binding, ShaderStage.AllGraphics, false, false, binding.Name));
-                    break;
+                    case SpirvReflection.ResourceType.StorageBuffer:
+                        rented[count++] = BindGroupLayoutEntry.StorageBuffer(
+                            binding.Binding, ShaderStage.AllGraphics, false, false, binding.Name);
+                        break;
+                }
             }
-        }
 
-        return Graphics.Graphite.CreateBindGroupLayout(
-            new BindGroupLayoutDescriptor(entries.ToArray()));
+            BindGroupLayoutEntry[] entries = new BindGroupLayoutEntry[count];
+            Array.Copy(rented, entries, count);
+            return Graphics.Graphite.CreateBindGroupLayout(
+                new BindGroupLayoutDescriptor(entries));
+        }
+        finally
+        {
+            Array.Clear(rented, 0, count);
+            ArrayPool<BindGroupLayoutEntry>.Shared.Return(rented);
+        }
     }
 
     /// <summary>Debug flag to enable verbose logging of bind group creation.</summary>
@@ -157,71 +179,82 @@ internal static class GraphiteMaterialBinder
         if (DebugBindGroups)
             Debug.Log($"[BindGroup] Creating bind group, {reflection.Bindings.Count} bindings, objectToWorld={(objectToWorld.HasValue ? "set" : "null")}");
 
-        var entries = new List<BindGroupEntry>();
-
-        foreach (var binding in reflection.Bindings)
+        int maxEntries = reflection.Bindings.Count;
+        BindGroupEntry[] rentedEntries = ArrayPool<BindGroupEntry>.Shared.Rent(maxEntries);
+        int entryCount = 0;
+        try
         {
-            if (DebugBindGroups)
-                Debug.Log($"[BindGroup]   Binding: set={binding.Set} binding={binding.Binding} type={binding.Type} name='{binding.Name}' members={binding.Members?.Count ?? 0}");
-
-            switch (binding.Type)
+            foreach (var binding in reflection.Bindings)
             {
-                case SpirvReflection.ResourceType.UniformBuffer:
-                    if (binding.Name == "GlobalUniforms")
-                    {
-                        // Use the per-upload Graphite snapshot so each camera
-                        // render binds its own immutable copy of the data.
-                        var globalGraphiteBuf = GlobalUniforms.GetBuffer();
-                        if (globalGraphiteBuf != null)
-                        {
-                            entries.Add(BindGroupEntry.ForBuffer(
-                                binding.Binding, globalGraphiteBuf, 0,
-                                (uint)GlobalUniformsData.SizeInBytes));
-                            if (DebugBindGroups) Debug.Log($"[BindGroup]     -> GlobalUniforms bound OK");
-                        }
-                        else
-                        {
-                            if (DebugBindGroups) Debug.LogError($"[BindGroup]     -> GlobalUniforms FAILED: no graphite snapshot");
-                            return null; // Can't render without global uniforms
-                        }
-                    }
-                    else
-                    {
-                        // Default UBO: pack property data into the per-frame ring buffer
-                        var (uboBuffer, uboOffset) = PackDefaultUbo(binding, materialProps, instanceProps, objectToWorld, worldToObject);
-                        if (uboBuffer != null)
-                        {
-                            entries.Add(BindGroupEntry.ForBuffer(
-                                binding.Binding, uboBuffer, uboOffset, binding.BufferSize));
-                            if (DebugBindGroups) Debug.Log($"[BindGroup]     -> UBO '{binding.Name}' bound OK, size={binding.BufferSize}, offset={uboOffset}");
-                        }
-                        else
-                        {
-                            if (DebugBindGroups) Debug.LogError($"[BindGroup]     -> UBO '{binding.Name}' FAILED to pack");
-                            return null;
-                        }
-                    }
-                    break;
+                if (DebugBindGroups)
+                    Debug.Log($"[BindGroup]   Binding: set={binding.Set} binding={binding.Binding} type={binding.Type} name='{binding.Name}' members={binding.Members?.Count ?? 0}");
 
-                case SpirvReflection.ResourceType.CombinedImageSampler:
-                    var (tex, sampler) = ResolveTexture(binding.Name, binding.ImageDim, materialProps, instanceProps);
-                    entries.Add(BindGroupEntry.ForTextureSampler(binding.Binding, tex, sampler));
-                    if (DebugBindGroups) Debug.Log($"[BindGroup]     -> Texture '{binding.Name}' bound: {(tex == s_fallbackTexture || tex == s_fallbackTexture3D ? "FALLBACK" : "OK")}");
-                    break;
+                switch (binding.Type)
+                {
+                    case SpirvReflection.ResourceType.UniformBuffer:
+                        if (binding.Name == "GlobalUniforms")
+                        {
+                            // Use the per-upload Graphite snapshot so each camera
+                            // render binds its own immutable copy of the data.
+                            var globalGraphiteBuf = GlobalUniforms.GetBuffer();
+                            if (globalGraphiteBuf != null)
+                            {
+                                rentedEntries[entryCount++] = BindGroupEntry.ForBuffer(
+                                    binding.Binding, globalGraphiteBuf, 0,
+                                    (uint)GlobalUniformsData.SizeInBytes);
+                                if (DebugBindGroups) Debug.Log($"[BindGroup]     -> GlobalUniforms bound OK");
+                            }
+                            else
+                            {
+                                if (DebugBindGroups) Debug.LogError($"[BindGroup]     -> GlobalUniforms FAILED: no graphite snapshot");
+                                return null; // Can't render without global uniforms
+                            }
+                        }
+                        else
+                        {
+                            // Default UBO: pack property data into the per-frame ring buffer
+                            var (uboBuffer, uboOffset) = PackDefaultUbo(binding, materialProps, instanceProps, objectToWorld, worldToObject);
+                            if (uboBuffer != null)
+                            {
+                                rentedEntries[entryCount++] = BindGroupEntry.ForBuffer(
+                                    binding.Binding, uboBuffer, uboOffset, binding.BufferSize);
+                                if (DebugBindGroups) Debug.Log($"[BindGroup]     -> UBO '{binding.Name}' bound OK, size={binding.BufferSize}, offset={uboOffset}");
+                            }
+                            else
+                            {
+                                if (DebugBindGroups) Debug.LogError($"[BindGroup]     -> UBO '{binding.Name}' FAILED to pack");
+                                return null;
+                            }
+                        }
+                        break;
+
+                    case SpirvReflection.ResourceType.CombinedImageSampler:
+                        var (tex, sampler) = ResolveTexture(binding.Name, binding.ImageDim, materialProps, instanceProps);
+                        rentedEntries[entryCount++] = BindGroupEntry.ForTextureSampler(binding.Binding, tex, sampler);
+                        if (DebugBindGroups) Debug.Log($"[BindGroup]     -> Texture '{binding.Name}' bound: {(tex == s_fallbackTexture || tex == s_fallbackTexture3D ? "FALLBACK" : "OK")}");
+                        break;
+                }
             }
-        }
 
-        if (entries.Count == 0)
+            if (entryCount == 0)
+            {
+                if (DebugBindGroups) Debug.LogError($"[BindGroup] FAILED: No entries created!");
+                return null;
+            }
+
+            if (DebugBindGroups) Debug.Log($"[BindGroup] SUCCESS: Created with {entryCount} entries");
+            BindGroupEntry[] finalEntries = new BindGroupEntry[entryCount];
+            Array.Copy(rentedEntries, finalEntries, entryCount);
+            var bindGroup = Graphics.Graphite.CreateBindGroup(
+                new BindGroupDescriptor(layout, finalEntries));
+            Retire(bindGroup);
+            return bindGroup;
+        }
+        finally
         {
-            if (DebugBindGroups) Debug.LogError($"[BindGroup] FAILED: No entries created!");
-            return null;
+            Array.Clear(rentedEntries, 0, entryCount);
+            ArrayPool<BindGroupEntry>.Shared.Return(rentedEntries);
         }
-
-        if (DebugBindGroups) Debug.Log($"[BindGroup] SUCCESS: Created with {entries.Count} entries");
-        var bindGroup = Graphics.Graphite.CreateBindGroup(
-            new BindGroupDescriptor(layout, entries.ToArray()));
-        Retire(bindGroup);
-        return bindGroup;
     }
 
     #region UBO Packing
@@ -413,24 +446,6 @@ internal static class GraphiteMaterialBinder
     {
         EnsureDefaults();
 
-        GTexture? graphiteTex = null;
-
-        if (name != null)
-        {
-            // Try instance textures first
-            graphiteTex = TryGetGraphiteTexture(name, instanceProps);
-
-            // Then material textures
-            graphiteTex ??= TryGetGraphiteTexture(name, materialProps);
-
-            // Then global textures
-            graphiteTex ??= TryGetGlobalGraphiteTexture(name);
-
-            // Debug: Log if using fallback
-            if (graphiteTex == null && DebugBindGroups)
-                Debug.Log($"[BindGroup] Texture '{name}' not found, using fallback (dim={imageDim})");
-        }
-
         // Choose the correct fallback based on SPIR-V image dimensionality.
         // Using a 2D ImageView for a sampler3D or samplerCube binding causes
         // VK_ERROR_DEVICE_LOST on Vulkan — the ImageView type must match.
@@ -442,7 +457,32 @@ internal static class GraphiteMaterialBinder
             _ => s_fallbackTexture!,
         };
 
-        return (graphiteTex ?? fallback, s_defaultSampler!);
+        if (name == null)
+            return (fallback, s_defaultSampler!);
+
+        // Check per-object instance overrides first (vary per-draw, not cached).
+        GTexture? instanceTex = TryGetGraphiteTexture(name, instanceProps);
+        if (instanceTex != null)
+            return (instanceTex, s_defaultSampler!);
+
+        // For material + global resolution use a per-frame cache.
+        // Many draw calls share the same material, so this avoids
+        // redundant dictionary lookups for every draw call.
+        int materialId = materialProps != null ? RuntimeHelpers.GetHashCode(materialProps) : 0;
+        (int, string, uint) cacheKey = (materialId, name, imageDim);
+        if (s_textureResolveCache.TryGetValue(cacheKey, out (GTexture Tex, Sampler Samp) cached))
+            return cached;
+
+        // Resolve from material, then global textures.
+        GTexture? graphiteTex = TryGetGraphiteTexture(name, materialProps);
+        graphiteTex ??= TryGetGlobalGraphiteTexture(name);
+
+        if (graphiteTex == null && DebugBindGroups)
+            Debug.Log($"[BindGroup] Texture '{name}' not found, using fallback (dim={imageDim})");
+
+        (GTexture, Sampler) result = (graphiteTex ?? fallback, s_defaultSampler!);
+        s_textureResolveCache[cacheKey] = result;
+        return result;
     }
 
     private static GTexture? TryGetGraphiteTexture(string name, PropertyState? props)

@@ -1,6 +1,7 @@
 ﻿// This file is part of the Prowl Game Engine
 // Licensed under the MIT License. See the LICENSE file in the project root for details.
 
+using System;
 using System.Collections.Generic;
 
 using Prowl.Runtime.Graphite;
@@ -386,21 +387,27 @@ public abstract class RenderPipeline : EngineObject
         if (Graphics.ActiveGraphiteCmdBuffer is not { InRenderPass: false } cmd) return;
         if (!target.IsValid()) return;
 
-        var colorAttachments = target.GraphiteColorTextures;
+        Graphite.ResourceBarrier[] barriers = new Graphite.ResourceBarrier[8];
+        int count = 0;
+
+        Graphite.Texture?[]? colorAttachments = target.GraphiteColorTextures;
         if (colorAttachments != null)
         {
-            foreach (var tex in colorAttachments)
+            foreach (Graphite.Texture? tex in colorAttachments)
             {
                 if (tex != null)
-                    cmd.ResourceBarrier(new Graphite.ResourceBarrier(
-                        tex, Graphite.ResourceState.RenderTarget, Graphite.ResourceState.ShaderResource));
+                    barriers[count++] = new Graphite.ResourceBarrier(
+                        tex, Graphite.ResourceState.RenderTarget, Graphite.ResourceState.ShaderResource);
             }
         }
 
-        var depthAttachment = target.GraphiteDepthTexture;
+        Graphite.Texture? depthAttachment = target.GraphiteDepthTexture;
         if (depthAttachment != null)
-            cmd.ResourceBarrier(new Graphite.ResourceBarrier(
-                depthAttachment, Graphite.ResourceState.DepthWrite, Graphite.ResourceState.ShaderResource));
+            barriers[count++] = new Graphite.ResourceBarrier(
+                depthAttachment, Graphite.ResourceState.DepthWrite, Graphite.ResourceState.ShaderResource);
+
+        if (count > 0)
+            cmd.ResourceBarriers(new ReadOnlySpan<Graphite.ResourceBarrier>(barriers, 0, count));
     }
 
     /// <summary>
@@ -415,21 +422,27 @@ public abstract class RenderPipeline : EngineObject
         if (Graphics.ActiveGraphiteCmdBuffer is not { InRenderPass: false } cmd) return;
         if (!target.IsValid()) return;
 
-        var colorAttachments = target.GraphiteColorTextures;
+        Graphite.ResourceBarrier[] barriers = new Graphite.ResourceBarrier[8];
+        int count = 0;
+
+        Graphite.Texture?[]? colorAttachments = target.GraphiteColorTextures;
         if (colorAttachments != null)
         {
-            foreach (var tex in colorAttachments)
+            foreach (Graphite.Texture? tex in colorAttachments)
             {
                 if (tex != null)
-                    cmd.ResourceBarrier(new Graphite.ResourceBarrier(
-                        tex, Graphite.ResourceState.ShaderResource, Graphite.ResourceState.RenderTarget));
+                    barriers[count++] = new Graphite.ResourceBarrier(
+                        tex, Graphite.ResourceState.ShaderResource, Graphite.ResourceState.RenderTarget);
             }
         }
 
-        var depthAttachment = target.GraphiteDepthTexture;
+        Graphite.Texture? depthAttachment = target.GraphiteDepthTexture;
         if (depthAttachment != null)
-            cmd.ResourceBarrier(new Graphite.ResourceBarrier(
-                depthAttachment, Graphite.ResourceState.ShaderResource, Graphite.ResourceState.DepthWrite));
+            barriers[count++] = new Graphite.ResourceBarrier(
+                depthAttachment, Graphite.ResourceState.ShaderResource, Graphite.ResourceState.DepthWrite);
+
+        if (count > 0)
+            cmd.ResourceBarriers(new ReadOnlySpan<Graphite.ResourceBarrier>(barriers, 0, count));
     }
 
     /// <summary>

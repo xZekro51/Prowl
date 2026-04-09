@@ -2,6 +2,7 @@
 // Licensed under the MIT License. See the LICENSE file in the project root for details.
 
 using System;
+using System.Buffers;
 using System.Collections.Generic;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
@@ -183,60 +184,77 @@ public static class ComputeDispatcher
         // Build and bind a bind group if we have any resources
         if (kernel.BindGroupLayout != null && (uniforms?.GpuBuffer is not null || images != null || textures != null || storageBuffers != null))
         {
-            List<BindGroupEntry> entries = new();
+            // Estimate max entry count to avoid resizing
+            int maxEntries = (uniforms?.GpuBuffer is not null ? 1 : 0)
+                + (images?.Length ?? 0)
+                + (textures?.Length ?? 0)
+                + (storageBuffers?.Length ?? 0);
 
-            if (uniforms?.GpuBuffer is GBuffer gpuBuf)
+            BindGroupEntry[] pooledEntries = ArrayPool<BindGroupEntry>.Shared.Rent(Math.Max(maxEntries, 1));
+            int entryCount = 0;
+
+            try
             {
-                // Find the correct binding index for the uniform buffer from the kernel's layout.
-                // Do not assume binding 0 — the layout may place it at any index.
-                uint uniformBinding = 0;
-                if (kernel.LayoutEntries != null)
+                if (uniforms?.GpuBuffer is GBuffer gpuBuf)
                 {
-                    foreach (BindGroupLayoutEntry layoutEntry in kernel.LayoutEntries)
+                    // Find the correct binding index for the uniform buffer from the kernel's layout.
+                    // Do not assume binding 0 — the layout may place it at any index.
+                    uint uniformBinding = 0;
+                    if (kernel.LayoutEntries != null)
                     {
-                        if (layoutEntry.Type == BindingType.UniformBuffer)
+                        foreach (BindGroupLayoutEntry layoutEntry in kernel.LayoutEntries)
                         {
-                            uniformBinding = layoutEntry.Binding;
-                            break;
+                            if (layoutEntry.Type == BindingType.UniformBuffer)
+                            {
+                                uniformBinding = layoutEntry.Binding;
+                                break;
+                            }
                         }
+                    }
+
+                    pooledEntries[entryCount++] = BindGroupEntry.ForBuffer(uniformBinding, gpuBuf);
+                }
+
+                if (images != null)
+                {
+                    foreach ((uint binding, Graphite.Texture texture) in images)
+                    {
+                        pooledEntries[entryCount++] = BindGroupEntry.ForTexture(binding, texture);
                     }
                 }
 
-                entries.Add(BindGroupEntry.ForBuffer(uniformBinding, gpuBuf));
-            }
-
-            if (images != null)
-            {
-                foreach ((uint binding, Graphite.Texture texture) in images)
+                if (textures != null)
                 {
-                    entries.Add(BindGroupEntry.ForTexture(binding, texture));
+                    foreach ((uint binding, Graphite.Texture texture, Sampler sampler) in textures)
+                    {
+                        pooledEntries[entryCount++] = BindGroupEntry.ForTextureSampler(binding, texture, sampler);
+                    }
                 }
-            }
 
-            if (textures != null)
-            {
-                foreach ((uint binding, Graphite.Texture texture, Sampler sampler) in textures)
+                if (storageBuffers != null)
                 {
-                    entries.Add(BindGroupEntry.ForTextureSampler(binding, texture, sampler));
+                    foreach ((uint binding, GBuffer buffer) in storageBuffers)
+                    {
+                        pooledEntries[entryCount++] = BindGroupEntry.ForBuffer(binding, buffer);
+                    }
                 }
-            }
 
-            if (storageBuffers != null)
+                BindGroupEntry[] exactEntries = new BindGroupEntry[entryCount];
+                Array.Copy(pooledEntries, exactEntries, entryCount);
+
+                BindGroup bindGroup = Graphics.Graphite.CreateBindGroup(new BindGroupDescriptor(
+                    kernel.BindGroupLayout, exactEntries));
+
+                cmd.SetBindGroup(0, bindGroup);
+
+                // Queue the bind group for deferred disposal so the GPU finishes
+                // using the descriptor set before it is reclaimed.
+                GraphiteMaterialBinder.Retire(bindGroup);
+            }
+            finally
             {
-                foreach ((uint binding, GBuffer buffer) in storageBuffers)
-                {
-                    entries.Add(BindGroupEntry.ForBuffer(binding, buffer));
-                }
+                ArrayPool<BindGroupEntry>.Shared.Return(pooledEntries);
             }
-
-            BindGroup bindGroup = Graphics.Graphite.CreateBindGroup(new BindGroupDescriptor(
-                kernel.BindGroupLayout, entries.ToArray()));
-
-            cmd.SetBindGroup(0, bindGroup);
-
-            // Queue the bind group for deferred disposal so the GPU finishes
-            // using the descriptor set before it is reclaimed.
-            GraphiteMaterialBinder.Retire(bindGroup);
         }
 
         // Dispatch

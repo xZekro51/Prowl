@@ -238,32 +238,54 @@ internal unsafe class VKMemoryAllocator : IDisposable
         ulong freeStart = offset;
         ulong freeEnd = offset + size;
 
-        // Coalesce with adjacent free regions
+        // Coalesce with adjacent free regions without allocating a List<ulong>.
+        // At most two neighbors: the region ending at freeStart (left) and
+        // the region starting at freeEnd (right).
         ulong mergedStart = freeStart;
         ulong mergedEnd = freeEnd;
-        var toRemove = new List<ulong>();
 
-        for (int i = 0; i < freeList.Count; i++)
+        // Right neighbor: O(log n) lookup — a region starting exactly at freeEnd
+        if (freeList.TryGetValue(freeEnd, out ulong rightSize))
         {
-            ulong regionStart = freeList.Keys[i];
-            ulong regionEnd = regionStart + freeList.Values[i];
+            mergedEnd = freeEnd + rightSize;
+            freeList.Remove(freeEnd);
+        }
 
-            if (regionEnd == freeStart)
+        // Left neighbor: find the largest key < freeStart via binary search on
+        // the sorted keys, then check if that region ends exactly at freeStart.
+        int insertIdx = BinarySearchInsertionIndex(freeList, freeStart);
+        if (insertIdx > 0)
+        {
+            ulong prevKey = freeList.Keys[insertIdx - 1];
+            ulong prevSize = freeList.Values[insertIdx - 1];
+            if (prevKey + prevSize == freeStart)
             {
-                mergedStart = regionStart;
-                toRemove.Add(regionStart);
-            }
-            else if (regionStart == freeEnd)
-            {
-                mergedEnd = regionEnd;
-                toRemove.Add(regionStart);
+                mergedStart = prevKey;
+                freeList.RemoveAt(insertIdx - 1);
             }
         }
 
-        foreach (var key in toRemove)
-            freeList.Remove(key);
-
         freeList.Add(mergedStart, mergedEnd - mergedStart);
+    }
+
+    /// <summary>
+    /// Binary search for the insertion index of <paramref name="key"/> in a
+    /// <see cref="SortedList{TKey,TValue}"/>'s keys. Returns the index of the
+    /// first key greater than or equal to <paramref name="key"/>.
+    /// </summary>
+    private static int BinarySearchInsertionIndex(SortedList<ulong, ulong> list, ulong key)
+    {
+        int lo = 0;
+        int hi = list.Count - 1;
+        while (lo <= hi)
+        {
+            int mid = lo + (hi - lo) / 2;
+            if (list.Keys[mid] < key)
+                lo = mid + 1;
+            else
+                hi = mid - 1;
+        }
+        return lo;
     }
 
     public void Dispose()

@@ -94,10 +94,10 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
     // Cached render passes
     private readonly Dictionary<RenderPassKey, RenderPass> _renderPassCache = new();
 
-    // Per-frame-slot deferred destruction for resources still referenced by in-flight command buffers.
-    // Resources are retired into the current frame slot and destroyed in BeginFrame once the
-    // corresponding fence has been signaled, guaranteeing the GPU is no longer using them.
-    private List<(List<Framebuffer> Framebuffers, CommandBuffer CommandBuffer, CommandPool SourcePool)>[] _retiredResources = [];
+    // Per-frame-slot deferred recycling for command buffers still referenced by in-flight work.
+    // Command buffers are retired into the current frame slot and returned to the free pool
+    // in BeginFrame once the corresponding fence has been signaled.
+    private List<(CommandBuffer CommandBuffer, CommandPool SourcePool)>[] _retiredResources = [];
 
     // Sub-allocator for GPU memory (avoids the ~4096 vkAllocateMemory limit)
     internal VKMemoryAllocator MemoryAllocator { get; private set; } = null!;
@@ -108,10 +108,17 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
     // Per-frame ring buffer for per-draw uniform data (eliminates per-draw buffer creation)
     internal VKUniformRingBuffer UniformRingBuffer { get; private set; } = null!;
 
+    // Per-frame staging buffer pool for GPU-only uploads (eliminates per-upload buffer alloc)
+    internal VKStagingBufferPool StagingBufferPool { get; private set; } = null!;
+
     // ── VK Framebuffer Cache ─────────────────────────────────────
     // Caches VkFramebuffer objects by their attachment configuration (render pass + image views
     // + dimensions) to avoid per-render-pass create/destroy overhead in VKCommandList.
+    // LRU eviction prevents unbounded growth when render textures are created/destroyed.
+    private const int MaxFramebufferCacheEntries = 256;
     private readonly Dictionary<VKFramebufferCacheKey, Framebuffer> _framebufferCache = new();
+    private readonly Dictionary<VKFramebufferCacheKey, long> _framebufferLastUsed = new();
+    private long _framebufferAccessCounter;
 
     // Upload batch state (replaces per-upload QueueWaitIdle with batched fence-based submission)
     private CommandBuffer _batchCmdBuffer;
@@ -120,6 +127,11 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
     private VkFence _uploadFence;
     private int _batchUploadCount;
     private long _batchUploadBytes;
+
+    // Batched submission accumulator — collects command buffers during the frame
+    // and submits them in a single vkQueueSubmit in FlushPendingSubmissions().
+    private readonly List<CommandBuffer> _pendingCommandBuffers = new();
+    private bool _pendingHasPresentTarget;
 
     // GPU timestamp query infrastructure for profiling
     private const int MaxTimerQueryPairs = 16;
@@ -136,6 +148,15 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
     // avoiding the need for external synchronization on pool operations.
     private readonly ConcurrentDictionary<int, CommandPool> _threadCommandPools = new();
     private readonly object _threadPoolCreationLock = new();
+
+    // Per-CommandPool free list of recycled command buffers (avoids per-frame alloc/free).
+    private readonly ConcurrentDictionary<CommandPool, ConcurrentBag<CommandBuffer>> _freeCommandBuffers = new();
+
+    // Sampler cache — deduplicates Sampler objects by configuration to avoid
+    // exceeding the per-device sampler limit (~4000 on many GPUs) and reduce
+    // vkCreateSampler overhead. Cached samplers are reference-counted via the
+    // dictionary; they are destroyed only when the device is disposed.
+    private readonly Dictionary<SamplerCacheKey, VKSampler> _samplerCache = new();
 
     /// <summary>Whether upload batching is currently active.</summary>
     internal bool IsUploadBatching => _isBatching;
@@ -203,7 +224,7 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
         Debug.Log("[Vulkan] Creating sync objects...");
         CreateSyncObjects();
 
-        _retiredResources = new List<(List<Framebuffer>, CommandBuffer, CommandPool)>[MaxFramesInFlight];
+        _retiredResources = new List<(CommandBuffer, CommandPool)>[MaxFramesInFlight];
         for (int i = 0; i < MaxFramesInFlight; i++)
             _retiredResources[i] = [];
 
@@ -218,6 +239,10 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
         // Initialize per-frame uniform ring buffer for per-draw UBO data
         UniformRingBuffer = new VKUniformRingBuffer(this, MaxFramesInFlight);
         Debug.Log("[Vulkan] Uniform ring buffer initialized.");
+
+        // Initialize per-frame staging buffer pool for GPU-only uploads
+        StagingBufferPool = new VKStagingBufferPool(this, MaxFramesInFlight);
+        Debug.Log("[Vulkan] Staging buffer pool initialized.");
 
         // Create a reusable fence for upload operations
         var uploadFenceInfo = new FenceCreateInfo { SType = StructureType.FenceCreateInfo };
@@ -814,7 +839,14 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
     public override Sampler CreateSampler(in SamplerDescriptor descriptor)
     {
         ThrowIfDisposed();
-        return new VKSampler(this, in descriptor);
+
+        SamplerCacheKey key = new(in descriptor);
+        if (_samplerCache.TryGetValue(key, out VKSampler? cached))
+            return cached;
+
+        VKSampler sampler = new(this, in descriptor) { IsCached = true };
+        _samplerCache[key] = sampler;
+        return sampler;
     }
 
     public override ShaderModule CreateShaderModule(in ShaderModuleDescriptor descriptor)
@@ -870,49 +902,21 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
         if (commandList is not VKCommandList vkCmd)
             throw new ArgumentException("Command list is not a Vulkan command list.", nameof(commandList));
 
-        // Capture debug marker context before submit for crash diagnostics.
-        string markerPath = commandList.DebugMarkerPath;
-        var cb = vkCmd.Handle;
-
-        // When the first command list renders to the swapchain, consume
-        // the image-available semaphore so the GPU waits for the acquired
-        // image.  The render-finished semaphore and in-flight fence are
-        // NOT attached here — they are always signalled in Present() via a
-        // lightweight sync batch that is ordered after ALL frame submissions,
-        // guaranteeing the fence covers every command buffer this frame.
-        if (vkCmd.IsPresentTarget && !_frameSyncConsumed && _khrSwapchain != null)
-        {
-            var waitSem = _imageAvailableSemaphores[_currentFrame];
-            var waitStage = PipelineStageFlags.ColorAttachmentOutputBit;
-
-            var submitInfo = new SubmitInfo
-            {
-                SType = StructureType.SubmitInfo,
-                WaitSemaphoreCount = 1,
-                PWaitSemaphores = &waitSem,
-                PWaitDstStageMask = &waitStage,
-                CommandBufferCount = 1,
-                PCommandBuffers = &cb,
-            };
-            CheckInstance(Vk.QueueSubmit(GraphicsQueue, 1, &submitInfo, default), markerPath);
-            _frameSyncConsumed = true;
-        }
-        else
-        {
-            var submitInfo = new SubmitInfo
-            {
-                SType = StructureType.SubmitInfo,
-                CommandBufferCount = 1,
-                PCommandBuffers = &cb,
-            };
-            CheckInstance(Vk.QueueSubmit(GraphicsQueue, 1, &submitInfo, default), markerPath);
-        }
+        // Accumulate for batched submission — FlushPendingSubmissions() will
+        // issue a single vkQueueSubmit with all accumulated command buffers.
+        _pendingCommandBuffers.Add(vkCmd.Handle);
+        if (vkCmd.IsPresentTarget)
+            _pendingHasPresentTarget = true;
     }
 
     public override void SubmitCommands(ReadOnlySpan<CommandList> commandLists)
     {
         ThrowIfDisposed();
         if (IsDeviceLost) return;
+
+        // Flush any accumulated single-submit command buffers first to preserve ordering.
+        FlushPendingSubmissions();
+
         var buffers = stackalloc CommandBuffer[commandLists.Length];
         for (int i = 0; i < commandLists.Length; i++)
         {
@@ -934,6 +938,10 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
     {
         ThrowIfDisposed();
         if (IsDeviceLost) return;
+
+        // Flush any accumulated single-submit command buffers first to preserve queue ordering.
+        FlushPendingSubmissions();
+
         if (commandList is not VKCommandList vkCmd)
             throw new ArgumentException("Command list is not a Vulkan command list.", nameof(commandList));
 
@@ -949,6 +957,52 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
             PCommandBuffers = &cb,
         };
         CheckResult(Vk.QueueSubmit(GraphicsQueue, 1, &submitInfo, vkFence));
+    }
+
+    /// <summary>
+    /// Submits all accumulated command buffers in a single <c>vkQueueSubmit</c> call.
+    /// Called automatically by <see cref="Present"/> and before explicit submit overloads;
+    /// can also be called explicitly when a synchronization point is needed mid-frame.
+    /// </summary>
+    private void FlushPendingSubmissions()
+    {
+        if (_pendingCommandBuffers.Count == 0)
+            return;
+
+        Span<CommandBuffer> span = CollectionsMarshal.AsSpan(_pendingCommandBuffers);
+        fixed (CommandBuffer* pCbs = span)
+        {
+            if (_pendingHasPresentTarget && !_frameSyncConsumed && _khrSwapchain != null)
+            {
+                var waitSem = _imageAvailableSemaphores[_currentFrame];
+                var waitStage = PipelineStageFlags.ColorAttachmentOutputBit;
+
+                var submitInfo = new SubmitInfo
+                {
+                    SType = StructureType.SubmitInfo,
+                    WaitSemaphoreCount = 1,
+                    PWaitSemaphores = &waitSem,
+                    PWaitDstStageMask = &waitStage,
+                    CommandBufferCount = (uint)span.Length,
+                    PCommandBuffers = pCbs,
+                };
+                CheckResult(Vk.QueueSubmit(GraphicsQueue, 1, &submitInfo, default));
+                _frameSyncConsumed = true;
+            }
+            else
+            {
+                var submitInfo = new SubmitInfo
+                {
+                    SType = StructureType.SubmitInfo,
+                    CommandBufferCount = (uint)span.Length,
+                    PCommandBuffers = pCbs,
+                };
+                CheckResult(Vk.QueueSubmit(GraphicsQueue, 1, &submitInfo, default));
+            }
+        }
+
+        _pendingCommandBuffers.Clear();
+        _pendingHasPresentTarget = false;
     }
 
     #endregion
@@ -1078,9 +1132,8 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
         }
         else
         {
-            // Use staging buffer for GPU-only memory
-            var stagingDesc = new BufferDescriptor(dataSize, BufferUsage.CopySource, MemoryAccess.CpuToGpu);
-            var staging = new VKBuffer(this, in stagingDesc);
+            // Use pooled staging buffer for GPU-only memory
+            var staging = StagingBufferPool.Rent(dataSize);
 
             var mappedPtr = staging.Allocation.GetMappedData();
             fixed (T* src = data)
@@ -1093,12 +1146,10 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
 
             if (_isBatching)
             {
-                TrackBatchResource(staging);
                 _batchUploadCount++;
                 _batchUploadBytes += dataSize;
             }
-            else
-                staging.Dispose();
+            StagingBufferPool.Return(staging, _currentFrame);
         }
     }
 
@@ -1109,10 +1160,9 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
         if (texture is not VKTexture vkTexture)
             return;
 
-        // Create staging buffer
+        // Use pooled staging buffer
         uint dataSize = (uint)data.Length;
-        var stagingDesc = new BufferDescriptor(dataSize, BufferUsage.CopySource, MemoryAccess.CpuToGpu);
-        var staging = new VKBuffer(this, in stagingDesc);
+        var staging = StagingBufferPool.Rent(dataSize);
 
         var mappedPtr = staging.Allocation.GetMappedData();
         fixed (byte* src = data)
@@ -1147,12 +1197,10 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
 
         if (_isBatching)
         {
-            TrackBatchResource(staging);
             _batchUploadCount++;
             _batchUploadBytes += dataSize;
         }
-        else
-            staging.Dispose();
+        StagingBufferPool.Return(staging, _currentFrame);
     }
 
     public override void ReadbackTexture(Texture texture, uint mipLevel, uint arrayLayer, Span<byte> destination)
@@ -1347,6 +1395,7 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
         // Reset per-frame sub-systems for this frame slot
         DescriptorPoolManager.BeginFrame(_currentFrame);
         UniformRingBuffer.BeginFrame(_currentFrame);
+        StagingBufferPool.BeginFrame(_currentFrame);
 
         // Acquire the next swapchain image
         var result = _khrSwapchain.AcquireNextImage(
@@ -1374,9 +1423,22 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
         if (result != Result.Success && result != Result.SuboptimalKhr)
             CheckResult(result);
 
+        // Guard against a stale swapchain image index after a race with recreation.
+        if (_currentImageIndex >= (uint)_swapchainTextures.Length)
+        {
+            Debug.LogWarning($"[Vulkan] Acquired image index {_currentImageIndex} is out of bounds " +
+                $"(swapchain has {_swapchainTextures.Length} images) — skipping frame.");
+            RecreateSwapchain();
+            return false;
+        }
+
         // Only reset the fence if we know we're going to submit work
         Vk.ResetFences(Device, 1, &fence);
         _frameSyncConsumed = false;
+
+        // Clear any residual pending submissions (safety — Present should have flushed them)
+        _pendingCommandBuffers.Clear();
+        _pendingHasPresentTarget = false;
         return true;
     }
 
@@ -1385,11 +1447,19 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
         ThrowIfDisposed();
         if (IsDeviceLost)
         {
+            _pendingCommandBuffers.Clear();
+            _pendingHasPresentTarget = false;
             _currentFrame = (_currentFrame + 1) % MaxFramesInFlight;
             return false;
         }
         if (_khrSwapchain == null)
+        {
+            FlushPendingSubmissions();
             return true;
+        }
+
+        // Flush all accumulated command buffers in a single vkQueueSubmit.
+        FlushPendingSubmissions();
 
         // Always submit a lightweight sync batch at the end of the frame.
         // Because Vulkan queue submissions are strictly ordered, this batch
@@ -1517,14 +1587,14 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
             CommandBufferCount = 1,
         };
 
-        Vk.AllocateCommandBuffers(Device, &allocInfo, out var commandBuffer);
+        Check(Vk.AllocateCommandBuffers(Device, &allocInfo, out var commandBuffer));
 
         var beginInfo = new CommandBufferBeginInfo
         {
             SType = StructureType.CommandBufferBeginInfo,
             Flags = CommandBufferUsageFlags.OneTimeSubmitBit,
         };
-        Vk.BeginCommandBuffer(commandBuffer, &beginInfo);
+        Check(Vk.BeginCommandBuffer(commandBuffer, &beginInfo));
         return commandBuffer;
     }
 
@@ -1802,7 +1872,7 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
                 : (key.ColorLoadOps[i] == LoadOp.Load ? ImageLayout.ColorAttachmentOptimal : ImageLayout.Undefined);
             var finalLayout = key.IsPresentTarget
                 ? ImageLayout.PresentSrcKhr
-                : ImageLayout.ColorAttachmentOptimal;
+                : (key.ColorFinalLayoutShaderRead ? ImageLayout.ShaderReadOnlyOptimal : ImageLayout.ColorAttachmentOptimal);
 
             attachments.Add(new AttachmentDescription
             {
@@ -1878,18 +1948,21 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
                 SrcAccessMask = 0,
                 DstStageMask = PipelineStageFlags.ColorAttachmentOutputBit | PipelineStageFlags.EarlyFragmentTestsBit,
                 DstAccessMask = AccessFlags.ColorAttachmentWriteBit | AccessFlags.DepthStencilAttachmentWriteBit,
+                DependencyFlags = DependencyFlags.ByRegionBit,
             };
 
             // Exit dependency: ensure render pass writes are complete before
-            // subsequent fragment shader reads or transfer operations.
+            // subsequent fragment shader reads, compute shader reads, or transfer operations.
+            // ByRegion allows tile-based GPUs to overlap submission/flush per-tile.
             var exitDependency = new SubpassDependency
             {
                 SrcSubpass = 0,
                 DstSubpass = Vk.SubpassExternal,
                 SrcStageMask = PipelineStageFlags.ColorAttachmentOutputBit | PipelineStageFlags.LateFragmentTestsBit,
                 SrcAccessMask = AccessFlags.ColorAttachmentWriteBit | AccessFlags.DepthStencilAttachmentWriteBit,
-                DstStageMask = PipelineStageFlags.FragmentShaderBit | PipelineStageFlags.TransferBit,
+                DstStageMask = PipelineStageFlags.FragmentShaderBit | PipelineStageFlags.ComputeShaderBit | PipelineStageFlags.TransferBit,
                 DstAccessMask = AccessFlags.ShaderReadBit | AccessFlags.TransferReadBit,
+                DependencyFlags = DependencyFlags.ByRegionBit,
             };
 
             var dependencies = stackalloc SubpassDependency[] { dependency, exitDependency };
@@ -1920,7 +1993,14 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
     {
         VKFramebufferCacheKey key = new(renderPass, imageViews, width, height);
         if (_framebufferCache.TryGetValue(key, out Framebuffer cached))
+        {
+            _framebufferLastUsed[key] = ++_framebufferAccessCounter;
             return cached;
+        }
+
+        // Evict least-recently-used entries if the cache is at capacity.
+        if (_framebufferCache.Count >= MaxFramebufferCacheEntries)
+            EvictLruFramebuffers(MaxFramebufferCacheEntries / 4);
 
         fixed (ImageView* pViews = imageViews)
         {
@@ -1936,7 +2016,32 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
             };
             Check(Vk.CreateFramebuffer(Device, &fbInfo, null, out Framebuffer fb));
             _framebufferCache[key] = fb;
+            _framebufferLastUsed[key] = ++_framebufferAccessCounter;
             return fb;
+        }
+    }
+
+    /// <summary>
+    /// Evicts the <paramref name="count"/> least-recently-used framebuffers from the cache.
+    /// </summary>
+    private void EvictLruFramebuffers(int count)
+    {
+        // Build a list of keys sorted by last-used time (ascending = oldest first).
+        List<VKFramebufferCacheKey> candidates = new(_framebufferCache.Count);
+        candidates.AddRange(_framebufferLastUsed.Keys);
+        candidates.Sort((a, b) => _framebufferLastUsed[a].CompareTo(_framebufferLastUsed[b]));
+
+        int evicted = 0;
+        foreach (VKFramebufferCacheKey key in candidates)
+        {
+            if (evicted >= count)
+                break;
+            if (_framebufferCache.Remove(key, out Framebuffer fb))
+            {
+                Vk.DestroyFramebuffer(Device, fb, null);
+                _framebufferLastUsed.Remove(key);
+                evicted++;
+            }
         }
     }
 
@@ -1962,6 +2067,7 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
             {
                 if (_framebufferCache.Remove(key, out Framebuffer fb))
                     Vk.DestroyFramebuffer(Device, fb, null);
+                _framebufferLastUsed.Remove(key);
             }
         }
     }
@@ -1974,27 +2080,28 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
         foreach (Framebuffer fb in _framebufferCache.Values)
             Vk.DestroyFramebuffer(Device, fb, null);
         _framebufferCache.Clear();
+        _framebufferLastUsed.Clear();
     }
 
     /// <summary>
-    /// Moves framebuffers and the command buffer from a disposed <see cref="VKCommandList"/>
-    /// into the current frame slot's retirement list so they are destroyed only after the
-    /// GPU has finished executing the commands that reference them.
+    /// Moves the command buffer from a disposed <see cref="VKCommandList"/> into the
+    /// current frame slot's retirement list so it is recycled only after the GPU has
+    /// finished executing the commands that reference it.
     /// </summary>
-    internal void RetireCommandListResources(List<Framebuffer> framebuffers, CommandBuffer commandBuffer, CommandPool sourcePool)
+    internal void RetireCommandListResources(CommandBuffer commandBuffer, CommandPool sourcePool)
     {
-        _retiredResources[_currentFrame].Add((framebuffers, commandBuffer, sourcePool));
+        _retiredResources[_currentFrame].Add((commandBuffer, sourcePool));
     }
 
     private void FlushRetiredResources(int frameSlot)
     {
         var list = _retiredResources[frameSlot];
-        foreach (var (framebuffers, cb, sourcePool) in list)
+        foreach (var (cb, sourcePool) in list)
         {
-            foreach (var fb in framebuffers)
-                Vk.DestroyFramebuffer(Device, fb, null);
-            var cbLocal = cb;
-            Vk.FreeCommandBuffers(Device, sourcePool, 1, &cbLocal);
+            // Return command buffer to the free pool for reuse instead of freeing it.
+            ConcurrentBag<CommandBuffer> bag = _freeCommandBuffers.GetOrAdd(
+                sourcePool, static _ => new ConcurrentBag<CommandBuffer>());
+            bag.Add(cb);
         }
         list.Clear();
     }
@@ -2088,6 +2195,26 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
         {
             SilkMarshal.Free(namePtr);
         }
+    }
+
+    /// <summary>
+    /// Rents a <see cref="CommandBuffer"/> from the recycled pool for the given
+    /// <paramref name="pool"/>, or allocates a fresh one if the pool is empty.
+    /// </summary>
+    internal CommandBuffer RentCommandBuffer(CommandPool pool)
+    {
+        if (_freeCommandBuffers.TryGetValue(pool, out ConcurrentBag<CommandBuffer>? bag) && bag.TryTake(out CommandBuffer cb))
+            return cb;
+
+        var allocInfo = new CommandBufferAllocateInfo
+        {
+            SType = StructureType.CommandBufferAllocateInfo,
+            CommandPool = pool,
+            Level = CommandBufferLevel.Primary,
+            CommandBufferCount = 1,
+        };
+        Check(Vk.AllocateCommandBuffers(Device, &allocInfo, out cb));
+        return cb;
     }
 
     /// <summary>
@@ -2248,9 +2375,15 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
         }
 
         // Dispose new sub-systems before destroying the device
+        StagingBufferPool?.Dispose();
         UniformRingBuffer?.Dispose();
         DescriptorPoolManager?.Dispose();
         MemoryAllocator?.Dispose();
+
+        // Destroy cached samplers
+        foreach (VKSampler sampler in _samplerCache.Values)
+            sampler.DestroyHandle();
+        _samplerCache.Clear();
 
         // Destroy pipeline cache before device
         if (hasDevice && PipelineCacheHandle.Handle != 0)
@@ -2299,6 +2432,9 @@ public unsafe class VKGraphiteDevice : GraphiteDevice
 
             if (HasDedicatedTransferQueue && TransferCommandPool.Handle != 0)
                 Vk.DestroyCommandPool(Device, TransferCommandPool, null);
+
+            // Clear the free command buffer pool (destroying command pools frees all their CBs)
+            _freeCommandBuffers.Clear();
 
             // Destroy per-thread command pools
             foreach (CommandPool pool in _threadCommandPools.Values)
@@ -2384,6 +2520,12 @@ internal struct RenderPassKey : IEquatable<RenderPassKey>
     public StoreOp StencilStoreOp;
     public SampleCount SampleCount;
     public bool IsPresentTarget;
+    /// <summary>
+    /// When <c>true</c>, color attachment <c>finalLayout</c> is set to
+    /// <c>ShaderReadOnlyOptimal</c> instead of <c>ColorAttachmentOptimal</c>,
+    /// allowing the driver to transition automatically at render pass end.
+    /// </summary>
+    public bool ColorFinalLayoutShaderRead;
 
     public override readonly int GetHashCode()
     {
@@ -2406,6 +2548,7 @@ internal struct RenderPassKey : IEquatable<RenderPassKey>
         hash.Add(StencilStoreOp);
         hash.Add(SampleCount);
         hash.Add(IsPresentTarget);
+        hash.Add(ColorFinalLayoutShaderRead);
         return hash.ToHashCode();
     }
 
@@ -2415,7 +2558,7 @@ internal struct RenderPassKey : IEquatable<RenderPassKey>
     {
         if (DepthFormat != other.DepthFormat || DepthLoadOp != other.DepthLoadOp || DepthStoreOp != other.DepthStoreOp ||
             StencilLoadOp != other.StencilLoadOp || StencilStoreOp != other.StencilStoreOp || SampleCount != other.SampleCount ||
-            IsPresentTarget != other.IsPresentTarget)
+            IsPresentTarget != other.IsPresentTarget || ColorFinalLayoutShaderRead != other.ColorFinalLayoutShaderRead)
             return false;
 
         if ((ColorFormats == null) != (other.ColorFormats == null))
@@ -2509,6 +2652,76 @@ internal readonly struct VKFramebufferCacheKey : IEquatable<VKFramebufferCacheKe
         h.Add(_v0); h.Add(_v1); h.Add(_v2); h.Add(_v3);
         h.Add(_v4); h.Add(_v5); h.Add(_v6); h.Add(_v7);
         h.Add(_v8);
+        return h.ToHashCode();
+    }
+}
+
+/// <summary>
+/// Cache key for deduplicating <see cref="VKSampler"/> objects by their configuration.
+/// Covers all <see cref="SamplerDescriptor"/> fields that affect the Vulkan sampler state.
+/// </summary>
+internal readonly struct SamplerCacheKey : IEquatable<SamplerCacheKey>
+{
+    private readonly TextureFilter _minFilter;
+    private readonly TextureFilter _magFilter;
+    private readonly TextureFilter _mipmapFilter;
+    private readonly TextureAddressMode _addressU;
+    private readonly TextureAddressMode _addressV;
+    private readonly TextureAddressMode _addressW;
+    private readonly float _mipLodBias;
+    private readonly float _maxAnisotropy;
+    private readonly CompareFunction? _compareFunction;
+    private readonly float _minLod;
+    private readonly float _maxLod;
+    private readonly BorderColor _borderColor;
+
+    internal SamplerCacheKey(in SamplerDescriptor desc)
+    {
+        _minFilter = desc.MinFilter;
+        _magFilter = desc.MagFilter;
+        _mipmapFilter = desc.MipmapFilter;
+        _addressU = desc.AddressModeU;
+        _addressV = desc.AddressModeV;
+        _addressW = desc.AddressModeW;
+        _mipLodBias = desc.MipLodBias;
+        _maxAnisotropy = desc.MaxAnisotropy;
+        _compareFunction = desc.CompareFunction;
+        _minLod = desc.MinLod;
+        _maxLod = desc.MaxLod;
+        _borderColor = desc.BorderColor;
+    }
+
+    public bool Equals(SamplerCacheKey other) =>
+        _minFilter == other._minFilter &&
+        _magFilter == other._magFilter &&
+        _mipmapFilter == other._mipmapFilter &&
+        _addressU == other._addressU &&
+        _addressV == other._addressV &&
+        _addressW == other._addressW &&
+        _mipLodBias == other._mipLodBias &&
+        _maxAnisotropy == other._maxAnisotropy &&
+        _compareFunction == other._compareFunction &&
+        _minLod == other._minLod &&
+        _maxLod == other._maxLod &&
+        _borderColor == other._borderColor;
+
+    public override bool Equals(object? obj) => obj is SamplerCacheKey other && Equals(other);
+
+    public override int GetHashCode()
+    {
+        HashCode h = new();
+        h.Add(_minFilter);
+        h.Add(_magFilter);
+        h.Add(_mipmapFilter);
+        h.Add(_addressU);
+        h.Add(_addressV);
+        h.Add(_addressW);
+        h.Add(_mipLodBias);
+        h.Add(_maxAnisotropy);
+        h.Add(_compareFunction);
+        h.Add(_minLod);
+        h.Add(_maxLod);
+        h.Add(_borderColor);
         return h.ToHashCode();
     }
 }

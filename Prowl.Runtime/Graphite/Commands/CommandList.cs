@@ -379,6 +379,22 @@ public abstract class CommandList : IDisposable
     }
 
     /// <summary>
+    /// Inserts multiple resource barriers in a single call, allowing the backend to
+    /// batch them into one GPU synchronization point for better performance.
+    /// </summary>
+    public void ResourceBarriers(ReadOnlySpan<ResourceBarrier> barriers)
+    {
+        ThrowIfNotRecording();
+        if (barriers.Length == 0) return;
+        if (barriers.Length == 1)
+        {
+            ResourceBarrierCore(in barriers[0]);
+            return;
+        }
+        ResourceBarriersCore(barriers);
+    }
+
+    /// <summary>
     /// Inserts a memory barrier to ensure all previous writes are visible.
     /// </summary>
     public void MemoryBarrier()
@@ -388,6 +404,17 @@ public abstract class CommandList : IDisposable
     }
 
     protected abstract void ResourceBarrierCore(in ResourceBarrier barrier);
+
+    /// <summary>
+    /// Processes multiple resource barriers. The default implementation calls
+    /// <see cref="ResourceBarrierCore"/> in a loop; backends may override to batch.
+    /// </summary>
+    protected virtual void ResourceBarriersCore(ReadOnlySpan<ResourceBarrier> barriers)
+    {
+        foreach (ref readonly ResourceBarrier barrier in barriers)
+            ResourceBarrierCore(in barrier);
+    }
+
     protected abstract void MemoryBarrierCore();
 
     /// <summary>

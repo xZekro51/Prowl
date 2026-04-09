@@ -462,23 +462,12 @@ public sealed class EditorApplication : Game
         // Game context so rendering code can distinguish editor-chrome GL
         // calls from actual scene/game rendering.
         Graphics.ActiveContext = GraphicsContext.Game;
-        if (Window.GpuDebug)
-        {
-            try
-            {
-                ProcessApplicationRendering();
-            }
-            finally
-            {
-                // Restore editor context — everything after BeginRender (Paper UI,
-                // Dear ImGui) is editor chrome and always uses the OpenGL backend.
-                Graphics.ActiveContext = GraphicsContext.Editor;
-            }
-        }
-        else
+        try
         {
             ProcessApplicationRendering();
-
+        }
+        finally
+        {
             // Restore editor context — everything after BeginRender (Paper UI,
             // Dear ImGui) is editor chrome and always uses the OpenGL backend.
             Graphics.ActiveContext = GraphicsContext.Editor;

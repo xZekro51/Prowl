@@ -183,9 +183,16 @@ internal unsafe class VKTexture : Texture
         }
     }
 
-    private void EmitBarrier(CommandBuffer cmd, ImageLayout oldLayout, ImageLayout newLayout, uint baseMip, uint mipCount, uint baseLayer, uint layerCount)
+    /// <summary>
+    /// Builds an <see cref="ImageMemoryBarrier"/> for a layout transition without emitting it.
+    /// Used by both single-barrier and batch-barrier paths.
+    /// </summary>
+    internal void BuildBarrier(
+        ImageLayout oldLayout, ImageLayout newLayout,
+        uint baseMip, uint mipCount, uint baseLayer, uint layerCount,
+        out ImageMemoryBarrier barrier, out PipelineStageFlags srcStage, out PipelineStageFlags dstStage)
     {
-        var barrier = new ImageMemoryBarrier
+        barrier = new ImageMemoryBarrier
         {
             SType = StructureType.ImageMemoryBarrier,
             OldLayout = oldLayout,
@@ -203,9 +210,6 @@ internal unsafe class VKTexture : Texture
             },
         };
 
-        PipelineStageFlags srcStage;
-        PipelineStageFlags dstStage;
-
         switch (oldLayout)
         {
             case ImageLayout.Undefined:
@@ -214,7 +218,7 @@ internal unsafe class VKTexture : Texture
                 break;
             case ImageLayout.General:
                 barrier.SrcAccessMask = AccessFlags.ShaderReadBit | AccessFlags.ShaderWriteBit;
-                srcStage = PipelineStageFlags.ComputeShaderBit;
+                srcStage = PipelineStageFlags.ComputeShaderBit | PipelineStageFlags.FragmentShaderBit;
                 break;
             case ImageLayout.TransferDstOptimal:
                 barrier.SrcAccessMask = AccessFlags.TransferWriteBit;
@@ -226,7 +230,15 @@ internal unsafe class VKTexture : Texture
                 break;
             case ImageLayout.ShaderReadOnlyOptimal:
                 barrier.SrcAccessMask = AccessFlags.ShaderReadBit;
-                srcStage = PipelineStageFlags.FragmentShaderBit;
+                srcStage = PipelineStageFlags.VertexShaderBit | PipelineStageFlags.FragmentShaderBit | PipelineStageFlags.ComputeShaderBit;
+                break;
+            case ImageLayout.DepthStencilReadOnlyOptimal:
+                barrier.SrcAccessMask = AccessFlags.DepthStencilAttachmentReadBit;
+                srcStage = PipelineStageFlags.EarlyFragmentTestsBit | PipelineStageFlags.LateFragmentTestsBit;
+                break;
+            case ImageLayout.PresentSrcKhr:
+                barrier.SrcAccessMask = 0;
+                srcStage = PipelineStageFlags.ColorAttachmentOutputBit;
                 break;
             case ImageLayout.ColorAttachmentOptimal:
                 barrier.SrcAccessMask = AccessFlags.ColorAttachmentWriteBit;
@@ -254,7 +266,7 @@ internal unsafe class VKTexture : Texture
                 break;
             case ImageLayout.ShaderReadOnlyOptimal:
                 barrier.DstAccessMask = AccessFlags.ShaderReadBit;
-                dstStage = PipelineStageFlags.FragmentShaderBit | PipelineStageFlags.ComputeShaderBit;
+                dstStage = PipelineStageFlags.VertexShaderBit | PipelineStageFlags.FragmentShaderBit | PipelineStageFlags.ComputeShaderBit;
                 break;
             case ImageLayout.ColorAttachmentOptimal:
                 barrier.DstAccessMask = AccessFlags.ColorAttachmentReadBit | AccessFlags.ColorAttachmentWriteBit;
@@ -264,17 +276,123 @@ internal unsafe class VKTexture : Texture
                 barrier.DstAccessMask = AccessFlags.DepthStencilAttachmentReadBit | AccessFlags.DepthStencilAttachmentWriteBit;
                 dstStage = PipelineStageFlags.EarlyFragmentTestsBit;
                 break;
+            case ImageLayout.DepthStencilReadOnlyOptimal:
+                barrier.DstAccessMask = AccessFlags.DepthStencilAttachmentReadBit | AccessFlags.ShaderReadBit;
+                dstStage = PipelineStageFlags.EarlyFragmentTestsBit | PipelineStageFlags.LateFragmentTestsBit | PipelineStageFlags.FragmentShaderBit;
+                break;
+            case ImageLayout.PresentSrcKhr:
+                barrier.DstAccessMask = 0;
+                dstStage = PipelineStageFlags.BottomOfPipeBit;
+                break;
             case ImageLayout.General:
                 barrier.DstAccessMask = AccessFlags.ShaderReadBit | AccessFlags.ShaderWriteBit;
-                dstStage = PipelineStageFlags.ComputeShaderBit;
+                dstStage = PipelineStageFlags.ComputeShaderBit | PipelineStageFlags.FragmentShaderBit;
                 break;
             default:
                 barrier.DstAccessMask = 0;
                 dstStage = PipelineStageFlags.AllCommandsBit;
                 break;
         }
+    }
 
+    private void EmitBarrier(CommandBuffer cmd, ImageLayout oldLayout, ImageLayout newLayout, uint baseMip, uint mipCount, uint baseLayer, uint layerCount)
+    {
+        BuildBarrier(oldLayout, newLayout, baseMip, mipCount, baseLayer, layerCount,
+            out ImageMemoryBarrier barrier, out PipelineStageFlags srcStage, out PipelineStageFlags dstStage);
         _device.Vk.CmdPipelineBarrier(cmd, srcStage, dstStage, 0, 0, null, 0, null, 1, &barrier);
+    }
+
+    /// <summary>
+    /// Collects the <see cref="ImageMemoryBarrier"/>(s) needed to transition this texture
+    /// to <paramref name="newLayout"/> across all mip levels and layers, appending them
+    /// to <paramref name="barriers"/>. Returns the number of barriers appended and
+    /// ORs the required stage flags into <paramref name="combinedSrcStage"/> and
+    /// <paramref name="combinedDstStage"/>. Also updates the tracked layouts.
+    /// </summary>
+    internal int CollectTransitionBarriers(
+        ImageLayout newLayout,
+        Span<ImageMemoryBarrier> barriers, int offset,
+        ref PipelineStageFlags combinedSrcStage, ref PipelineStageFlags combinedDstStage)
+    {
+        uint baseMip = 0;
+        uint mipCount = MipLevels;
+        uint baseLayer = 0;
+        uint layerCount = ArrayLayers;
+        int written = 0;
+
+        if (mipCount == 1 && layerCount == 1)
+        {
+            uint idx = 0;
+            ImageLayout oldLayout = idx < (uint)_mipLayerLayouts.Length ? _mipLayerLayouts[idx] : ImageLayout.Undefined;
+            if (oldLayout != newLayout)
+            {
+                BuildBarrier(oldLayout, newLayout, 0, 1, 0, 1,
+                    out barriers[offset], out PipelineStageFlags src, out PipelineStageFlags dst);
+                combinedSrcStage |= src;
+                combinedDstStage |= dst;
+                written = 1;
+                _mipLayerLayouts[idx] = newLayout;
+            }
+            return written;
+        }
+
+        // Check if all sub-resources share the same layout
+        bool allSame = true;
+        uint firstIdx = 0;
+        ImageLayout firstLayout = firstIdx < (uint)_mipLayerLayouts.Length ? _mipLayerLayouts[firstIdx] : ImageLayout.Undefined;
+        for (uint m = baseMip; m < baseMip + mipCount && allSame; m++)
+        {
+            for (uint l = baseLayer; l < baseLayer + layerCount && allSame; l++)
+            {
+                uint idx2 = m * ArrayLayers + l;
+                ImageLayout cur = idx2 < (uint)_mipLayerLayouts.Length ? _mipLayerLayouts[idx2] : ImageLayout.Undefined;
+                if (cur != firstLayout) allSame = false;
+            }
+        }
+
+        if (allSame)
+        {
+            if (firstLayout != newLayout)
+            {
+                BuildBarrier(firstLayout, newLayout, baseMip, mipCount, baseLayer, layerCount,
+                    out barriers[offset], out PipelineStageFlags src, out PipelineStageFlags dst);
+                combinedSrcStage |= src;
+                combinedDstStage |= dst;
+                written = 1;
+            }
+        }
+        else
+        {
+            for (uint m = baseMip; m < baseMip + mipCount; m++)
+            {
+                for (uint l = baseLayer; l < baseLayer + layerCount; l++)
+                {
+                    uint idx2 = m * ArrayLayers + l;
+                    ImageLayout oldLayout = idx2 < (uint)_mipLayerLayouts.Length ? _mipLayerLayouts[idx2] : ImageLayout.Undefined;
+                    if (oldLayout != newLayout)
+                    {
+                        BuildBarrier(oldLayout, newLayout, m, 1, l, 1,
+                            out barriers[offset + written], out PipelineStageFlags src, out PipelineStageFlags dst);
+                        combinedSrcStage |= src;
+                        combinedDstStage |= dst;
+                        written++;
+                    }
+                }
+            }
+        }
+
+        // Update tracked layouts
+        for (uint m = baseMip; m < baseMip + mipCount; m++)
+        {
+            for (uint l = baseLayer; l < baseLayer + layerCount; l++)
+            {
+                uint idx2 = m * ArrayLayers + l;
+                if (idx2 < (uint)_mipLayerLayouts.Length)
+                    _mipLayerLayouts[idx2] = newLayout;
+            }
+        }
+
+        return written;
     }
 
     /// <summary>

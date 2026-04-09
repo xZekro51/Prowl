@@ -73,9 +73,14 @@ public sealed class RenderCommandBuffer : IDisposable
     /// <param name="colorLoadOp">How to handle existing color data (Clear, Load, DontCare).</param>
     /// <param name="clearColor">Clear color when <paramref name="colorLoadOp"/> is <see cref="LoadOp.Clear"/>.</param>
     /// <param name="clearDepth">Whether to clear the depth buffer.</param>
-    public void BeginRenderPass(RenderTexture target, LoadOp colorLoadOp = LoadOp.Clear, Float4? clearColor = null, bool clearDepth = true)
+    /// <param name="hintNextUsageShaderRead">
+    /// When <c>true</c>, hints to the Vulkan backend that color attachments will be
+    /// sampled as shader resources immediately after this pass ends, allowing the
+    /// driver to transition layouts automatically at render pass end.
+    /// </param>
+    public void BeginRenderPass(RenderTexture target, LoadOp colorLoadOp = LoadOp.Clear, Float4? clearColor = null, bool clearDepth = true, bool hintNextUsageShaderRead = false)
     {
-        var desc = BuildRenderPassDescriptor(target, colorLoadOp, clearColor ?? Float4.Zero, clearDepth);
+        var desc = BuildRenderPassDescriptor(target, colorLoadOp, clearColor ?? Float4.Zero, clearDepth, hintNextUsageShaderRead);
         _currentRenderPassLayout = GraphiteFormatMapper.MapRenderPassLayout(target);
         _commandList.BeginRenderPass(in desc);
     }
@@ -305,6 +310,15 @@ public sealed class RenderCommandBuffer : IDisposable
     }
 
     /// <summary>
+    /// Inserts multiple resource barriers in a single call, allowing the backend to
+    /// batch them for better performance. Must be called outside a render pass.
+    /// </summary>
+    public void ResourceBarriers(ReadOnlySpan<Graphite.ResourceBarrier> barriers)
+    {
+        _commandList.ResourceBarriers(barriers);
+    }
+
+    /// <summary>
     /// Inserts a memory barrier to ensure all previous writes are visible.
     /// </summary>
     public void MemoryBarrier()
@@ -404,7 +418,8 @@ public sealed class RenderCommandBuffer : IDisposable
         RenderTexture renderTexture,
         LoadOp colorLoadOp,
         Float4 clearColor,
-        bool clearDepth)
+        bool clearDepth,
+        bool hintNextUsageShaderRead = false)
     {
         var colorAttachments = renderTexture.GraphiteColorTextures;
         var depthAttachment = renderTexture.GraphiteDepthTexture;
@@ -441,6 +456,7 @@ public sealed class RenderCommandBuffer : IDisposable
         {
             ColorAttachments = colors,
             DepthStencilAttachment = depth,
+            HintNextUsageShaderRead = hintNextUsageShaderRead,
         };
     }
 

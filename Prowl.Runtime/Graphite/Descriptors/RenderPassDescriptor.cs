@@ -193,11 +193,23 @@ public struct RenderPassDescriptor
     /// <summary>Optional debug name for graphics debuggers.</summary>
     public string? DebugName;
 
+    /// <summary>
+    /// When <c>true</c>, hints to the Vulkan backend that color attachments will
+    /// be sampled as shader resources immediately after this render pass ends.
+    /// The backend sets <c>finalLayout = ShaderReadOnlyOptimal</c> on color
+    /// attachments, letting the driver perform the layout transition automatically
+    /// at render pass end — which is more efficient on tile-based GPUs and
+    /// eliminates the need for an explicit <c>TransitionToShaderResource</c> barrier.
+    /// <para>No effect on OpenGL or when the render pass is a present target.</para>
+    /// </summary>
+    public bool HintNextUsageShaderRead;
+
     public RenderPassDescriptor()
     {
         ColorAttachments = null;
         DepthStencilAttachment = null;
         DebugName = null;
+        HintNextUsageShaderRead = false;
     }
 
     /// <summary>

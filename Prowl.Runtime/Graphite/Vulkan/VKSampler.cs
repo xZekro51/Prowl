@@ -15,6 +15,16 @@ internal unsafe class VKSampler : Graphite.Sampler
     private readonly VKGraphiteDevice _device;
     internal VkSampler Handle { get; }
 
+    /// <summary>
+    /// When true, this sampler is owned by the device's sampler cache and
+    /// <see cref="DisposeResources"/> will skip Vulkan handle destruction.
+    /// The device itself destroys the handle during its own disposal.
+    /// </summary>
+    internal bool IsCached { get; set; }
+
+    /// <inheritdoc/>
+    protected override bool IsDisposeSuppressed => IsCached;
+
     internal VKSampler(VKGraphiteDevice device, in SamplerDescriptor descriptor)
     {
         _device = device;
@@ -53,6 +63,17 @@ internal unsafe class VKSampler : Graphite.Sampler
     }
 
     protected override void DisposeResources()
+    {
+        if (IsCached)
+            return; // Cache owns the handle — destroyed in VKGraphiteDevice.DisposeResources
+        _device.Vk.DestroySampler(_device.Device, Handle, null);
+    }
+
+    /// <summary>
+    /// Unconditionally destroys the Vulkan sampler handle.
+    /// Called by the device's sampler cache during device disposal.
+    /// </summary>
+    internal void DestroyHandle()
     {
         _device.Vk.DestroySampler(_device.Device, Handle, null);
     }

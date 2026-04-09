@@ -272,7 +272,7 @@ public class DefaultRenderPipeline : RenderPipeline
             var loadOp = camera.ClearFlags == CameraClearFlags.Nothing
                 ? Graphite.LoadOp.DontCare
                 : Graphite.LoadOp.Clear;
-            graphiteCmd.BeginRenderPass(gBuffer, loadOp, clearFloat4, camera.ClearFlags != CameraClearFlags.Nothing);
+            graphiteCmd.BeginRenderPass(gBuffer, loadOp, clearFloat4, camera.ClearFlags != CameraClearFlags.Nothing, hintNextUsageShaderRead: true);
             graphiteCmd.SetViewport(0, 0, gBuffer.Width, gBuffer.Height);
             graphiteCmd.SetScissor(0, 0, (uint)gBuffer.Width, (uint)gBuffer.Height);
         }
@@ -327,7 +327,7 @@ public class DefaultRenderPipeline : RenderPipeline
         RenderingEvents.InvokeOnLightingPassBegin(new LightingPassArgs(gBuffer, lightAccumulation, lights.Count, graphiteCmd));
         if (graphiteCmd != null)
         {
-            graphiteCmd.BeginRenderPass(lightAccumulation, Graphite.LoadOp.Clear, Float4.Zero, false);
+            graphiteCmd.BeginRenderPass(lightAccumulation, Graphite.LoadOp.Clear, Float4.Zero, false, hintNextUsageShaderRead: true);
             // Use SetViewportRaw (no Y-flip) for fullscreen passes that sample GBuffer.
             // GBuffer was rendered with Y-flip, storing scene top at texture row 0.
             // Without Y-flip, NDC (-1,-1) maps to framebuffer top, UV (0,0) samples row 0 = scene top.
@@ -446,7 +446,7 @@ public class DefaultRenderPipeline : RenderPipeline
         // Begin Graphite render pass for composition
         if (graphiteCmd != null)
         {
-            graphiteCmd.BeginRenderPass(composedOutput, Graphite.LoadOp.Clear, Float4.Zero, true);
+            graphiteCmd.BeginRenderPass(composedOutput, Graphite.LoadOp.Clear, Float4.Zero, true, hintNextUsageShaderRead: true);
             // Use SetViewportRaw (no Y-flip) for fullscreen passes that sample previous render targets
             graphiteCmd.SetViewportRaw(0, 0, composedOutput.Width, composedOutput.Height);
             graphiteCmd.SetScissor(0, 0, (uint)composedOutput.Width, (uint)composedOutput.Height);
@@ -464,10 +464,10 @@ public class DefaultRenderPipeline : RenderPipeline
         var dstDepth = composedOutput.GraphiteDepthTexture;
         if (srcDepth != null && dstDepth != null && graphiteCmd != null)
         {
-            graphiteCmd.ResourceBarrier(new Graphite.ResourceBarrier(
-                srcDepth, Graphite.ResourceState.DepthWrite, Graphite.ResourceState.CopySource));
-            graphiteCmd.ResourceBarrier(new Graphite.ResourceBarrier(
-                dstDepth, Graphite.ResourceState.DepthWrite, Graphite.ResourceState.CopyDestination));
+            graphiteCmd.ResourceBarriers([
+                new Graphite.ResourceBarrier(srcDepth, Graphite.ResourceState.DepthWrite, Graphite.ResourceState.CopySource),
+                new Graphite.ResourceBarrier(dstDepth, Graphite.ResourceState.DepthWrite, Graphite.ResourceState.CopyDestination),
+            ]);
 
             graphiteCmd.CopyTextureToTexture(new Graphite.TextureTextureCopy
             {
@@ -478,10 +478,10 @@ public class DefaultRenderPipeline : RenderPipeline
                 Depth = 1,
             });
 
-            graphiteCmd.ResourceBarrier(new Graphite.ResourceBarrier(
-                srcDepth, Graphite.ResourceState.CopySource, Graphite.ResourceState.ShaderResource));
-            graphiteCmd.ResourceBarrier(new Graphite.ResourceBarrier(
-                dstDepth, Graphite.ResourceState.CopyDestination, Graphite.ResourceState.DepthWrite));
+            graphiteCmd.ResourceBarriers([
+                new Graphite.ResourceBarrier(srcDepth, Graphite.ResourceState.CopySource, Graphite.ResourceState.ShaderResource),
+                new Graphite.ResourceBarrier(dstDepth, Graphite.ResourceState.CopyDestination, Graphite.ResourceState.DepthWrite),
+            ]);
         }
 
         // Transition composedOutput to ShaderResource for AfterLighting effects
@@ -601,12 +601,13 @@ public class DefaultRenderPipeline : RenderPipeline
         // =======================================================
         // 14. Blit Result to target, If target is null Blit will go to the Screen/Window
         Profiler.BeginSection("Pipeline.Blit");
-        graphiteCmd?.PushDebugGroup("Stage14_BlitToTarget");
         if (target == null)
         {
             // Swapchain blit needs a dedicated command buffer because the
             // swapchain texture is acquired separately. Submit the main
             // pipeline first so composedOutput is ready.
+            graphiteCmd?.PushDebugGroup("Stage14_BlitToSwapchain");
+            graphiteCmd?.PopDebugGroup();
             Graphics.ActiveGraphiteCmdBuffer = null;
             if (graphiteCmd != null)
             {
@@ -623,7 +624,9 @@ public class DefaultRenderPipeline : RenderPipeline
             // data race where a later camera's command buffer overwrites
             // the temporary composedOutput texture before an earlier,
             // separate blit submission finishes reading it.
+            graphiteCmd?.PushDebugGroup("Stage14_BlitToTarget");
             BlitToRenderTargetGraphite(composedOutput, target, graphiteCmd);
+            graphiteCmd?.PopDebugGroup();
             Graphics.ActiveGraphiteCmdBuffer = null;
             if (graphiteCmd != null)
             {
@@ -644,7 +647,6 @@ public class DefaultRenderPipeline : RenderPipeline
             }
         }
 
-        graphiteCmd?.PopDebugGroup(); // Stage14_BlitToTarget
         Profiler.EndSection(); // Pipeline.Blit
 
         // =======================================================

@@ -53,9 +53,8 @@ internal unsafe class VKBuffer : Buffer
             var span = descriptor.InitialData.Value.Span;
             if (descriptor.MemoryAccess == Graphite.MemoryAccess.GpuOnly)
             {
-                // Use staging buffer for GPU-only memory
-                var tempDesc = new BufferDescriptor((uint)span.Length, BufferUsage.CopySource, Graphite.MemoryAccess.CpuToGpu);
-                var staging = new VKBuffer(device, in tempDesc);
+                // Use pooled staging buffer for GPU-only memory
+                var staging = device.StagingBufferPool.Rent((uint)span.Length);
 
                 var mappedPtr = staging.Allocation.GetMappedData();
                 fixed (byte* src = span)
@@ -67,12 +66,8 @@ internal unsafe class VKBuffer : Buffer
                 device.EndSingleTimeCommands(cmd);
 
                 if (device.IsUploadBatching)
-                {
-                    device.TrackBatchResource(staging);
                     device.IncrementBatchUploadCounters(span.Length);
-                }
-                else
-                    staging.Dispose();
+                device.StagingBufferPool.Return(staging, device.CurrentFrameIndex);
             }
             else
             {
