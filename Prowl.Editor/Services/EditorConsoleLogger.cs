@@ -5,6 +5,7 @@ using System.Text;
 
 using Prowl.Editor.Core;
 using Prowl.Runtime;
+using Prowl.EventSystem;
 using Prowl.Runtime.EventSystem;
 
 namespace Prowl.Editor.Services;

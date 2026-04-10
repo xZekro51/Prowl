@@ -8,6 +8,7 @@ using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 
+using Prowl.EventSystem;
 using Prowl.Runtime.EventSystem;
 using Prowl.Runtime.Graphite;
 using Prowl.Runtime.Resources;

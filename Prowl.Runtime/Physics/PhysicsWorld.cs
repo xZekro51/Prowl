@@ -1,4 +1,4 @@
-﻿// This file is part of the Prowl Game Engine
+// This file is part of the Prowl Game Engine
 // Licensed under the MIT License. See the LICENSE file in the project root for details.
 
 using System;
@@ -9,6 +9,7 @@ using Jitter2.Collision;
 using Jitter2.Collision.Shapes;
 using Jitter2.LinearMath;
 
+using Prowl.EventSystem;
 using Prowl.Runtime.EventSystem;
 using Prowl.Runtime.Profiling;
 using Prowl.Vector;

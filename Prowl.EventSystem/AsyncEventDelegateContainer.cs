@@ -4,7 +4,7 @@
 using System;
 using System.Threading.Tasks;
 
-namespace Prowl.Runtime.EventSystem;
+namespace Prowl.EventSystem;
 
 /// <summary>
 /// Typed delegate container wrapping a <see cref="Func{TArgs, Task}"/> for async
@@ -65,7 +65,7 @@ public class AsyncEventDelegateContainer<T, TArgs> : EventDelegateContainer<T, T
     {
         if (!Enabled) return;
 #if DEBUG
-        Debug.LogWarning(
+        EventSystemDiagnostics.LogWarning?.Invoke(
             $"[EventSystem] Async handler on {typeof(T).Name} invoked synchronously. " +
             $"Use InvokeAsync/InvokeEventAsync for proper async execution. " +
             $"Handler: {SourceDescription}");
@@ -115,7 +115,7 @@ public sealed class ParameterlessAsyncEventDelegateContainer<T> : AsyncEventDele
     {
         if (!Enabled) return;
 #if DEBUG
-        Debug.LogWarning(
+        EventSystemDiagnostics.LogWarning?.Invoke(
             $"[EventSystem] Async handler on {typeof(T).Name} invoked synchronously. " +
             $"Use InvokeAsync/InvokeEventAsync for proper async execution. " +
             $"Handler: {SourceDescription}");

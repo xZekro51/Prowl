@@ -162,6 +162,33 @@ public abstract class RenderPipeline : EngineObject
     private readonly List<RenderBatch> _reusableBatches = [];
     private readonly Dictionary<(ulong, int, Mesh, int), int> _reusableBatchLookup = [];
     private readonly List<int> _reusableKeyBuffer = [];
+    private readonly BindGroupLayout?[] _reusableLayoutArray = new BindGroupLayout?[1];
+    private readonly Stack<List<int>> _renderableListPool = new();
+
+    private List<int> RentRenderableList(int initialValue)
+    {
+        List<int> list;
+        if (_renderableListPool.TryPop(out List<int>? pooled))
+        {
+            list = pooled;
+            list.Clear();
+        }
+        else
+        {
+            list = new List<int>(4);
+        }
+        list.Add(initialValue);
+        return list;
+    }
+
+    private void ReturnRenderableLists()
+    {
+        foreach (RenderBatch batch in _reusableBatches)
+        {
+            if (batch.RenderableIndices != null)
+                _renderableListPool.Push(batch.RenderableIndices);
+        }
+    }
 
     private void CleanupUnusedModelMatrices()
     {
@@ -707,6 +734,7 @@ public abstract class RenderPipeline : EngineObject
         // ========== PHASE 1: Build Batches ==========
         // Group renderables by (material hash, shader pass, mesh) for efficient rendering
         Profiler.BeginSection("DrawRenderables.Build");
+        ReturnRenderableLists();
         _reusableBatches.Clear();
         _reusableBatchLookup.Clear();
 
@@ -800,7 +828,7 @@ public abstract class RenderPipeline : EngineObject
                         MaterialHash = materialHash,
                         SortKey = sortKey,
                         SubMeshIndex = subMeshIndex,
-                        RenderableIndices = new() { renderIndex }
+                        RenderableIndices = RentRenderableList(renderIndex)
                     };
                     _reusableBatchLookup[batchKey] = _reusableBatches.Count;
                     _reusableBatches.Add(newBatch);
@@ -832,6 +860,8 @@ public abstract class RenderPipeline : EngineObject
                 DrawInstancedRenderablePass(instancedRenderable, batch.Material, batch.Mesh, batch.PassIndex, viewer);
                 continue;
             }
+
+            Profiler.BeginSection("Draw.BatchSetup");
 
             Material material = batch.Material;
             Mesh mesh = batch.Mesh;
@@ -905,6 +935,8 @@ public abstract class RenderPipeline : EngineObject
 
             if (!isVulkan)
             {
+                Profiler.BeginSection("Draw.GLState");
+
                 // Bind GlobalUniforms buffer (contains camera matrices, time, lighting data, etc.)
                 // This is done per-batch because each shader variant is a separate GPU program object,
                 // and uniform buffer bindings are per-program in OpenGL.
@@ -924,6 +956,8 @@ public abstract class RenderPipeline : EngineObject
 
                 // Set render state (depth test, blend mode, cull mode, etc.) once per batch
                 Graphics.SetState(pass.State);
+
+                Profiler.EndSection(); // Draw.GLState
             }
 
             int texSlotForGraphite = 0; // Graphite handles textures via bind groups, not slots
@@ -936,21 +970,33 @@ public abstract class RenderPipeline : EngineObject
             BindGroupLayout? batchBindGroupLayout = null;
             if (Graphics.ActiveGraphiteCmdBuffer is { InRenderPass: true } graphiteCmd)
             {
+                Profiler.BeginSection("Draw.Pipeline");
+
                 var vao = mesh.VertexArrayObject;
                 if (vao?.GraphiteVertexLayout != null &&
                     variant.GraphiteVertexModule != null &&
                     variant.GraphiteFragmentModule != null)
                 {
                     batchBindGroupLayout = variant.GetOrCreateBindGroupLayout();
-                    var layouts = batchBindGroupLayout != null ? new[] { batchBindGroupLayout } : null;
+                    _reusableLayoutArray[0] = batchBindGroupLayout;
+                    var layouts = batchBindGroupLayout != null ? _reusableLayoutArray : null;
                     graphiteCmd.SetMaterialPipeline(variant, vao.GraphiteVertexLayout!.Value, pass.State, mesh.MeshTopology, layouts);
                     graphiteCmd.SetMeshBuffers(mesh);
                     graphiteBatchActive = true;
                 }
+
+                Profiler.EndSection(); // Draw.Pipeline
             }
+
+            Profiler.EndSection(); // Draw.BatchSetup
 
             // ========== PHASE 3: Draw Objects in Batch ==========
             // Material/mesh state is already bound - only per-object uniforms change
+
+            // Bind mesh VAO once for the entire batch (all objects share the same mesh)
+            if (!isVulkan)
+                Graphics.BindVertexArray(mesh.VertexArrayObject);
+
             foreach (int renderIndex in batch.RenderableIndices)
             {
                 IRenderable renderable = renderables[renderIndex];
@@ -969,6 +1015,8 @@ public abstract class RenderPipeline : EngineObject
 
                 if (!isVulkan)
                 {
+                    Profiler.BeginSection("Draw.GL");
+
                     // Apply instance-specific uniforms (tint colors, bone matrices, etc.)
                     int instanceTexSlot = texSlotForGraphite;
                     PropertyState.ApplyInstanceUniforms(properties, variant, ref instanceTexSlot);
@@ -977,21 +1025,23 @@ public abstract class RenderPipeline : EngineObject
                     Graphics.SetUniformMatrix(variant, "prowl_ObjectToWorld", false, fModel);
                     Graphics.SetUniformMatrix(variant, "prowl_WorldToObject", false, fModelInv);
 
-                    // Execute draw call (mesh VAO already uploaded, just bind and draw)
+                    // Execute draw call (mesh VAO is bound once for the batch)
                     unsafe
                     {
-                        Graphics.BindVertexArray(mesh.VertexArrayObject);
                         if (drawFirstIndex == 0)
                             Graphics.DrawIndexed(mesh.MeshTopology, (uint)drawIndexCount, mesh.IndexFormat == IndexFormat.UInt32, null);
                         else
                             Graphics.DrawIndexed(mesh.MeshTopology, (uint)drawIndexCount, drawFirstIndex, 0, mesh.IndexFormat == IndexFormat.UInt32);
-                        Graphics.BindVertexArray(null);
                     }
+
+                    Profiler.EndSection(); // Draw.GL
                 }
 
                 // Record Graphite draw command (primary on Vulkan, parallel on GL)
                 if (graphiteBatchActive)
                 {
+                    Profiler.BeginSection("Draw.BindGroups");
+
                     if (variant.Reflection != null && batchBindGroupLayout != null)
                     {
                         var bindGroup = GraphiteMaterialBinder.CreateBindGroup(
@@ -1002,10 +1052,16 @@ public abstract class RenderPipeline : EngineObject
                             Graphics.ActiveGraphiteCmdBuffer!.SetBindGroup(0, bindGroup);
                     }
                     Graphics.ActiveGraphiteCmdBuffer!.DrawIndexed((uint)drawIndexCount, 1, (uint)drawFirstIndex);
+
+                    Profiler.EndSection(); // Draw.BindGroups
                 }
 
                 RenderStats.Instance.AddDrawCall(mesh.VertexCount, drawIndexCount);
             }
+
+            // Unbind VAO after all objects in the batch have been drawn
+            if (!isVulkan)
+                Graphics.BindVertexArray(null);
 
             RenderStats.Instance.AddBatch();
 

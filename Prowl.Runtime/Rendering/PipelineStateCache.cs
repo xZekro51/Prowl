@@ -5,6 +5,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 
+using Prowl.EventSystem;
 using Prowl.Runtime.EventSystem;
 using Prowl.Runtime.Graphite;
 using Prowl.Runtime.Rendering.Shaders;

@@ -5,7 +5,7 @@ using System;
 using System.Collections.Generic;
 using System.Reflection;
 
-namespace Prowl.Runtime.EventSystem;
+namespace Prowl.EventSystem;
 
 /// <summary>
 /// Builds and caches a mapping from each <typeparamref name="T"/> enum value
@@ -22,14 +22,14 @@ internal static class EventArgsContract<T> where T : struct, Enum
 
     private static Dictionary<T, Type?> Build()
     {
-        var map = new Dictionary<T, Type?>();
-        var enumType = typeof(T);
+        Dictionary<T, Type?> map = new Dictionary<T, Type?>();
+        Type enumType = typeof(T);
 
         foreach (T value in Enum.GetValues<T>())
         {
             string name = Enum.GetName(value)!;
             FieldInfo? field = enumType.GetField(name);
-            var attr = field?.GetCustomAttribute<EventArgsAttribute>();
+            EventArgsAttribute? attr = field?.GetCustomAttribute<EventArgsAttribute>();
             map[value] = attr?.ArgsType;
         }
 

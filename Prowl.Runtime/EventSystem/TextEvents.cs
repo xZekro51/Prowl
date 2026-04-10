@@ -4,6 +4,8 @@
 using Prowl.Runtime.Resources;
 using Prowl.Vector;
 
+using Prowl.EventSystem;
+
 namespace Prowl.Runtime.EventSystem;
 
 /// <summary>

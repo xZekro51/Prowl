@@ -6,6 +6,7 @@ using BenchmarkDotNet.Columns;
 using BenchmarkDotNet.Configs;
 using BenchmarkDotNet.Order;
 
+using Prowl.EventSystem;
 using Prowl.Runtime.EventSystem;
 
 namespace Prowl.Benchmarks;

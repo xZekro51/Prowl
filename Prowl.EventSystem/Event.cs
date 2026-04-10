@@ -5,7 +5,7 @@ using System.Diagnostics;
 using System.Reflection;
 using System.Threading.Tasks;
 
-namespace Prowl.Runtime.EventSystem;
+namespace Prowl.EventSystem;
 
 public class Event<T> where T : struct, Enum
 {
@@ -135,7 +135,7 @@ public class Event<T> where T : struct, Enum
 #endif
         lock (_lock)
         {
-            typedSnapshot = _typedSnapshots.TryGetValue(typeof(TArgs), out var obj)
+            typedSnapshot = _typedSnapshots.TryGetValue(typeof(TArgs), out object? obj)
                 ? (EventDelegateContainer<T, TArgs>[])obj
                 : [];
 #if DEBUG
@@ -172,7 +172,7 @@ public class Event<T> where T : struct, Enum
                 double elapsed = sw.Elapsed.TotalMilliseconds;
                 if (elapsed > threshold)
                 {
-                    Debug.LogWarning(
+                    EventSystemDiagnostics.LogWarning?.Invoke(
                         $"[EventSystem] Slow handler on {typeof(T).Name}.{_eventType}: " +
                         $"{elapsed:F2}ms (threshold {threshold:F1}ms). " +
                         $"Handler: {typedSnapshot[j].SourceDescription}");
@@ -205,7 +205,7 @@ public class Event<T> where T : struct, Enum
 #endif
         lock (_lock)
         {
-            typedSnapshot = _typedSnapshots.TryGetValue(typeof(TArgs), out var obj)
+            typedSnapshot = _typedSnapshots.TryGetValue(typeof(TArgs), out object? obj)
                 ? (EventDelegateContainer<T, TArgs>[])obj
                 : [];
 #if DEBUG
@@ -245,7 +245,7 @@ public class Event<T> where T : struct, Enum
                 double elapsed = sw.Elapsed.TotalMilliseconds;
                 if (elapsed > threshold)
                 {
-                    Debug.LogWarning(
+                    EventSystemDiagnostics.LogWarning?.Invoke(
                         $"[EventSystem] Slow handler on {typeof(T).Name}.{_eventType}: " +
                         $"{elapsed:F2}ms (threshold {threshold:F1}ms). " +
                         $"Handler: {typedSnapshot[j].SourceDescription}");
@@ -268,7 +268,7 @@ public class Event<T> where T : struct, Enum
     {
         lock (_lock)
         {
-            if (_typedSnapshots.TryGetValue(typeof(TArgs), out var obj))
+            if (_typedSnapshots.TryGetValue(typeof(TArgs), out object? obj))
                 return (EventDelegateContainer<T, TArgs>[])obj;
             return ReadOnlySpan<EventDelegateContainer<T, TArgs>>.Empty;
         }
@@ -287,7 +287,7 @@ public class Event<T> where T : struct, Enum
         if (containerType.IsGenericType && containerType.GenericTypeArguments.Length == 2)
             registeredArgs = containerType.GenericTypeArguments[1];
 
-        Debug.LogWarning(
+        EventSystemDiagnostics.LogWarning?.Invoke(
             $"[EventSystem] Type mismatch on {typeof(T).Name}.{_eventType}: " +
             $"handler registered for '{registeredArgs?.Name ?? "unknown"}' " +
             $"but invoked with '{typeof(TArgs).Name}'. Handler was skipped. " +
@@ -347,12 +347,12 @@ public class Event<T> where T : struct, Enum
         {
             for (int i = 0; i < _sortedKeys.Count; i++)
             {
-                var bucket = _eventDelegates[_sortedKeys[i]];
+                List<EventDelegateContainer<T>> bucket = _eventDelegates[_sortedKeys[i]];
                 for (int j = 0; j < bucket.Count; j++)
                 {
                     if (bucket[j].MatchesDelegate(handler))
                     {
-                        var container = bucket[j];
+                        EventDelegateContainer<T> container = bucket[j];
                         bucket.RemoveAt(j);
                         container.Unlink();
                         if (_batchDepth > 0)
@@ -393,11 +393,11 @@ public class Event<T> where T : struct, Enum
             return;
         }
 
-        var snapshot = new EventDelegateContainer<T>[totalCount];
+        EventDelegateContainer<T>[] snapshot = new EventDelegateContainer<T>[totalCount];
         int index = 0;
         for (int i = 0; i < _sortedKeys.Count; i++)
         {
-            var bucket = _eventDelegates[_sortedKeys[i]];
+            List<EventDelegateContainer<T>> bucket = _eventDelegates[_sortedKeys[i]];
             for (int j = 0; j < bucket.Count; j++)
                 snapshot[index++] = bucket[j];
         }
@@ -423,14 +423,14 @@ public class Event<T> where T : struct, Enum
 
         for (int i = 0; i < _sortedKeys.Count; i++)
         {
-            var bucket = _eventDelegates[_sortedKeys[i]];
+            List<EventDelegateContainer<T>> bucket = _eventDelegates[_sortedKeys[i]];
             for (int j = 0; j < bucket.Count; j++)
             {
-                var container = bucket[j];
-                var argsType = container.ArgsType;
+                EventDelegateContainer<T> container = bucket[j];
+                Type argsType = container.ArgsType;
 
                 groups ??= new Dictionary<Type, List<EventDelegateContainer<T>>>();
-                if (!groups.TryGetValue(argsType, out var list))
+                if (!groups.TryGetValue(argsType, out List<EventDelegateContainer<T>>? list))
                 {
                     list = new List<EventDelegateContainer<T>>();
                     groups[argsType] = list;
@@ -444,14 +444,14 @@ public class Event<T> where T : struct, Enum
 
         // Second pass: create properly typed arrays via cached generic delegates,
         // avoiding Array.CreateInstance + per-element SetValue overhead.
-        foreach (var (argsType, list) in groups)
+        foreach (KeyValuePair<Type, List<EventDelegateContainer<T>>> entry in groups)
         {
-            if (!s_arrayBuilders.TryGetValue(argsType, out var builder))
+            if (!s_arrayBuilders.TryGetValue(entry.Key, out Func<List<EventDelegateContainer<T>>, object>? builder))
             {
-                builder = CreateArrayBuilder(argsType);
-                s_arrayBuilders[argsType] = builder;
+                builder = CreateArrayBuilder(entry.Key);
+                s_arrayBuilders[entry.Key] = builder;
             }
-            _typedSnapshots[argsType] = builder(list);
+            _typedSnapshots[entry.Key] = builder(entry.Value);
         }
     }
 
@@ -462,7 +462,7 @@ public class Event<T> where T : struct, Enum
     /// </summary>
     private static object BuildTypedArray<TArgs>(List<EventDelegateContainer<T>> list)
     {
-        var result = new EventDelegateContainer<T, TArgs>[list.Count];
+        EventDelegateContainer<T, TArgs>[] result = new EventDelegateContainer<T, TArgs>[list.Count];
         for (int i = 0; i < list.Count; i++)
             result[i] = (EventDelegateContainer<T, TArgs>)list[i];
         return result;

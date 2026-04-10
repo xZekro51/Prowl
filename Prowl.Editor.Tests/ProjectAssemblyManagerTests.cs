@@ -6,6 +6,7 @@ using System.Reflection;
 using Prowl.Editor.Core;
 using Prowl.Editor.Project;
 using Prowl.Runtime;
+using Prowl.EventSystem;
 using Prowl.Runtime.EventSystem;
 
 using Xunit;

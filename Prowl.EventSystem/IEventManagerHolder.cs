@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 
 
-namespace Prowl.Runtime.EventSystem;
+namespace Prowl.EventSystem;
 
 public interface IEventManagerHolder<T> where T : struct, Enum
 {
@@ -15,7 +15,7 @@ public static class EventManagerExtensions
     {
         for (int i = 0; i < holders.Length; i++)
         {
-            var holder = holders[i];
+            IEventManagerHolder<T>? holder = holders[i];
             holder?.EventManager.InvokeEvent(eventType, args);
         }
     }
@@ -32,7 +32,7 @@ public static class EventManagerExtensions
     {
         for (int i = 0; i < holders.Length; i++)
         {
-            var holder = holders[i];
+            IEventManagerHolder<T>? holder = holders[i];
             holder?.EventManager.InvokeEvent(eventType);
         }
     }

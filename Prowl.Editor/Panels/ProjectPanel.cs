@@ -5,6 +5,7 @@ using System.Diagnostics;
 using System.Numerics;
 using ImGuiNET;
 using Prowl.Runtime;
+using Prowl.EventSystem;
 using Prowl.Runtime.EventSystem;
 using Prowl.Runtime.Resources;
 using Prowl.Editor.Core;

@@ -1,7 +1,7 @@
 using System;
 using System.Runtime.CompilerServices;
 
-namespace Prowl.Runtime.EventSystem;
+namespace Prowl.EventSystem;
 
 /// <summary>
 /// Non-generic base class for delegate containers, enabling heterogeneous storage

@@ -7,6 +7,8 @@ using Prowl.Runtime.Rendering;
 using Prowl.Runtime.Rendering.GI;
 using Prowl.Runtime.Resources;
 
+using Prowl.EventSystem;
+
 namespace Prowl.Runtime.EventSystem;
 
 /// <summary>

@@ -5,6 +5,7 @@ using System;
 using System.Collections.Generic;
 
 using Prowl.PaperUI;
+using Prowl.EventSystem;
 using Prowl.Runtime.EventSystem;
 using Prowl.Runtime.Resources;
 

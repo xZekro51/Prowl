@@ -4,7 +4,7 @@
 using System;
 using System.Threading.Tasks;
 
-namespace Prowl.Runtime.EventSystem;
+namespace Prowl.EventSystem;
 
 /// <summary>
 /// Lightweight accessor for a parameterless event slot.

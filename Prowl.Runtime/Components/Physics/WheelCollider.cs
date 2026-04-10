@@ -11,6 +11,7 @@ using Jitter2.Dynamics;
 using Jitter2.LinearMath;
 
 using Prowl.Echo;
+using Prowl.EventSystem;
 using Prowl.Runtime.EventSystem;
 using Prowl.Vector;
 

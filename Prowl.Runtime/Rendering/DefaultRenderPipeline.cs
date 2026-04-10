@@ -1,9 +1,10 @@
-ï»¿// This file is part of the Prowl Game Engine
+// This file is part of the Prowl Game Engine
 // Licensed under the MIT License. See the LICENSE file in the project root for details.
 
 using System;
 using System.Collections.Generic;
 
+using Prowl.EventSystem;
 using Prowl.Runtime.EventSystem;
 using Prowl.Runtime.Profiling;
 using Prowl.Runtime.Rendering.GI;
@@ -368,7 +369,7 @@ public class DefaultRenderPipeline : RenderPipeline
             giMode, giIntensity, giParams.ConeCount, gBuffer, lightAccumulation, css));
         graphiteCmd?.PopDebugGroup(); // Stage7.1_GIConeTrace
 
-        // 7.3 GI Debug Visualization â€” override output if debug mode is active
+        // 7.3 GI Debug Visualization — override output if debug mode is active
         GIDebugMode debugMode = GIDebugView.ActiveMode;
         if (debugMode != GIDebugMode.None)
         {
@@ -438,7 +439,7 @@ public class DefaultRenderPipeline : RenderPipeline
         float ambientStrength = skipDirectLights ? 0.0f : (float)ambient.Strength;
         _deferredCompose.SetFloat("_AmbientStrength", ambientStrength);
 
-        // Set GI active flag for composition shader â€” only suppress ambient
+        // Set GI active flag for composition shader — only suppress ambient
         // when the GI system has actually produced valid indirect lighting data.
         bool giHasData = GISystemManager.HasValidData(giMode);
         _deferredCompose.SetFloat("_GIActive", giHasData ? 1.0f : 0.0f);
@@ -594,7 +595,7 @@ public class DefaultRenderPipeline : RenderPipeline
         Profiler.EndSection(); // Pipeline.Gizmos
 
         // =======================================================
-        // 13. Camera Render End â€” fire while the command buffer is still alive
+        // 13. Camera Render End — fire while the command buffer is still alive
         // so GPU profiler handlers can insert final timestamp queries.
         RenderingEvents.InvokeOnCameraRenderEnd(new CameraRenderEndArgs(target == null, graphiteCmd));
 
@@ -637,7 +638,7 @@ public class DefaultRenderPipeline : RenderPipeline
         }
         else
         {
-            // No target â€” just submit the main cmd
+            // No target — just submit the main cmd
             Graphics.ActiveGraphiteCmdBuffer = null;
             if (graphiteCmd != null)
             {
@@ -765,7 +766,7 @@ public class DefaultRenderPipeline : RenderPipeline
 
         cmd.BeginRenderPass(in desc, renderPassLayout);
 
-        // Vulkan pipelines use dynamic viewport/scissor state â€” these MUST be set
+        // Vulkan pipelines use dynamic viewport/scissor state — these MUST be set
         // before any draw call or the GPU will read uninitialised dynamic state.
         // Use SetViewportRaw for the swapchain blit to avoid double Y-flip
         // (the source texture was already rendered with Y-flip applied).
@@ -836,7 +837,7 @@ public class DefaultRenderPipeline : RenderPipeline
         // depth contents.  Using false would set DepthLoadOp=Load which requires
         // initialLayout=DepthStencilAttachmentOptimal, but on the first frame
         // (or after RT resize) the depth texture is still in Undefined layout,
-        // causing a Vulkan layout mismatch â†’ ErrorDeviceLost.
+        // causing a Vulkan layout mismatch ? ErrorDeviceLost.
         cmd.BeginRenderPass(target, Graphite.LoadOp.Clear, Float4.Zero, true);
         // Use SetViewportRaw (no Y-flip) for fullscreen blits that sample render targets
         cmd.SetViewportRaw(0, 0, target.Width, target.Height);
@@ -932,7 +933,7 @@ public class DefaultRenderPipeline : RenderPipeline
             // Use raw viewport (no Y-flip) for the shadow atlas. The atlas is
             // self-contained: depth is written using the light's VP matrix and
             // sampled in the lighting pass with the same matrix. Applying a
-            // Y-flip here would break the UV â†” depth mapping.
+            // Y-flip here would break the UV ? depth mapping.
             graphiteCmd.SetViewportRaw(0, 0, atlas.Width, atlas.Height);
             graphiteCmd.SetScissor(0, 0, (uint)atlas.Width, (uint)atlas.Height);
         }

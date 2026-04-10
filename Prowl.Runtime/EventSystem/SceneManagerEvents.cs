@@ -3,6 +3,8 @@
 
 using Prowl.Runtime.Resources;
 
+using Prowl.EventSystem;
+
 namespace Prowl.Runtime.EventSystem;
 
 /// <summary>

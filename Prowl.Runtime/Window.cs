@@ -1,8 +1,9 @@
-ï»¿// This file is part of the Prowl Game Engine
+// This file is part of the Prowl Game Engine
 // Licensed under the MIT License. See the LICENSE file in the project root for details.
 
 using System;
 
+using Prowl.EventSystem;
 using Prowl.Runtime.EventSystem;
 using Prowl.Runtime.Graphite;
 
@@ -112,7 +113,7 @@ public static class Window
 
         // Pre-validate Vulkan support via GLFW to produce a catchable managed
         // exception instead of a fatal native access-violation (0xC0000005) in
-        // glfwCreateWindow that would bypass Game.Run's Vulkan â†’ OpenGL fallback.
+        // glfwCreateWindow that would bypass Game.Run's Vulkan ? OpenGL fallback.
         if (backend == GraphicsBackendType.Vulkan)
             PreValidateVulkanSupport();
 
@@ -166,7 +167,7 @@ public static class Window
             GlfwApi glfw = GlfwApi.GetApi();
             if (!glfw.Init())
                 throw new PlatformNotSupportedException(
-                    "GLFW initialization failed â€” cannot create a Vulkan window.");
+                    "GLFW initialization failed — cannot create a Vulkan window.");
 
             if (!glfw.VulkanSupported())
                 throw new PlatformNotSupportedException(
@@ -181,7 +182,7 @@ public static class Window
             throw new PlatformNotSupportedException(
                 $"Failed to verify Vulkan support via GLFW: {ex.Message}", ex);
         }
-        // Do NOT call glfw.Terminate() â€” Silk.NET reuses the initialized GLFW
+        // Do NOT call glfw.Terminate() — Silk.NET reuses the initialized GLFW
         // state and glfwInit is a safe no-op when already initialized.
     }
 
@@ -219,7 +220,7 @@ public static class Window
         catch (Exception ex)
         {
             Debug.LogError($"[Window] Exception escaped from event loop: {ex}");
-            // If we already captured an init exception in OnLoad, prefer it â€”
+            // If we already captured an init exception in OnLoad, prefer it —
             // the current exception is a secondary failure from cleanup.
             _loadException ??= ex;
         }
@@ -240,7 +241,7 @@ public static class Window
     {
         try
         {
-            Debug.Log($"[SILK] OnLoad fired â€” creating input context...");
+            Debug.Log($"[SILK] OnLoad fired — creating input context...");
             InternalInput = InternalWindow.CreateInput();
             WindowInputHandler = new DefaultInputHandler(InternalInput);
             Debug.Log($"[SILK] INITIALIZING GRAPHICS WITH BACKEND: {ActiveBackend}, GpuDebug: {GpuDebug}");
@@ -269,7 +270,7 @@ public static class Window
         if (_fatalError || !Graphics.IsGraphiteReady)
             return;
 
-        // When the swapchain is minimized (framebuffer 0Ã—0), skip all GPU work.
+        // When the swapchain is minimized (framebuffer 0×0), skip all GPU work.
         // Game logic (Update/FixedUpdate) continues to run in the main loop.
         if (Graphics.IsSwapchainMinimized)
         {
@@ -320,7 +321,7 @@ public static class Window
         if (!Graphics.Graphite.BeginFrame())
             return;
 
-        // Fire GPU frame begin â€” subscribers (e.g. GraphiteMaterialBinder,
+        // Fire GPU frame begin — subscribers (e.g. GraphiteMaterialBinder,
         // RenderStats) run their per-frame reset logic in priority order.
         GraphiteDeviceEvents.InvokeOnGpuFrameBegin(new GpuFrameBeginArgs(
         Graphics.Graphite.CurrentFrameIndex, 0));

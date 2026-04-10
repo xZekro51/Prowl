@@ -3,6 +3,7 @@
 
 using System;
 
+using Prowl.EventSystem;
 using Prowl.Runtime.EventSystem;
 
 namespace Prowl.Runtime.Rendering;

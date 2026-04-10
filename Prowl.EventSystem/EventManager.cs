@@ -4,7 +4,7 @@ using System.Collections.Generic;
 using System.Runtime.CompilerServices;
 using System.Threading.Tasks;
 
-namespace Prowl.Runtime.EventSystem;
+namespace Prowl.EventSystem;
 
 public class EventManager<T> : IDisposable where T : struct, Enum
 {
@@ -29,7 +29,7 @@ public class EventManager<T> : IDisposable where T : struct, Enum
     /// </summary>
     private static void RebuildGlobalSnapshot()
     {
-        var globals = new List<EventManager<T>>();
+        List<EventManager<T>> globals = new List<EventManager<T>>();
         for (int i = 0; i < s_instances.Count; i++)
         {
             if (s_instances[i].Global)
@@ -42,7 +42,7 @@ public class EventManager<T> : IDisposable where T : struct, Enum
     {
         get
         {
-            var snapshot = s_globalSnapshot;
+            EventManager<T>[] snapshot = s_globalSnapshot;
             for (int i = snapshot.Length - 1; i >= 0; i--)
             {
                 if (snapshot[i].Enabled)
@@ -102,7 +102,7 @@ public class EventManager<T> : IDisposable where T : struct, Enum
     {
         return _events.GetOrAdd(eventType, key =>
         {
-            var evt = new Event<T>(this, key);
+            Event<T> evt = new Event<T>(this, key);
             if (!enabled)
                 evt.Enabled = false;
             return evt;
@@ -116,7 +116,7 @@ public class EventManager<T> : IDisposable where T : struct, Enum
 
     public void RemoveDelegate(EventDelegateContainer<T> eventDelegate)
     {
-        if (_events.TryGetValue(eventDelegate.EventType, out var evt))
+        if (_events.TryGetValue(eventDelegate.EventType, out Event<T>? evt))
         {
             evt.Remove(eventDelegate);
         }
@@ -128,7 +128,7 @@ public class EventManager<T> : IDisposable where T : struct, Enum
     /// </summary>
     public bool RemoveDelegate(T eventType, Delegate handler)
     {
-        if (_events.TryGetValue(eventType, out var evt))
+        if (_events.TryGetValue(eventType, out Event<T>? evt))
             return evt.RemoveByDelegate(handler);
         return false;
     }
@@ -141,7 +141,7 @@ public class EventManager<T> : IDisposable where T : struct, Enum
     /// </summary>
     public void BeginBatch()
     {
-        foreach (var evt in _events.Values)
+        foreach (Event<T> evt in _events.Values)
             evt.BeginBatch();
     }
 
@@ -151,7 +151,7 @@ public class EventManager<T> : IDisposable where T : struct, Enum
     /// </summary>
     public void EndBatch()
     {
-        foreach (var evt in _events.Values)
+        foreach (Event<T> evt in _events.Values)
             evt.EndBatch();
     }
 
@@ -183,14 +183,14 @@ public class EventManager<T> : IDisposable where T : struct, Enum
 
         if (!EventArgsContract<T>.IsValid<TArgs>(eventType))
         {
-            Debug.LogError(
+            EventSystemDiagnostics.LogError?.Invoke(
                 $"[EventSystem] Type mismatch on {typeof(T).Name}.{eventType}: " +
                 $"invoked with '{typeof(TArgs).Name}' but the event declares " +
                 $"'{EventArgsContract<T>.GetDeclaredName(eventType)}' via [EventArgs].");
             return;
         }
 
-        if (_events.TryGetValue(eventType, out var evt))
+        if (_events.TryGetValue(eventType, out Event<T>? evt))
             evt.Invoke(args);
     }
 
@@ -200,7 +200,7 @@ public class EventManager<T> : IDisposable where T : struct, Enum
     /// </summary>
     public Event<T>? GetEvent(T eventType)
     {
-        _events.TryGetValue(eventType, out var evt);
+        _events.TryGetValue(eventType, out Event<T>? evt);
         return evt;
     }
 
@@ -223,14 +223,14 @@ public class EventManager<T> : IDisposable where T : struct, Enum
 
         if (!EventArgsContract<T>.IsValid<TArgs>(eventType))
         {
-            Debug.LogError(
+            EventSystemDiagnostics.LogError?.Invoke(
                 $"[EventSystem] Type mismatch on {typeof(T).Name}.{eventType}: " +
                 $"invoked with '{typeof(TArgs).Name}' but the event declares " +
                 $"'{EventArgsContract<T>.GetDeclaredName(eventType)}' via [EventArgs].");
             return;
         }
 
-        if (_events.TryGetValue(eventType, out var evt))
+        if (_events.TryGetValue(eventType, out Event<T>? evt))
             await evt.InvokeAsync(args).ConfigureAwait(false);
     }
 
@@ -307,73 +307,6 @@ public class EventManager<T> : IDisposable where T : struct, Enum
 
 
     /// <summary>
-    /// Register a typed delegate bound to an <see cref="EngineObject"/> owner.
-    /// The subscription is automatically removed when the owner is disposed.
-    /// </summary>
-    public LifecycleEventDelegateContainer<T, TArgs> AddNewDelegate<TArgs>(
-        EngineObject owner, T eventType, Action<TArgs> eventDelegate, int priority = 0
-#if DEBUG
-        , [CallerFilePath] string? sourceFile = null,
-        [CallerLineNumber] int sourceLine = 0,
-        [CallerMemberName] string? sourceMember = null
-#endif
-    )
-    {
-        ObjectDisposedException.ThrowIf(_disposed, this);
-
-        if (!EventArgsContract<T>.IsValid<TArgs>(eventType))
-        {
-            throw new InvalidOperationException(
-                $"[EventSystem] Type mismatch on {typeof(T).Name}.{eventType}: " +
-                $"handler registered with '{typeof(TArgs).Name}' but the event " +
-                $"declares '{EventArgsContract<T>.GetDeclaredName(eventType)}' " +
-                $"via [EventArgs]. Fix the subscriber's type parameter.");
-        }
-
-#if DEBUG
-        var container = new LifecycleEventDelegateContainer<T, TArgs>(owner, eventType, eventDelegate, priority, sourceFile, sourceLine, sourceMember);
-#else
-        var container = new LifecycleEventDelegateContainer<T, TArgs>(owner, eventType, eventDelegate, priority);
-#endif
-        GetOrCreateEvent(eventType).Add(container);
-        return container;
-    }
-
-    /// <summary>
-    /// Register a parameterless delegate bound to an <see cref="EngineObject"/> owner.
-    /// The subscription is automatically removed when the owner is disposed.
-    /// </summary>
-    public LifecycleParameterlessEventDelegateContainer<T> AddNewDelegate(
-        EngineObject owner, T eventType, Action eventDelegate, int priority = 0
-#if DEBUG
-        , [CallerFilePath] string? sourceFile = null,
-        [CallerLineNumber] int sourceLine = 0,
-        [CallerMemberName] string? sourceMember = null
-#endif
-    )
-    {
-        ObjectDisposedException.ThrowIf(_disposed, this);
-
-        if (!EventArgsContract<T>.IsValid<Unit>(eventType))
-        {
-            throw new InvalidOperationException(
-                $"[EventSystem] Type mismatch on {typeof(T).Name}.{eventType}: " +
-                $"handler registered with 'Unit' (parameterless) but the event " +
-                $"declares '{EventArgsContract<T>.GetDeclaredName(eventType)}' " +
-                $"via [EventArgs]. Fix the subscriber's type parameter.");
-        }
-
-#if DEBUG
-        var container = new LifecycleParameterlessEventDelegateContainer<T>(owner, eventType, eventDelegate, priority, sourceFile, sourceLine, sourceMember);
-#else
-        var container = new LifecycleParameterlessEventDelegateContainer<T>(owner, eventType, eventDelegate, priority);
-#endif
-        GetOrCreateEvent(eventType).Add(container);
-        return container;
-    }
-
-
-    /// <summary>
     /// Register a typed async delegate for an event.
     /// </summary>
     public AsyncEventDelegateContainer<T, TArgs> AddNewAsyncDelegate<TArgs>(
@@ -396,9 +329,9 @@ public class EventManager<T> : IDisposable where T : struct, Enum
                 $"via [EventArgs]. Fix the subscriber's type parameter.");
         }
 #if DEBUG
-        var container = new AsyncEventDelegateContainer<T, TArgs>(eventType, eventDelegate, priority, sourceFile, sourceLine, sourceMember);
+        AsyncEventDelegateContainer<T, TArgs> container = new(eventType, eventDelegate, priority, sourceFile, sourceLine, sourceMember);
 #else
-        var container = new AsyncEventDelegateContainer<T, TArgs>(eventType, eventDelegate, priority);
+        AsyncEventDelegateContainer<T, TArgs> container = new(eventType, eventDelegate, priority);
 #endif
         GetOrCreateEvent(eventType).Add(container);
         return container;
@@ -428,9 +361,9 @@ public class EventManager<T> : IDisposable where T : struct, Enum
         }
 
 #if DEBUG
-        var container = new ParameterlessAsyncEventDelegateContainer<T>(eventType, eventDelegate, priority, sourceFile, sourceLine, sourceMember);
+        ParameterlessAsyncEventDelegateContainer<T> container = new(eventType, eventDelegate, priority, sourceFile, sourceLine, sourceMember);
 #else
-        var container = new ParameterlessAsyncEventDelegateContainer<T>(eventType, eventDelegate, priority);
+        ParameterlessAsyncEventDelegateContainer<T> container = new(eventType, eventDelegate, priority);
 #endif
         GetOrCreateEvent(eventType).Add(container);
         return container;
@@ -442,11 +375,11 @@ public class EventManager<T> : IDisposable where T : struct, Enum
     /// </summary>
     public static void GlobalInvokeEvent<TArgs>(T eventType, TArgs args)
     {
-        var snapshot = s_globalSnapshot;
+        EventManager<T>[] snapshot = s_globalSnapshot;
 
         for (int i = 0; i < snapshot.Length; i++)
         {
-            var instance = snapshot[i];
+            EventManager<T> instance = snapshot[i];
             if (instance.Enabled)
             {
                 instance.InvokeEvent(eventType, args);
@@ -467,11 +400,11 @@ public class EventManager<T> : IDisposable where T : struct, Enum
     /// </summary>
     public static async Task GlobalInvokeEventAsync<TArgs>(T eventType, TArgs args)
     {
-        var snapshot = s_globalSnapshot;
+        EventManager<T>[] snapshot = s_globalSnapshot;
 
         for (int i = 0; i < snapshot.Length; i++)
         {
-            var instance = snapshot[i];
+            EventManager<T> instance = snapshot[i];
             if (instance.Enabled)
             {
                 await instance.InvokeEventAsync(eventType, args).ConfigureAwait(false);
@@ -492,7 +425,7 @@ public class EventManager<T> : IDisposable where T : struct, Enum
         if (_disposed) return;
         _disposed = true;
         enabled = false;
-        foreach (var evt in _events.Values)
+        foreach (Event<T> evt in _events.Values)
             evt.Enabled = false;
         _events.Clear();
         lock (s_instancesLock)
@@ -508,7 +441,7 @@ public class EventManager<T> : IDisposable where T : struct, Enum
     {
         if (!_disposed)
         {
-            Debug.LogWarning($"EventManager<{typeof(T).Name}> was not disposed before finalization.");
+            EventSystemDiagnostics.LogWarning?.Invoke($"EventManager<{typeof(T).Name}> was not disposed before finalization.");
         }
     }
 }

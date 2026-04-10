@@ -3,6 +3,8 @@
 
 using Prowl.Runtime.Graphite;
 
+using Prowl.EventSystem;
+
 namespace Prowl.Runtime.EventSystem;
 
 /// <summary>

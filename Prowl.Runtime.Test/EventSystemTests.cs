@@ -1,6 +1,7 @@
 // This file is part of the Prowl Game Engine
 // Licensed under the MIT License. See the LICENSE file in the project root for details.
 
+using Prowl.EventSystem;
 using Prowl.Runtime.EventSystem;
 
 using Xunit;
@@ -877,7 +878,7 @@ public class EventSystemTests : IDisposable
         var manager = CreateManager();
         var owner = new TestEngineObject();
         int received = 0;
-        manager.AddNewDelegate<TestParam>(owner, TestEvents.EventA, args => received = args.Data);
+        manager.AddNewDelegate<TestEvents, TestParam>(owner, TestEvents.EventA, args => received = args.Data);
 
         manager.InvokeEvent(TestEvents.EventA, new TestParam { Data = 42 });
         Assert.Equal(42, received);

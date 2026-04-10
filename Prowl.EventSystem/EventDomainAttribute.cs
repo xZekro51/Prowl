@@ -3,7 +3,7 @@
 
 using System;
 
-namespace Prowl.Runtime.EventSystem;
+namespace Prowl.EventSystem;
 
 /// <summary>
 /// Marks a <c>partial class</c> as an event domain.

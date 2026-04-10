@@ -2,8 +2,11 @@
 // Licensed under the MIT License. See the LICENSE file in the project root for details.
 
 using System;
+using System.Runtime.CompilerServices;
 
-namespace Prowl.Runtime.EventSystem;
+using Prowl.EventSystem;
+
+namespace Prowl.Runtime;
 
 /// <summary>
 /// A typed delegate container that is bound to an <see cref="EngineObject"/>
@@ -93,5 +96,59 @@ public sealed class LifecycleParameterlessEventDelegateContainer<T> : EventDeleg
 
         if (!Enabled) return;
         _action.Invoke();
+    }
+}
+
+/// <summary>
+/// Extension methods on <see cref="EventManager{T}"/> that register lifecycle-aware
+/// delegates bound to an <see cref="EngineObject"/> owner. The subscription is
+/// automatically removed when the owner is disposed.
+/// </summary>
+public static class EventManagerLifecycleExtensions
+{
+    /// <summary>
+    /// Register a typed delegate bound to an <see cref="EngineObject"/> owner.
+    /// The subscription is automatically removed when the owner is disposed.
+    /// </summary>
+    public static LifecycleEventDelegateContainer<T, TArgs> AddNewDelegate<T, TArgs>(
+        this EventManager<T> manager,
+        EngineObject owner, T eventType, Action<TArgs> eventDelegate, int priority = 0
+#if DEBUG
+        , [CallerFilePath] string? sourceFile = null,
+        [CallerLineNumber] int sourceLine = 0,
+        [CallerMemberName] string? sourceMember = null
+#endif
+    ) where T : struct, Enum
+    {
+#if DEBUG
+        LifecycleEventDelegateContainer<T, TArgs> container = new(owner, eventType, eventDelegate, priority, sourceFile, sourceLine, sourceMember);
+#else
+        LifecycleEventDelegateContainer<T, TArgs> container = new(owner, eventType, eventDelegate, priority);
+#endif
+        manager.AddDelegate(container);
+        return container;
+    }
+
+    /// <summary>
+    /// Register a parameterless delegate bound to an <see cref="EngineObject"/> owner.
+    /// The subscription is automatically removed when the owner is disposed.
+    /// </summary>
+    public static LifecycleParameterlessEventDelegateContainer<T> AddNewDelegate<T>(
+        this EventManager<T> manager,
+        EngineObject owner, T eventType, Action eventDelegate, int priority = 0
+#if DEBUG
+        , [CallerFilePath] string? sourceFile = null,
+        [CallerLineNumber] int sourceLine = 0,
+        [CallerMemberName] string? sourceMember = null
+#endif
+    ) where T : struct, Enum
+    {
+#if DEBUG
+        LifecycleParameterlessEventDelegateContainer<T> container = new(owner, eventType, eventDelegate, priority, sourceFile, sourceLine, sourceMember);
+#else
+        LifecycleParameterlessEventDelegateContainer<T> container = new(owner, eventType, eventDelegate, priority);
+#endif
+        manager.AddDelegate(container);
+        return container;
     }
 }

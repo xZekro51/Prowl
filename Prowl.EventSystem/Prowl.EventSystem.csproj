@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>false</AllowUnsafeBlocks>
+    <NoWarn>8600;8601;8618;8602;8603;8604;8625;1591</NoWarn>
+    <IsAotCompatible>true</IsAotCompatible>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Prowl.Runtime" />
+    <InternalsVisibleTo Include="Prowl.Runtime.Test" />
+  </ItemGroup>
+
+  <!-- Source generator for [EventDomain] classes -->
+  <ItemGroup>
+    <ProjectReference Include="..\Prowl.EventSystem.Generators\Prowl.EventSystem.Generators.csproj"
+                      OutputItemType="Analyzer"
+                      ReferenceOutputAssembly="false" />
+  </ItemGroup>
+
+</Project>

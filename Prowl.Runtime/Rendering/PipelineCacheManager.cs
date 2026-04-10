@@ -4,6 +4,7 @@
 using System;
 using System.IO;
 
+using Prowl.EventSystem;
 using Prowl.Runtime.EventSystem;
 using Prowl.Runtime.Graphite;
 

@@ -1,4 +1,4 @@
-﻿// This file is part of the Prowl Game Engine
+// This file is part of the Prowl Game Engine
 // Licensed under the MIT License. See the LICENSE file in the project root for details.
 
 using System;
@@ -8,6 +8,7 @@ using System.Linq;
 using System.Reflection;
 using System.Text;
 
+using Prowl.EventSystem;
 using Prowl.Runtime.EventSystem;
 using Prowl.Runtime.Resources;
 using Prowl.Vector;
@@ -151,7 +152,7 @@ public static class Debug
     }
 
     // NOTE : StackTrace is pretty fast on modern .NET, so it's nice to keep it on by default, since it gives useful line numbers for debugging purposes.
-    // For reference, getting a stack trace on a modern machine takes around 15 μs at a depth of 15.
+    // For reference, getting a stack trace on a modern machine takes around 15 �s at a depth of 15.
     public static void Log(string message, LogSeverity logSeverity, DebugStackTrace? customTrace = null)
     {
         ConsoleColor prevColor = Console.ForegroundColor;

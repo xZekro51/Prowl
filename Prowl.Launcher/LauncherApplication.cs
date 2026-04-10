@@ -8,6 +8,7 @@ using ImGuiNET;
 
 using Prowl.ImGuiIntegration;
 using Prowl.Runtime;
+using Prowl.EventSystem;
 using Prowl.Runtime.EventSystem;
 using Prowl.UI;
 

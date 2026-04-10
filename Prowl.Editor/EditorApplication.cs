@@ -18,6 +18,7 @@ using Prowl.Editor.Toolbar;
 using Prowl.Editor.Undo;
 using Prowl.ImGuiIntegration;
 using Prowl.Runtime;
+using Prowl.EventSystem;
 using Prowl.Runtime.EventSystem;
 using Prowl.Runtime.Resources;
 using Prowl.PaperUI;

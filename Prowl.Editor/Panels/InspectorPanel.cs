@@ -11,6 +11,7 @@ using Prowl.Runtime.Prefabs;
 using Prowl.Runtime.Utils;
 using Prowl.Runtime.Resources;
 using Prowl.Runtime.Text;
+using Prowl.EventSystem;
 using Prowl.Runtime.EventSystem;
 using Prowl.Editor.Core;
 using Prowl.Editor.Docking;

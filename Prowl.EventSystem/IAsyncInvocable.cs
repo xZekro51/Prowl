@@ -3,7 +3,7 @@
 
 using System.Threading.Tasks;
 
-namespace Prowl.Runtime.EventSystem;
+namespace Prowl.EventSystem;
 
 /// <summary>
 /// Interface for typed, async invocation of an event handler.

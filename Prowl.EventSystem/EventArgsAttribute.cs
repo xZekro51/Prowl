@@ -3,7 +3,7 @@
 
 using System;
 
-namespace Prowl.Runtime.EventSystem;
+namespace Prowl.EventSystem;
 
 /// <summary>
 /// Declares the canonical <c>TArgs</c> type for an event enum value.

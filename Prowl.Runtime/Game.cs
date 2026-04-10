@@ -1,4 +1,4 @@
-﻿// This file is part of the Prowl Game Engine
+// This file is part of the Prowl Game Engine
 // Licensed under the MIT License. See the LICENSE file in the project root for details.
 
 using System;
@@ -20,6 +20,7 @@ using Prowl.Runtime.Resources;
 using Prowl.UI;
 using Prowl.Vector;
 
+using Prowl.EventSystem;
 using Prowl.Runtime.EventSystem;
 
 namespace Prowl.Runtime;
@@ -57,7 +58,7 @@ public abstract class Game
     private IOverlayManager? _overlayManager;
     private readonly StringBuilder _titleBuilder = new();
 
-    // Pre-computed KeyCode→PaperKey mapping table to avoid per-frame
+    // Pre-computed KeyCode?PaperKey mapping table to avoid per-frame
     // Enum.GetValues allocation, ToString(), and TryParse overhead.
     private static readonly (KeyCode key, PaperKey paper)[] s_keyMapping = BuildKeyMapping();
 
@@ -101,36 +102,36 @@ public abstract class Game
         return [.. list];
         }
 
-    // ── Backward-compatible event-manager shims ──────────────────────
+    // -- Backward-compatible event-manager shims ----------------------
     // These delegate to the source-generated Manager on each domain class.
     // User code should migrate to the generated convenience methods
     // (e.g. GameLoopEvents.InvokeOnFrameBegin, GameLoopEvents.SubscribeOnFrameBegin)
     // or access the manager directly via GameLoopEvents.Manager.
 
-    /// <inheritdoc cref="EventSystem.BaseEvents.Manager"/>
+    /// <inheritdoc cref="BaseEvents.Manager"/>
     [Obsolete("Use BaseEvents.Manager or the generated convenience methods instead.")]
-    public static EventSystem.EventManager<EventSystem.BaseEvents.EventTypes> BaseEventManager
-        => EventSystem.BaseEvents.Manager;
+    public static EventManager<BaseEvents.EventTypes> BaseEventManager
+        => BaseEvents.Manager;
 
-    /// <inheritdoc cref="EventSystem.GameLoopEvents.Manager"/>
+    /// <inheritdoc cref="GameLoopEvents.Manager"/>
     [Obsolete("Use GameLoopEvents.Manager or the generated convenience methods instead.")]
-    public static EventSystem.EventManager<EventSystem.GameLoopEvents.EventTypes> GameLoopEventManager
-        => EventSystem.GameLoopEvents.Manager;
+    public static EventManager<GameLoopEvents.EventTypes> GameLoopEventManager
+        => GameLoopEvents.Manager;
 
-    /// <inheritdoc cref="EventSystem.RenderingEvents.Manager"/>
+    /// <inheritdoc cref="RenderingEvents.Manager"/>
     [Obsolete("Use RenderingEvents.Manager or the generated convenience methods instead.")]
-    public static EventSystem.EventManager<EventSystem.RenderingEvents.EventTypes> RenderingEventManager
-        => EventSystem.RenderingEvents.Manager;
+    public static EventManager<RenderingEvents.EventTypes> RenderingEventManager
+        => RenderingEvents.Manager;
 
-    /// <inheritdoc cref="EventSystem.PhysicsEvents.Manager"/>
+    /// <inheritdoc cref="PhysicsEvents.Manager"/>
     [Obsolete("Use PhysicsEvents.Manager or the generated convenience methods instead.")]
-    public static EventSystem.EventManager<EventSystem.PhysicsEvents.EventTypes> PhysicsEventManager
-        => EventSystem.PhysicsEvents.Manager;
+    public static EventManager<PhysicsEvents.EventTypes> PhysicsEventManager
+        => PhysicsEvents.Manager;
 
-    /// <inheritdoc cref="EventSystem.AssetEvents.Manager"/>
+    /// <inheritdoc cref="AssetEvents.Manager"/>
     [Obsolete("Use AssetEvents.Manager or the generated convenience methods instead.")]
-    public static EventSystem.EventManager<EventSystem.AssetEvents.EventTypes> AssetEventManager
-        => EventSystem.AssetEvents.Manager;
+    public static EventManager<AssetEvents.EventTypes> AssetEventManager
+        => AssetEvents.Manager;
 
     public string WindowTitle => _title;
 
@@ -193,10 +194,10 @@ public abstract class Game
                 BeginUpdate();
             }
 
-            // Cache once — each access takes a lock.
+            // Cache once � each access takes a lock.
             int loadedScenes = SceneManager.LoadedSceneCount;
 
-            // Fixed update loop — update all loaded scenes
+            // Fixed update loop � update all loaded scenes
             using (Profiler.Section("FixedUpdate"))
             {
                 Debug.LastPhase = "Update.FixedUpdate";
@@ -287,6 +288,10 @@ public abstract class Game
         // Create a fresh engine context for this game instance.
         EngineContext.Current = new EngineContext();
 
+        // Wire the standalone event system's diagnostics to the engine's Debug logger.
+        EventSystemDiagnostics.LogWarning = Debug.LogWarning;
+        EventSystemDiagnostics.LogError = Debug.LogError;
+
         // Log system and environment info for diagnostics.
         LogSystemInfo(backend);
 
@@ -299,11 +304,11 @@ public abstract class Game
             {
                 Debug.LogSuccess($"[Graphics] Initializing Window...");
                 SetupWindowAndStart(title, width, height, backend);
-                return; // Normal exit — window ran and closed cleanly.
+                return; // Normal exit � window ran and closed cleanly.
             }
             catch (Exception ex)
             {
-                // Log FULL exception details — ToString() includes FileName for
+                // Log FULL exception details � ToString() includes FileName for
                 // FileNotFoundException, all inner exceptions, and full stack traces.
                 Debug.LogWarning($"[Graphics] Failed to initialize {backend} backend:");
                 Debug.LogWarning($"[Graphics]   Exception: {ex}");
@@ -341,11 +346,11 @@ public abstract class Game
             }
             catch (DllNotFoundException ex)
             {
-                Debug.LogWarning($"[Audio] Native audio library not found — audio will be disabled: {ex.Message}");
+                Debug.LogWarning($"[Audio] Native audio library not found � audio will be disabled: {ex.Message}");
             }
             catch (Exception ex)
             {
-                Debug.LogWarning($"[Audio] Failed to initialize audio context — audio will be disabled: {ex.Message}");
+                Debug.LogWarning($"[Audio] Failed to initialize audio context � audio will be disabled: {ex.Message}");
             }
 
             int scaledW = _windowManager.InitialScaledWidth;
@@ -485,7 +490,7 @@ public abstract class Game
 
             // Scene rendering is wrapped separately so that failures here
             // do not prevent UI from rendering.
-            // Skip all GPU rendering if the device has been lost — continuing
+            // Skip all GPU rendering if the device has been lost � continuing
             // would produce cascading Vulkan errors on every submission.
             bool deviceLost = Graphics.IsGraphiteReady && Graphics.Graphite.IsDeviceLost;
             if (deviceLost)
@@ -569,7 +574,7 @@ public abstract class Game
                     throw;
             }
 
-            // Overlay UI frame (editor / launcher UI) — works on all backends via Graphite.
+            // Overlay UI frame (editor / launcher UI) � works on all backends via Graphite.
             Debug.LastPhase = "Render.Overlay";
             RenderOverlay(delta);
 
@@ -646,7 +651,7 @@ public abstract class Game
 
     /// <summary>
     /// Runs the Paper/OnGui pass for all loaded scenes.
-    /// Override in the editor to skip this — the editor handles scene Paper UI
+    /// Override in the editor to skip this � the editor handles scene Paper UI
     /// separately via <c>RenderOnGuiIntoRT</c> into the game/scene view render textures.
     /// </summary>
     protected virtual void RenderScenePaperGui(Paper paper)
@@ -677,7 +682,7 @@ public abstract class Game
     /// The default implementation returns <c>false</c>, causing the exception to be re-thrown.
     /// </summary>
     /// <param name="e">The caught exception.</param>
-    /// <param name="phase">"Update" or "Render" — indicates which loop threw.</param>
+    /// <param name="phase">"Update" or "Render" � indicates which loop threw.</param>
     /// <returns><c>true</c> if the exception was handled and execution should continue; <c>false</c> to re-throw.</returns>
     protected virtual bool HandleFrameException(Exception e, string phase) => false;
 
@@ -695,7 +700,7 @@ public abstract class Game
         // Resize the window to maintain the same logical size (based on monitor DPI only).
         _windowManager.ResizeForDpi();
 
-        Debug.Log($"DPI changed: {oldScale:F2} → {newScale:F2}");
+        Debug.Log($"DPI changed: {oldScale:F2} ? {newScale:F2}");
 
         // Let subclasses react (e.g., reset theme scaling).
         OnDpiChanged(oldScale, newScale);
@@ -840,7 +845,7 @@ public abstract class Game
         }
         catch
         {
-            // Best effort — don't let crash reporting cause another crash.
+            // Best effort � don't let crash reporting cause another crash.
         }
     }
 
