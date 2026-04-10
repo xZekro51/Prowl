@@ -5,6 +5,9 @@ using Prowl.PaperUI;
 using Prowl.PaperUI.LayoutEngine;
 using Prowl.Scribe;
 
+using static System.Net.Mime.MediaTypeNames;
+using static Prowl.PaperUI.ElementBuilder;
+
 using Color = System.Drawing.Color;
 
 namespace Prowl.Editor.Widgets;
@@ -248,7 +251,7 @@ public static class EditorGUI
         {
             if (Font != null && !string.IsNullOrEmpty(label))
                 paper.Box($"{id}_lbl")
-                    .Width(LabelW).Height(EditorTheme.RowHeight).ChildLeft(4)
+                    .Width(LabelW).Height(EditorTheme.RowHeight).ChildLeft(4).Alignment(PaperUI.TextAlignment.MiddleLeft)
                     .Text(label, Font).TextColor(EditorTheme.Ink500).FontSize(FontSz);
 
             using (paper.Box($"{id}_input")
@@ -265,19 +268,25 @@ public static class EditorGUI
                 .TabIndex(0)
                 .Enter())
             {
+                var settings = TextInputSettings.Default;
+                settings.Font = Font!;
+                settings.TextColor = EditorTheme.Ink500;
+                settings.Placeholder = "";
+                settings.PlaceholderColor = EditorTheme.Ink300;
+
                 paper.Box($"{id}_tf")
                     .Margin(4, UnitValue.Stretch())
                     .HookToParent()
                     .IsNotInteractable()
+
                     .Width(UnitValue.Stretch())
                     .Height(EditorTheme.RowHeight)
                     .FontSize(FontSz)
-                    .TextField(value, Font!,
+                    .TextField(value, settings,
                         onChange: v => userCallback?.Invoke(v),
-                        textColor: EditorTheme.Ink500,
-                        placeholder: "",
-                        placeholderColor: EditorTheme.Ink300,
-                        intID: id.GetHashCode());
+                        intID: id.GetHashCode())
+
+                    .Alignment(PaperUI.TextAlignment.MiddleLeft);
             }
         }
 
@@ -317,6 +326,8 @@ public static class EditorGUI
                 .TabIndex(0)
                 .Enter())
             {
+                var vertOffset = ((EditorTheme.RowHeight - FontSz) / 2f);
+                Console.WriteLine($"Vertical offset for float field: {vertOffset}");
                 var settings = MakeNumericSettings(FloatFilter);
                 paper.Box($"{id}_tf")
                     .Margin(4, UnitValue.Stretch())
@@ -325,7 +336,6 @@ public static class EditorGUI
                     .Width(UnitValue.Stretch())
                     .Height(EditorTheme.RowHeight)
                     .FontSize(FontSz)
-                    .Alignment(PaperUI.TextAlignment.MiddleLeft)
                     .TextField(textVal, settings,
                         onChange: v =>
                         {
