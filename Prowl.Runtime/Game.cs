@@ -13,6 +13,8 @@ using Prowl.Runtime.GUI;
 using Prowl.Runtime.Resources;
 using Prowl.Vector;
 
+using Prowl.Runtime.Events;
+
 namespace Prowl.Runtime;
 
 public class EchoLogger : IEchoLogger
@@ -36,6 +38,16 @@ public abstract class Game
     private int frameCounter;
 
     public Paper PaperInstance => _paper;
+
+    private GameEvents _events;
+    public GameEvents Events
+    {
+        get
+        {
+            _events ??= new GameEvents();
+            return _events;
+        }
+    }
 
     public bool DrawGizmos { get; set; }
 
@@ -76,7 +88,11 @@ public abstract class Game
 
                 Input.UpdateActions(delta);
 
+                Events.InvokeOnBeforeBeginUpdate();
+
                 BeginUpdate();
+
+                Events.InvokeOnAfterBeginUpdate();
 
                 Scene? currentScene = Scene.Current;
 
