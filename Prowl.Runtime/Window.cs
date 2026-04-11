@@ -2,6 +2,7 @@
 // Licensed under the MIT License. See the LICENSE file in the project root for details.
 
 using System;
+using System.Xml.Linq;
 
 using Prowl.Runtime.Events;
 

@@ -3,7 +3,10 @@
 
 using System;
 
+using Prowl.Runtime.Events;
 using Prowl.Vector;
+
+using Vortex;
 
 namespace Prowl.Runtime;
 
@@ -16,8 +19,13 @@ public interface IInputHandler
     float MouseWheelDelta { get; }
     Int2 PrevMousePosition { get; }
 
-    event Action<KeyCode, bool> OnKeyEvent;
-    event Action<MouseButton, float, float, bool, bool> OnMouseEvent;
+    InputEvents Events { get; }
+
+    EventAccessor<InputEvents.EventTypes, InputEvents.OnKeyArgs> OnKeyEvent { get; }
+    EventAccessor<InputEvents.EventTypes, InputEvents.OnMouseArgs> OnMouseEvent { get; }
+
+    //event Action<KeyCode, bool> OnKeyEvent;
+    //event Action<MouseButton, float, float, bool, bool> OnMouseEvent;
 
     // Keyboard methods
     char? GetPressedChar();
