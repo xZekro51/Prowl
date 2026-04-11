@@ -62,9 +62,6 @@
     <Reference Include="Vortex">
       <HintPath>..\Libraries\Vortex.dll</HintPath>
     </Reference>
-    <Reference Include="Vortex.Generators">
-      <HintPath>..\Libraries\Vortex.Generators.dll</HintPath>
-    </Reference>
   </ItemGroup>
 
 </Project>
