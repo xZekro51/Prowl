@@ -6,14 +6,14 @@ using System.Diagnostics.CodeAnalysis;
 
 using Echo.Logging;
 
-using Prowl.Runtime.Audio;
-
 using Prowl.PaperUI;
+using Prowl.Runtime.Audio;
+using Prowl.Runtime.Events;
 using Prowl.Runtime.GUI;
 using Prowl.Runtime.Resources;
 using Prowl.Vector;
 
-using Prowl.Runtime.Events;
+using static Prowl.Runtime.Events.GameEvents;
 
 namespace Prowl.Runtime;
 
@@ -78,6 +78,10 @@ public abstract class Game
         {
             try
             {
+                Scene? currentScene = Scene.Current;
+
+                GameEventsArgs gameEventsArgs = new(currentScene);
+
                 UpdatePaperInput();
 
                 AudioContext.Update();
@@ -88,13 +92,13 @@ public abstract class Game
 
                 Input.UpdateActions(delta);
 
-                Events.InvokeOnBeforeBeginUpdate();
+                Events.InvokeOnBeforeBeginUpdate(gameEventsArgs);
 
                 BeginUpdate();
 
-                Events.InvokeOnAfterBeginUpdate();
+                Events.InvokeOnAfterBeginUpdate(gameEventsArgs);
 
-                Scene? currentScene = Scene.Current;
+                
 
                 // Fixed update loop — only when gameplay should run
                 fixedTimeAccumulator += delta;
@@ -104,7 +108,9 @@ public abstract class Game
                     int count = 0;
                     while (fixedTimeAccumulator >= Time.FixedDeltaTime && count++ < Time.MaxFixedIterations)
                     {
+                        Events.InvokeOnBeforeFixedUpdate(gameEventsArgs);
                         currentScene?.FixedUpdate();
+                        Events.InvokeOnAfterFixedUpdate(gameEventsArgs);
                         fixedTimeAccumulator -= Time.FixedDeltaTime;
                     }
                     Application.IsGameplayExecuting = false;
@@ -115,7 +121,11 @@ public abstract class Game
                     fixedTimeAccumulator = MathF.Min(fixedTimeAccumulator, Time.FixedDeltaTime);
                 }
 
+                Events.InvokeOnBeforeUpdate(gameEventsArgs);
+
                 OnUpdate(currentScene);
+
+                Events.InvokeOnAfterUpdate(gameEventsArgs);
 
                 // Consume step request — re-pause after one frame
                 if (Application.StepRequested)
@@ -124,7 +134,12 @@ public abstract class Game
                     Application.IsPaused = true;
                 }
 
+                Events.InvokeOnBeforeEndUpdate(gameEventsArgs);
+
                 EndUpdate();
+
+                Events.InvokeOnAfterEndUpdate(gameEventsArgs);
+
 
                 if (frameCounter++ % 60 == 0)
                 { 
