@@ -3,6 +3,8 @@
 
 using System;
 
+using Prowl.Runtime.Events;
+
 using Silk.NET.Input;
 using Silk.NET.Maths;
 using Silk.NET.Windowing;
@@ -15,18 +17,18 @@ public static class Window
     public static IWindow InternalWindow { get; internal set; }
     public static IInputContext InternalInput { get; internal set; }
 
-    public static event Action? Load;
-    public static event Action<float>? Update;
-    public static event Action<float>? Render;
-    public static event Action<float>? PostRender;
-    public static event Action<bool>? FocusChanged;
-    public static event Action<Vector2D<int>>? Resize;
-    public static event Action<Vector2D<int>>? FramebufferResize;
-    public static event Action? Closing;
+    //public static event Action? Load;
+    //public static event Action<float>? Update;
+    //public static event Action<float>? Render;
+    //public static event Action<float>? PostRender;
+    //public static event Action<bool>? FocusChanged;
+    //public static event Action<Vector2D<int>>? Resize;
+    //public static event Action<Vector2D<int>>? FramebufferResize;
+    //public static event Action? Closing;
 
-    public static event Action<Vector2D<int>>? Move;
-    public static event Action<WindowState>? StateChanged;
-    public static event Action<string[]>? FileDrop;
+    //public static event Action<Vector2D<int>>? Move;
+    //public static event Action<WindowState>? StateChanged;
+    //public static event Action<string[]>? FileDrop;
 
     public static Vector2D<int> Size
     {
@@ -85,13 +87,13 @@ public static class Window
         InternalWindow.Move += OnMove;
         InternalWindow.Closing += OnClose;
 
-        InternalWindow.StateChanged += (state) => { StateChanged?.Invoke(state); };
-        InternalWindow.FileDrop += (files) => { FileDrop?.Invoke(files); };
+        InternalWindow.StateChanged += (state) => { WindowEvents.StateChanged.Invoke(new(state)); };
+        InternalWindow.FileDrop += (files) => { WindowEvents.FileDrop.Invoke(new(files)); };
 
         InternalWindow.FocusChanged += (focused) => { isFocused = focused; };
     }
 
-    private static void OnMove(Vector2D<int> d) => Move?.Invoke(d);
+    private static void OnMove(Vector2D<int> d) => WindowEvents.Move.Invoke(new(d));
     public static void Start() => InternalWindow.Run();
     public static void Stop() => InternalWindow.Close();
 
@@ -103,39 +105,39 @@ public static class Window
 
         // Push Default Handler
         Input.PushHandler(WindowInputHandler);
-        Load?.Invoke();
+        WindowEvents.Load.Invoke();
     }
 
     public static void OnRender(double delta)
     {
-        Render?.Invoke((float)delta);
-        PostRender?.Invoke((float)delta);
+        WindowEvents.Render.Invoke(new((float)delta));
+        WindowEvents.PostRender.Invoke(new((float)delta));
     }
 
     public static void OnFocusChanged(bool focused)
     {
-        FocusChanged?.Invoke(focused);
+        WindowEvents.FocusChanged.Invoke(new(focused));
     }
 
     public static void OnResize(Vector2D<int> size)
     {
-        Resize?.Invoke(size);
+        WindowEvents.Resize.Invoke(new(size));
     }
 
     public static void OnFramebufferResize(Vector2D<int> size)
     {
-        FramebufferResize?.Invoke(size);
+        WindowEvents.FramebufferResize.Invoke(new(size));
     }
 
     public static void OnUpdate(double delta)
     {
-        Update?.Invoke((float)delta);
+        WindowEvents.Update.Invoke(new WindowEvents.FloatArgs((float)delta));
         WindowInputHandler.LateUpdate();
     }
 
     public static void OnClose()
     {
-        Closing?.Invoke();
+        WindowEvents.Closing.Invoke();
         WindowInputHandler.Dispose();
         Input.PopHandler();
         Graphics.Dispose();

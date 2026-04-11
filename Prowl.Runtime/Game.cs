@@ -55,7 +55,7 @@ public abstract class Game
     {
         Window.InitWindow(title, width, height, Silk.NET.Windowing.WindowState.Normal, false);
 
-        Window.Load += () =>
+        WindowEvents.Load += () =>
         {
             AudioContext.Initialize(44100, 2, 2048);
 
@@ -74,7 +74,7 @@ public abstract class Game
             Initialize();
         };
 
-        Window.Update += (delta) =>
+        WindowEvents.SubscribeUpdate((args) =>
         {
             try
             {
@@ -90,7 +90,7 @@ public abstract class Game
                 Time.TimeStack.Clear();
                 Time.TimeStack.Push(time);
 
-                Input.UpdateActions(delta);
+                Input.UpdateActions(args.Value);
 
                 Events.InvokeOnBeforeBeginUpdate(gameEventsArgs);
 
@@ -101,7 +101,7 @@ public abstract class Game
                 
 
                 // Fixed update loop — only when gameplay should run
-                fixedTimeAccumulator += delta;
+                fixedTimeAccumulator += args.Value;
                 if (Application.ShouldRunGameplay)
                 {
                     Application.IsGameplayExecuting = true;
@@ -153,9 +153,9 @@ public abstract class Game
                 Debug.LogError(e.ToString());
                 throw;
             }
-        };
+        });
 
-        Window.Render += (delta) =>
+        WindowEvents.Render += (delta) =>
         {
             try
             {
@@ -185,7 +185,7 @@ public abstract class Game
                 Graphics.Viewport(0, 0, (uint)Window.InternalWindow.FramebufferSize.X, (uint)Window.InternalWindow.FramebufferSize.Y);
 
                 float dpiScale = (float)Window.InternalWindow.FramebufferSize.X / Window.InternalWindow.Size.X;
-                _paper.BeginFrame(delta, dpiScale);
+                _paper.BeginFrame(delta.Value, dpiScale);
 
                 BeginGui(_paper);
 
@@ -211,18 +211,18 @@ public abstract class Game
             }
         };
 
-        Window.Resize += (size) =>
+        WindowEvents.Resize += (size) =>
         {
-            _paper.SetResolution(size.X, size.Y);
-            Resize(size.X, size.Y);
+            _paper.SetResolution(size.Value.X, size.Value.Y);
+            Resize(size.Value.X, size.Value.Y);
         };
 
-        Window.FramebufferResize += (size) =>
+        WindowEvents.FramebufferResize += (size) =>
         {
-            _paperRenderer.UpdateProjection(size.X, size.Y);
+            _paperRenderer.UpdateProjection(size.Value.X, size.Value.Y);
         };
 
-        Window.Closing += () =>
+        WindowEvents.Closing += () =>
         {
             Closing();
 
