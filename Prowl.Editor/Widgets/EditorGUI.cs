@@ -217,7 +217,8 @@ public static class EditorGUI
             .Enter())
         {
             var box = paper.Box($"{id}_box")
-                .Size(16, 16)
+                .Size(18, 18)
+                .Margin(UnitValue.Auto, UnitValue.Auto,(EditorTheme.RowHeight - 18)/2f,UnitValue.Auto)
                 .BackgroundColor(value ? EditorTheme.Purple400 : EditorTheme.Neutral300)
                 .Hovered.BackgroundColor(value ? EditorTheme.Purple300 : EditorTheme.Ink200).End()
                 .Rounded(3)
@@ -230,6 +231,7 @@ public static class EditorGUI
             if (Font != null)
                 paper.Box($"{id}_lbl")
                     .Width(UnitValue.Auto)
+                    .Alignment(PaperUI.TextAlignment.MiddleLeft)
                     .Text(label, Font).TextColor(EditorTheme.Ink500).FontSize(FontSz);
         }
 
@@ -247,12 +249,13 @@ public static class EditorGUI
         using (paper.Row(id)
             .Height(EditorTheme.RowHeight)
             .RowBetween(6)
-            .Margin(UnitValue.Auto,2)
+            .Margin(UnitValue.Auto, EditorTheme.Spacing)
             .Enter())
         {
             if (Font != null && !string.IsNullOrEmpty(label))
                 paper.Box($"{id}_lbl")
-                    .Width(LabelW).Height(EditorTheme.RowHeight).ChildLeft(4).Alignment(PaperUI.TextAlignment.MiddleLeft)
+                    .Width(LabelW).Height(EditorTheme.RowHeight).ChildLeft(4)
+                    .Alignment(PaperUI.TextAlignment.MiddleLeft)
                     .Text(label, Font).TextColor(EditorTheme.Ink500).FontSize(FontSz);
 
             using (paper.Box($"{id}_input")
@@ -308,11 +311,13 @@ public static class EditorGUI
         using (paper.Row(id)
             .Height(EditorTheme.RowHeight)
             .RowBetween(6)
+            .Margin(UnitValue.Auto, EditorTheme.Spacing)
             .Enter())
         {
             if (Font != null && !string.IsNullOrEmpty(label))
                 paper.Box($"{id}_lbl")
                     .Width(UnitValue.Auto).Height(EditorTheme.RowHeight).ChildLeft(4)
+                    .Alignment(PaperUI.TextAlignment.MiddleLeft)
                     .Text(label, Font).TextColor(textColor ?? EditorTheme.Ink500).FontSize(FontSz);
 
             using (paper.Box($"{id}_input")
@@ -329,11 +334,12 @@ public static class EditorGUI
                 .TabIndex(0)
                 .Enter())
             {
-                var vertOffset = ((EditorTheme.RowHeight - FontSz) / 2f);
-                Console.WriteLine($"Vertical offset for float field: {vertOffset}");
+
+                var yOffset = (EditorTheme.RowHeight - FontSz) / 2.0f;
+
                 var settings = MakeNumericSettings(FloatFilter);
                 paper.Box($"{id}_tf")
-                    .Margin(4, UnitValue.Stretch())
+                    .Margin(4, yOffset)
                     .HookToParent()
                     .IsNotInteractable()
                     .Width(UnitValue.Stretch())
@@ -364,11 +370,13 @@ public static class EditorGUI
         using (paper.Row(id)
             .Height(EditorTheme.RowHeight)
             .RowBetween(6)
+            .Margin(UnitValue.Auto, EditorTheme.Spacing)
             .Enter())
         {
             if (Font != null && !string.IsNullOrEmpty(label))
                 paper.Box($"{id}_lbl")
                     .Width(UnitValue.Auto).Height(EditorTheme.RowHeight).ChildLeft(4)
+                    .Alignment(PaperUI.TextAlignment.MiddleLeft)
                     .Text(label, Font).TextColor(textColor ?? EditorTheme.Ink500).FontSize(FontSz);
 
 
@@ -386,9 +394,11 @@ public static class EditorGUI
                 .TabIndex(0)
                 .Enter())
             {
+
+                var yOffset = (EditorTheme.RowHeight - FontSz) / 2.0f;
                 var settings = MakeNumericSettings(IntFilter);
                 paper.Box($"{id}_tf")
-                    .Margin(4, UnitValue.Stretch())
+                    .Margin(4, yOffset)
                     .HookToParent()
                     .IsNotInteractable()
                     .Width(UnitValue.Stretch())
@@ -419,11 +429,13 @@ public static class EditorGUI
         using (paper.Row(id)
             .Height(EditorTheme.RowHeight)
             .RowBetween(6)
+            .Margin(UnitValue.Auto, EditorTheme.Spacing)
             .Enter())
         {
             if (Font != null && !string.IsNullOrEmpty(label))
                 paper.Box($"{id}_lbl")
                     .Width(LabelW).Height(EditorTheme.RowHeight).ChildLeft(4)
+                    .Alignment(PaperUI.TextAlignment.MiddleLeft)
                     .IsNotInteractable()
                     .Text(label, Font)
                     .TextColor(EditorTheme.Ink500).FontSize(FontSz);
@@ -498,6 +510,7 @@ public static class EditorGUI
         var header = paper
             .Row($"{id}_header")
             .Height(EditorTheme.RowHeight)
+            .Alignment(PaperUI.TextAlignment.MiddleLeft)
             .ChildLeft(4)
             .BackgroundColor(EditorTheme.Neutral300)
             .Hovered.BackgroundColor(EditorTheme.Ink200).End()
@@ -514,9 +527,11 @@ public static class EditorGUI
                 if (expanded)
                 {
                     paper.Box("{id}_arrow")
-                        .Margin(EditorTheme.RowHeight / 4, 0, EditorTheme.RowHeight / 8, 0)
+                        //.Margin(EditorTheme.RowHeight / 4, 0, EditorTheme.RowHeight / 22, 0)
+                        .Margin(EditorTheme.RowHeight / 4, EditorTheme.RowHeight / 4, UnitValue.Auto, UnitValue.Auto)
                         .Width(16)
                         .MaxWidth(16)
+                        .Alignment(PaperUI.TextAlignment.MiddleLeft)
                         // .Text("\u25BC", Font)
                         .Text(EditorIcons.ChevronDown, Font)
                         .TextColor(EditorTheme.Ink400)
@@ -525,9 +540,11 @@ public static class EditorGUI
                 else
                 {
                     paper.Box("{id}_arrow")
-                        .Margin(EditorTheme.RowHeight / 3, (EditorTheme.RowHeight / 4) - (EditorTheme.RowHeight / 3), EditorTheme.RowHeight / 8, 0)
+                        //.Margin(EditorTheme.RowHeight / 3, (EditorTheme.RowHeight / 4) - (EditorTheme.RowHeight / 3), EditorTheme.RowHeight / 10, 0)
+                        .Margin(EditorTheme.RowHeight / 3, EditorTheme.RowHeight / 6, UnitValue.Auto, UnitValue.Auto)
                         .Width(16)
                         .MaxWidth(16)
+                        .Alignment(PaperUI.TextAlignment.MiddleLeft)
                         .Text(EditorIcons.ChevronRight, Font)
                         .TextColor(EditorTheme.Ink400)
                         .FontSize(FontSz * 0.7f);
@@ -535,6 +552,7 @@ public static class EditorGUI
                 paper.Box($"{id}_header_lbl")
                     .Text(label, Font)
                     .TextColor(EditorTheme.Ink500)
+                    .Alignment(PaperUI.TextAlignment.MiddleLeft)
                     .FontSize(FontSz);
             }
         }
@@ -560,11 +578,13 @@ public static class EditorGUI
         using (paper.Row(id)
             .Height(EditorTheme.RowHeight)
             .RowBetween(6)
+            .Margin(UnitValue.Auto, EditorTheme.Spacing)
             .Enter())
         {
             if (Font != null && !string.IsNullOrEmpty(label))
                 paper.Box($"{id}_lbl")
                     .Width(autoLabelWidth ? UnitValue.Auto : LabelW).Height(EditorTheme.RowHeight).ChildLeft(4)
+                    .Alignment(PaperUI.TextAlignment.MiddleLeft)
                     .Text(label, Font).TextColor(EditorTheme.Ink500).FontSize(FontSz);
 
             PaperUI.LayoutEngine.ElementHandle btnHandle = default;
@@ -600,6 +620,7 @@ public static class EditorGUI
                     {
                         paper.Box($"{id}_txt")
                             .Width(UnitValue.Stretch())
+                            .Alignment(PaperUI.TextAlignment.MiddleLeft)
                             .IsNotInteractable()
                             .Text(displayText, Font).TextColor(EditorTheme.Ink500).FontSize(FontSz);
                         
@@ -608,6 +629,7 @@ public static class EditorGUI
                         {
                             paper.Box("{id}_arrow")
                                 .Margin(EditorTheme.RowHeight / 4, 0, EditorTheme.RowHeight / 8, 0)
+                                .Alignment(PaperUI.TextAlignment.MiddleLeft)
                                 .Width(16)
                                 .MaxWidth(16)
                                 // .Text("\u25BC", Font)
@@ -619,6 +641,7 @@ public static class EditorGUI
                         {
                             paper.Box("{id}_arrow")
                                 .Margin(EditorTheme.RowHeight / 3, (EditorTheme.RowHeight / 4) - (EditorTheme.RowHeight / 3), EditorTheme.RowHeight / 8, 0)
+                                .Alignment(PaperUI.TextAlignment.MiddleLeft)
                                 .Width(16)
                                 .MaxWidth(16)
                                 // .Text("\u25B6", Font)
@@ -652,6 +675,8 @@ public static class EditorGUI
 
                             var opt = paper.Box($"{id}_o_{i}")
                                 .Height(EditorTheme.RowHeight)
+                                .Alignment(PaperUI.TextAlignment.MiddleLeft)
+                                .Margin(UnitValue.Auto, EditorTheme.Spacing)
                                 .ChildLeft(6)
                                 .BackgroundColor(isSel ? EditorTheme.Purple300 : Color.Transparent)
                                 .Hovered.BackgroundColor(EditorTheme.Purple400).End()
@@ -718,6 +743,7 @@ public static class EditorGUI
             
             .BackgroundColor(EditorTheme.Neutral200)
             .BorderColor(EditorTheme.Neutral100)
+            .Margin(UnitValue.Auto, EditorTheme.Spacing)
             .Focused.BorderColor(EditorTheme.Purple400).End()
             
             .ChildLeft(6).ChildRight(4)
@@ -728,12 +754,16 @@ public static class EditorGUI
             if (Font != null)
                 paper.Box($"{id}_icon")
                     .Width(16)
-                    .Margin(EditorTheme.RowHeight / 4, 0, EditorTheme.RowHeight / 8, 0)
+                    .Margin(EditorTheme.RowHeight / 4, 0, EditorTheme.RowHeight / 10, 0)
+                    .Alignment(PaperUI.TextAlignment.MiddleLeft)
                     .Text(EditorIcons.MagnifyingGlass, Font).TextColor(EditorTheme.Ink400).FontSize(FontSz * 0.7f);
+
+            var yOffset = (EditorTheme.RowHeight - FontSz) / 2.0f;
 
             paper.Box($"{id}_tf")
                 .Height(EditorTheme.RowHeight)
                 .Width(UnitValue.Stretch())
+                .Margin(UnitValue.Auto, yOffset)
                 .HookToParent()
                 .IsNotInteractable()
                 .FontSize(FontSz)
@@ -806,11 +836,13 @@ public static class EditorGUI
         using (paper.Row(id)
             .Height(EditorTheme.RowHeight)
             .RowBetween(4)
+            .Margin(UnitValue.Auto, EditorTheme.Spacing)
             .Enter())
         {
             if (Font != null && !string.IsNullOrEmpty(label))
                 paper.Box($"{id}_lbl")
                     .Width(LabelW).Height(EditorTheme.RowHeight).ChildLeft(4)
+                    .Alignment(PaperUI.TextAlignment.MiddleLeft)
                     .Text(label, Font).TextColor(EditorTheme.Ink500).FontSize(FontSz);
 
             // X
@@ -837,11 +869,13 @@ public static class EditorGUI
         using (paper.Row(id)
             .Height(EditorTheme.RowHeight)
             .RowBetween(4)
+            .Margin(UnitValue.Auto, EditorTheme.Spacing)
             .Enter())
         {
             if (Font != null && !string.IsNullOrEmpty(label))
                 paper.Box($"{id}_lbl")
                     .Width(LabelW).Height(EditorTheme.RowHeight).ChildLeft(4)
+                    .Alignment(PaperUI.TextAlignment.MiddleLeft)
                     .Text(label, Font).TextColor(EditorTheme.Ink500).FontSize(FontSz);
 
             // X
@@ -872,11 +906,13 @@ public static class EditorGUI
         using (paper.Row(id)
             .Height(EditorTheme.RowHeight)
             .RowBetween(4)
+            .Margin(UnitValue.Auto, EditorTheme.Spacing)
             .Enter())
         {
             if (Font != null && !string.IsNullOrEmpty(label))
                 paper.Box($"{id}_lbl")
                     .Width(LabelW).Height(EditorTheme.RowHeight).ChildLeft(4)
+                    .Alignment(PaperUI.TextAlignment.MiddleLeft)
                     .Text(label, Font).TextColor(EditorTheme.Ink500).FontSize(FontSz);
 
             // X
@@ -931,8 +967,8 @@ public static class EditorGUI
                     (int)(value.R * 255),
                     (int)(value.G * 255),
                     (int)(value.B * 255)))
-                .Rounded(3)
-                .BorderColor(EditorTheme.Ink200).BorderWidth(1)
+                .Rounded(4)
+                .BorderColor(EditorTheme.Ink200).BorderWidth(2)
                 .Hovered.BorderColor(EditorTheme.Purple400).End()
                 .Enter())
             {
@@ -982,11 +1018,13 @@ public static class EditorGUI
         using (paper.Row(id)
             .Height(EditorTheme.RowHeight)
             .RowBetween(6)
+            .Margin(UnitValue.Auto, EditorTheme.Spacing)
             .Enter())
         {
             if (Font != null && !string.IsNullOrEmpty(label))
                 paper.Box($"{id}_lbl")
                     .Width(LabelW).Height(EditorTheme.RowHeight).ChildLeft(4)
+                    .Alignment(PaperUI.TextAlignment.MiddleLeft)
                     .IsNotInteractable()
                     .Text(label, Font).TextColor(EditorTheme.Ink500).FontSize(FontSz);
 
