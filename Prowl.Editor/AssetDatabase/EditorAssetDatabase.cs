@@ -637,6 +637,11 @@ public class EditorAssetDatabase : IAssetDatabase
         var meta = MetaFile.CreateNew(importerName);
         MetaFile.Write(MetaFile.GetMetaPath(absolutePath), meta);
 
+        // Assign the GUID and path to the original instance so any existing
+        // AssetRef holding this instance picks up the asset ID immediately,
+        obj.AssetID = meta.Guid;
+        obj.AssetPath = NormalizePath(relativePath);
+
         // Add to index and import
         var entry = new AssetEntry
         {
