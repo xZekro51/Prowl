@@ -66,6 +66,7 @@ public static class EditorGUI
             .ChildLeft(4)
             .Text(text, Font)
             .TextColor(color ?? EditorTheme.Ink500)
+            .Alignment(PaperUI.TextAlignment.MiddleLeft)
             .FontSize(FontSz);
     }
 
@@ -272,14 +273,7 @@ public static class EditorGUI
                 .TabIndex(0)
                 .Enter())
             {
-                var settings = TextInputSettings.Default;
-                settings.Font = Font!;
-                settings.TextColor = EditorTheme.Ink500;
-                settings.Placeholder = "";
-                settings.PlaceholderColor = EditorTheme.Ink300;
-
-                var yOffset = (EditorTheme.RowHeight - FontSz) / 2.0f;
-
+                float yOffset = (EditorTheme.RowHeight - FontSz) / 2.0f;
                 paper.Box($"{id}_tf")
                     .Margin(4, yOffset)
                     .HookToParent()
