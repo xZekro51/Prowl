@@ -9,7 +9,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Vortex" Version="1.0.1" />
+    <PackageReference Include="Vortex" Version="1.0.4" />
   </ItemGroup>
 
   <ItemGroup>
