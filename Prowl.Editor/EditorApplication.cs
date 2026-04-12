@@ -551,8 +551,7 @@ public class EditorApplication : Game
 
         // Systems drawn on top (Overlay/Topmost layers)
         Widgets.FileDialog.Draw(paper);
-        Inspector.EngineObjectPropertyEditor.DrawSelectorModal(paper);
-        Inspector.AssetRefPropertyEditor.DrawSelectorModal(paper);
+        Widgets.SelectorModal.Draw(paper);
         Inspector.AddComponentPopup.Draw(paper);
         Widgets.ModalDialog.Draw(paper);
         Widgets.Toasts.Draw(paper, Time.UnscaledDeltaTime);
