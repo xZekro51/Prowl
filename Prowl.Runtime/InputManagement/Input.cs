@@ -5,10 +5,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 
-using Prowl.Runtime.Events;
 using Prowl.Vector;
-
-using Vortex;
 
 namespace Prowl.Runtime;
 
@@ -39,10 +36,17 @@ public static class Input
     }
 
     // Events
-    public static EventAccessor<InputEvents.EventTypes, InputEvents.OnKeyArgs> OnKeyEvent => Current.OnKeyEvent;
+    public static event Action<KeyCode, bool> OnKeyEvent
+    {
+        add => Current.OnKeyEvent += value;
+        remove => Current.OnKeyEvent -= value;
+    }
 
-    public static EventAccessor<InputEvents.EventTypes, InputEvents.OnMouseArgs> OnMouseEvent => Current.OnMouseEvent;
-
+    public static event Action<MouseButton, float, float, bool, bool> OnMouseEvent
+    {
+        add => Current.OnMouseEvent += value;
+        remove => Current.OnMouseEvent -= value;
+    }
 
     // Mouse
     public static Int2 PrevMousePosition => CursorLocked ? CursorLockCenter : Current.PrevMousePosition;

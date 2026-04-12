@@ -4,12 +4,9 @@
 using System;
 using System.Collections.Generic;
 
-using Prowl.Runtime.Events;
 using Prowl.Vector;
 
 using Silk.NET.Input;
-
-using Vortex;
 
 namespace Prowl.Runtime;
 
@@ -66,17 +63,10 @@ public class DefaultInputHandler : IInputHandler, IDisposable
 
     private Queue<char> pressedChars { get; set; } = new();
 
-    //public event Action<KeyCode, bool> OnKeyEvent;
-    //public event Action<MouseButton, float, float, bool, bool> OnMouseEvent;
-
+    public event Action<KeyCode, bool> OnKeyEvent;
+    public event Action<MouseButton, float, float, bool, bool> OnMouseEvent;
 
     public bool IsAnyKeyDown => isKeyPressed.ContainsValue(true);
-
-    public InputEvents Events { get; } = new();
-
-    public EventAccessor<InputEvents.EventTypes, InputEvents.OnKeyArgs> OnKeyEvent => Events.OnKeyEvent;
-
-    public EventAccessor<InputEvents.EventTypes, InputEvents.OnMouseArgs> OnMouseEvent => Events.OnMouseEvent;
 
     public DefaultInputHandler(IInputContext context)
     {
@@ -137,13 +127,13 @@ public class DefaultInputHandler : IInputHandler, IDisposable
         if (!_prevMousePos.Equals(_currentMousePos))
         {
             if (isMousePressed[MouseButton.Left])
-                OnMouseEvent.Invoke(new(MouseButton.Left, MousePosition.X, MousePosition.Y, false, true));
+                OnMouseEvent?.Invoke(MouseButton.Left, MousePosition.X, MousePosition.Y, false, true);
             else if (isMousePressed[MouseButton.Right])
-                OnMouseEvent.Invoke(new(MouseButton.Right, MousePosition.X, MousePosition.Y, false, true));
+                OnMouseEvent?.Invoke(MouseButton.Right, MousePosition.X, MousePosition.Y, false, true);
             else if (isMousePressed[MouseButton.Middle])
-                OnMouseEvent.Invoke(new(MouseButton.Middle, MousePosition.X, MousePosition.Y, false, true));
+                OnMouseEvent?.Invoke(MouseButton.Middle, MousePosition.X, MousePosition.Y, false, true);
             else
-                OnMouseEvent.Invoke(new(MouseButton.Unknown, MousePosition.X, MousePosition.Y, false, true));
+                OnMouseEvent?.Invoke(MouseButton.Unknown, MousePosition.X, MousePosition.Y, false, true);
         }
         UpdateKeyStates();
     }
@@ -165,7 +155,7 @@ public class DefaultInputHandler : IInputHandler, IDisposable
                     }
 
                 if (wasKeyPressed[key] != isKeyPressed[key])
-                    OnKeyEvent.Invoke(new(key, isKeyPressed[key]));
+                    OnKeyEvent?.Invoke(key, isKeyPressed[key]);
             }
         }
 
@@ -182,7 +172,7 @@ public class DefaultInputHandler : IInputHandler, IDisposable
                         break;
                     }
                 if (wasMousePressed[button] != isMousePressed[button])
-                    OnMouseEvent.Invoke(new(button, MousePosition.X, MousePosition.Y, isMousePressed[button], false));
+                    OnMouseEvent?.Invoke(button, MousePosition.X, MousePosition.Y, isMousePressed[button], false);
             }
         }
 

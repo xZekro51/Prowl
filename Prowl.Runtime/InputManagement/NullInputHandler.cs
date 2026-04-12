@@ -1,9 +1,6 @@
 using System;
 
-using Prowl.Runtime.Events;
 using Prowl.Vector;
-
-using Vortex;
 
 namespace Prowl.Runtime;
 
@@ -19,12 +16,6 @@ internal class NullInputHandler : IInputHandler
     public Int2 MousePosition { get => Int2.Zero; set { } }
     public float MouseWheelDelta => 0f;
     public Int2 PrevMousePosition => Int2.Zero;
-
-    public InputEvents Events { get; } = new();
-
-    EventAccessor<InputEvents.EventTypes, InputEvents.OnKeyArgs> IInputHandler.OnKeyEvent => Events.OnKeyEvent;
-
-    EventAccessor<InputEvents.EventTypes, InputEvents.OnMouseArgs> IInputHandler.OnMouseEvent => Events.OnMouseEvent;
 
     public event Action<KeyCode, bool> OnKeyEvent { add { } remove { } }
     public event Action<MouseButton, float, float, bool, bool> OnMouseEvent { add { } remove { } }

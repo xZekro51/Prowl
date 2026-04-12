@@ -1,10 +1,7 @@
 using System;
 
 using Prowl.Runtime;
-using Prowl.Runtime.Events;
 using Prowl.Vector;
-
-using Vortex;
 
 namespace Prowl.Editor;
 
@@ -55,12 +52,6 @@ public class GameViewInputHandler : IInputHandler
     }
     public Float2 MouseDelta => ShouldFilter ? Float2.Zero : _real.MouseDelta;
     public float MouseWheelDelta => ShouldFilter ? 0f : _real.MouseWheelDelta;
-
-    public InputEvents Events { get; } = new();
-
-    EventAccessor<InputEvents.EventTypes, InputEvents.OnKeyArgs> IInputHandler.OnKeyEvent => Events.OnKeyEvent;
-
-    EventAccessor<InputEvents.EventTypes, InputEvents.OnMouseArgs> IInputHandler.OnMouseEvent => Events.OnMouseEvent;
     public bool GetMouseButton(int button) => ShouldFilter ? false : _real.GetMouseButton(button);
     public bool GetMouseButtonDown(int button) => ShouldFilter ? false : _real.GetMouseButtonDown(button);
     public bool GetMouseButtonUp(int button) => ShouldFilter ? false : _real.GetMouseButtonUp(button);
@@ -74,9 +65,16 @@ public class GameViewInputHandler : IInputHandler
     }
 
     // Events — always forward (editor needs these for its own input processing)
-
-    public EventAccessor<InputEvents.EventTypes, InputEvents.OnKeyArgs> OnKeyEvent => _real.OnKeyEvent;
-    public EventAccessor<InputEvents.EventTypes, InputEvents.OnMouseArgs> OnMouseEvent => _real.OnMouseEvent;
+    public event Action<KeyCode, bool> OnKeyEvent
+    {
+        add => _real.OnKeyEvent += value;
+        remove => _real.OnKeyEvent -= value;
+    }
+    public event Action<MouseButton, float, float, bool, bool> OnMouseEvent
+    {
+        add => _real.OnMouseEvent += value;
+        remove => _real.OnMouseEvent -= value;
+    }
 
     // Gamepads — always pass through (physical controllers work regardless of focus)
     public int GetGamepadCount() => _real.GetGamepadCount();
