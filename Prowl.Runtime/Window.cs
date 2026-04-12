@@ -60,7 +60,7 @@ public static class Window
     }
 
     private static bool isFocused = true;
-    private static DefaultInputHandler WindowInputHandler;
+    private static SilkInputHandler WindowInputHandler;
 
     public static bool IsFocused
     {
@@ -100,7 +100,7 @@ public static class Window
     public static void OnLoad()
     {
         InternalInput = InternalWindow.CreateInput();
-        WindowInputHandler = new DefaultInputHandler(InternalInput);
+        WindowInputHandler = new(InternalInput);
         Graphics.Initialize(false);
 
         // Push Default Handler
