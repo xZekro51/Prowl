@@ -112,7 +112,7 @@ public class ContextMenuBuilder
         {
             ContextMenuItem item = this;
 
-            if (item.IsSeparator)
+            if (IsSeparator)
             {
                 paper.Box($"{id}_sep_{index}")
                     .Height(1.25f).Margin(10, 5)
@@ -122,9 +122,9 @@ public class ContextMenuBuilder
 
             using (paper.Row($"{id}_i_{index}")
                         .Height(EditorTheme.RowHeight)
-                        .Hovered.BackgroundColor(item.IsEnabled ? EditorTheme.Purple400 : Color.Transparent).End()
+                        .Hovered.BackgroundColor(IsEnabled ? EditorTheme.Purple400 : Color.Transparent).End()
                         .Rounded(3)
-                        .OnClick(item, (captured, e) =>
+                        .OnClick(this, (captured, e) =>
                         {
                             if (captured.IsEnabled)
                             {
@@ -135,37 +135,37 @@ public class ContextMenuBuilder
                         })
                         .Enter())
             {
-                if (string.IsNullOrWhiteSpace(item.Icon))
+                if (string.IsNullOrWhiteSpace(Icon))
                 {
                     paper.Box($"{id}_l_{index}")
                         .Width(UnitValue.Stretch())
                         .Margin(10, 0, 0, 0)
                         .Height(EditorTheme.RowHeight)
-                        .Text(item.Label, font).TextColor(textColor).FontSize(EditorTheme.FontSize).Alignment(TextAlignment.MiddleLeft);
+                        .Text(Label, font).TextColor(textColor).FontSize(EditorTheme.FontSize).Alignment(TextAlignment.MiddleLeft);
                 }
                 else
                 {
                     paper.Box($"{id}_i_{index}")
                         .Margin(10, 0, 0, 0)
                         .Size(EditorTheme.RowHeight)
-                        .Text(item.Icon, font).TextColor(textColor).FontSize(EditorTheme.FontSize).Alignment(TextAlignment.MiddleLeft);
+                        .Text(Icon, font).TextColor(textColor).FontSize(EditorTheme.FontSize).Alignment(TextAlignment.MiddleLeft);
 
                     paper.Box($"{id}_l_{index}")
                         .Width(UnitValue.Stretch())
                         .Margin(5, 0, 0, 0)
                         .Height(EditorTheme.RowHeight)
-                        .Text(item.Label, font).TextColor(textColor).FontSize(EditorTheme.FontSize).Alignment(TextAlignment.MiddleLeft);
+                        .Text(Label, font).TextColor(textColor).FontSize(EditorTheme.FontSize).Alignment(TextAlignment.MiddleLeft);
                 }
 
 
-                if (item.SubMenu != null)
+                if (SubMenu != null)
                 {
                     paper.Box($"{id}_a_{index}")
                         .Size(EditorTheme.RowHeight)
                         .Text(EditorIcons.ChevronRight, font).TextColor(EditorTheme.Ink400).FontSize(10f).Alignment(TextAlignment.MiddleLeft);
 
                     if (paper.IsParentHovered)
-                        item.SubMenu.Render(paper, $"{id}_s_{index}", 190, 0, isSubmenu: true);
+                        SubMenu.Render(paper, $"{id}_s_{index}", 190, 0, isSubmenu: true);
                 }
             }
         }
@@ -189,29 +189,24 @@ public class ContextMenuBuilder
 
             using (paper.Row($"{id}_i_{index}")
                         .Height(EditorTheme.RowHeight)
-                        .Hovered.BackgroundColor(item.IsEnabled ? EditorTheme.Purple400 : Color.Transparent).End()
+                        .Hovered.BackgroundColor(IsEnabled ? EditorTheme.Purple400 : Color.Transparent).End()
                         .Rounded(3)
-                        .OnClick(item, (captured, e) =>
+                        .OnClick(this, (captured, e) =>
                         {
                             if (captured.IsEnabled)
                             {
                                 captured.OnClick?.Invoke();
-                                if (item.ShouldCloseOnClick)
+                                if (captured.ShouldCloseOnClick)
                                     onClose?.Invoke();
                             }
                         })
                         .Enter())
             {
 
-                /*paper.Box($"{id}_i_{index}")
-                    .Margin(10, 0, 0, 0)
-                    .Size(EditorTheme.RowHeight)
-                    .Text(item.Icon, font).TextColor(textColor).FontSize(EditorTheme.FontSize).Alignment(TextAlignment.MiddleLeft);*/
-
-                EditorGUI.Toggle(paper, $"{id}_t_{index}", "", item.ToggleValue?.Invoke() ?? false).OnValueChanged(newValue =>
+                EditorGUI.Toggle(paper, $"{id}_t_{index}", "", ToggleValue?.Invoke() ?? false).OnValueChanged(newValue =>
                 {
-                    item.OnClick?.Invoke();
-                    onClose?.Invoke();
+                    if (item.ShouldCloseOnClick)
+                        item.OnClick?.Invoke();
                 });
 
 
@@ -219,7 +214,7 @@ public class ContextMenuBuilder
                         .Width(UnitValue.Stretch())
                         .Margin(5, 0, 0, 0)
                         .Height(EditorTheme.RowHeight)
-                        .Text(item.Label, font).TextColor(textColor).FontSize(EditorTheme.FontSize).Alignment(TextAlignment.MiddleLeft);
+                        .Text(Label, font).TextColor(textColor).FontSize(EditorTheme.FontSize).Alignment(TextAlignment.MiddleLeft);
 
             }
         }
@@ -243,8 +238,6 @@ public static class ContextMenuHelper
         var parentEl = parent ?? paper.CurrentParent;
 
         var relativePosition = new Float2(
-                //Input.MousePosition.X - parentEl.Owner.ScreenRect.Min.X,
-                //Input.MousePosition.Y - parentEl.Owner.ScreenRect.Min.Y
                 parentEl.Data.RelativeX + (Input.MousePosition.X - parentEl.Data.X),
                 parentEl.Data.RelativeY + (Input.MousePosition.Y - parentEl.Data.Y)
             );
