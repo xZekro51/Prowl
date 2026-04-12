@@ -85,6 +85,19 @@ public static class EditorGUI
             .FontSize(FontSz + 2);
     }
 
+
+    public static void RoundedRectFilled(Prowl.Quill.Canvas canvas, float rectX, float rectY, float rectWidth, float rectHeight,
+        float radiusTopLeft, float radiusTopRight, float radiusBottomLeft, float radiusBottomRight, Color color)
+    {
+        /*canvas.RoundedRectFilled(rectX, rectY, rectWidth, rectHeight,
+            radiusTopLeft, radiusTopRight, radiusBottomRight, radiusBottomLeft,
+            color);*/
+        canvas.RoundedRect(rectX, rectY, rectWidth, rectHeight,
+            radiusTopLeft, radiusTopRight, radiusBottomRight, radiusBottomLeft);
+        canvas.SetFillColor(color);
+        canvas.FillComplexAA();
+    }
+
     // ================================================================
     //  Separator
     // ================================================================
@@ -307,9 +320,10 @@ public static class EditorGUI
                     .FontSize(FontSz)
                     .TextField(value, Font!,
                         onChange: v => userCallback?.Invoke(v),
-                        intID: id.GetHashCode())
-
-                    .Alignment(PaperUI.TextAlignment.MiddleLeft);
+                        textColor: EditorTheme.Ink500,
+                        placeholder: "",
+                        placeholderColor: EditorTheme.Ink300,
+                        intID: id.GetHashCode());
             }
         }
 
@@ -402,6 +416,7 @@ public static class EditorGUI
                     .Width(UnitValue.Stretch())
                     .Height(EditorTheme.RowHeight)
                     .FontSize(FontSz)
+                    .Alignment(PaperUI.TextAlignment.MiddleLeft)
                     .TextField(textVal, settings,
                         onChange: v =>
                         {
@@ -646,13 +661,13 @@ public static class EditorGUI
                     float thumbR = rh * 0.36f;
 
                     // ── Track background ──────────────────────────────────
-                    canvas.RoundedRectFilled(rx, trackY, rw, trackH, trackR, trackR, trackR, trackR,
+                    RoundedRectFilled(canvas, rx, trackY, rw, trackH, trackR, trackR, trackR, trackR,
                         EditorTheme.Ink100);
 
                     // ── Track fill ────────────────────────────────────────
                     if (t > 0f)
                     {
-                        canvas.RoundedRectFilled(rx, trackY, rw * t, trackH, trackR, trackR, trackR, trackR,
+                        RoundedRectFilled(canvas, rx, trackY, rw * t, trackH, trackR, trackR, trackR, trackR,
                             EditorTheme.Purple400);
                     }
 
@@ -1228,12 +1243,12 @@ public static class EditorGUI
                     float trackR = trackH * 0.5f;
 
                     // ── Track background ──────────────────────────────────
-                    canvas.RoundedRectFilled(rx, trackY, rw, trackH, trackR, trackR, trackR, trackR,
+                    RoundedRectFilled(canvas, rx, trackY, rw, trackH, trackR, trackR, trackR, trackR,
                         EditorTheme.Ink100);
 
                     // ── Track fill ────────────────────────────────────────
                     if (progress > 0f)
-                        canvas.RoundedRectFilled(rx, trackY, rw * progress, trackH, trackR, trackR, trackR, trackR,
+                        RoundedRectFilled(canvas, rx, trackY, rw * progress, trackH, trackR, trackR, trackR, trackR,
                             EditorTheme.Purple400);
                 }));
 
