@@ -16,41 +16,197 @@ using Vortex;
 
 namespace Prowl.Runtime;
 
+
+public class InputStateBuffer<TEnum,TInput> where TEnum : struct, Enum where TInput : IInputDevice
+{
+    private int _length;
+    public int Length
+    {
+        get { return _length; }
+        private set
+        {
+            _length = Math.Max(1, value);
+        }
+    }
+
+    private IReadOnlyList<TInput> _devices;
+
+    public readonly List<(int deviceIndex, TEnum enumIndex, bool isDown)> PendingEvents = [];
+
+    private EnumArray<TEnum, bool>[] _stateWrite;
+    private EnumArray<TEnum, bool>[] _downThisFrameWrite;
+    private EnumArray<TEnum, bool>[] _upThisFrameWrite;
+    private EnumArray<TEnum, bool>[] _state;
+    private EnumArray<TEnum, bool>[] _downThisFrame;
+    private EnumArray<TEnum, bool>[] _upThisFrame;
+    public void ClearFrameBuffers()
+    {
+        for (int i = 0; i < Length; i++)
+        {
+            _downThisFrame[i].Clear();
+            _upThisFrame[i].Clear();
+        }
+    }
+    public void InitializeArrays()
+    {
+        _stateWrite = new EnumArray<TEnum, bool>[Length];
+        _downThisFrameWrite = new EnumArray<TEnum, bool>[Length];
+        _upThisFrameWrite = new EnumArray<TEnum, bool>[Length];
+        _state = new EnumArray<TEnum, bool>[Length];
+        _downThisFrame = new EnumArray<TEnum, bool>[Length];
+        _upThisFrame = new EnumArray<TEnum, bool>[Length];
+        for (int i = 0; i < Length; i++)
+        {
+            _stateWrite[i] = new EnumArray<TEnum, bool>();
+            _downThisFrameWrite[i] = new EnumArray<TEnum, bool>();
+            _upThisFrameWrite[i] = new EnumArray<TEnum, bool>();
+            _state[i] = new EnumArray<TEnum, bool>();
+            _downThisFrame[i] = new EnumArray<TEnum, bool>();
+            _upThisFrame[i] = new EnumArray<TEnum, bool>();
+        }
+    }
+
+    public bool GetState(int deviceIndex, int input) => _state[deviceIndex][input];
+    public bool GetDownThisFrame(int deviceIndex, int input) => _downThisFrame[deviceIndex][input];
+    public bool GetUpThisFrame(int deviceIndex, int input) => _upThisFrame[deviceIndex][input];
+
+
+    public bool GetState(int deviceIndex, TEnum input) => _state[deviceIndex][input];
+    public bool GetDownThisFrame(int deviceIndex, TEnum input) => _downThisFrame[deviceIndex][input];
+    public bool GetUpThisFrame(int deviceIndex, TEnum input) => _upThisFrame[deviceIndex][input];
+    public void WriteState(int deviceIndex, TEnum input, bool isDown)
+    {
+        _stateWrite[deviceIndex][input] = isDown;
+        if (isDown)
+            _downThisFrameWrite[deviceIndex][input] = true;
+        else
+            _upThisFrameWrite[deviceIndex][input] = true;
+    }
+
+    public bool Any()
+    {
+        for (int i = 0; i < Length; i++)
+        {
+            if (_state[i].Any(pressed => pressed)) return true;
+        }
+        return false;
+    }
+
+
+    public bool GetState(int input)
+    {
+        for (int i = 0; i < Length; i++)
+        {
+            if (_state[i][input]) return true;
+        }
+        return false;
+    }
+
+    public bool GetDownThisFrame(int input)
+    {
+        for (int i = 0; i < Length; i++)
+        {
+            if (_downThisFrame[i][input]) return true;
+        }
+        return false;
+    }
+
+    public bool GetUpThisFrame(int input)
+    {
+        for (int i = 0; i < Length; i++)
+        {
+            if (_upThisFrame[i][input]) return true;
+        }
+        return false;
+    }
+
+    public bool GetState(TEnum input)
+    {
+        for (int i = 0; i < Length; i++)
+        {
+            if (_state[i][input])
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+    public bool GetDownThisFrame(TEnum input)
+    {
+        for (int i = 0; i < Length; i++)
+        {
+            if (_downThisFrame[i][input]) return true;
+        }
+        return false;
+    }
+    public bool GetUpThisFrame(TEnum input)
+    {
+        for (int i = 0; i < Length; i++)
+        {
+            if (_upThisFrame[i][input]) return true;
+        }
+        return false;
+    }
+
+
+
+    public void SwapBuffers()
+    {
+        for (int i = 0; i < Length; i++)
+        {
+            _stateWrite[i].CopyTo(_state[i]);
+
+            EnumArray<TEnum, bool>.Swap(ref _downThisFrame[i], ref _downThisFrameWrite[i]);
+            EnumArray<TEnum, bool>.Swap(ref _upThisFrame[i], ref _upThisFrameWrite[i]);
+
+            _downThisFrameWrite[i].Clear();
+            _upThisFrameWrite[i].Clear();
+        }
+    }
+
+    public void Update()
+    {
+        int newLenth = _devices.Count;
+        if (newLenth != Length)
+        {
+            Console.WriteLine("Device count changed from " + Length + " to " + newLenth + ". Reinitializing input state buffers.");
+            Length = newLenth;
+            InitializeArrays();
+        }
+        else
+        {
+            SwapBuffers();
+        }
+    }
+
+    public InputStateBuffer(IReadOnlyList<TInput> devices)
+    {
+        _devices = devices;
+        Length = devices.Count;
+        InitializeArrays();
+    }
+}
+
+
+
 public class SilkInputHandler : IInputHandler, IDisposable
 {
     // ── Constants ──────────────────────────────────────────────
 
 
     // ── State: Keyboard ────────────────────────────────────────
-    private EnumArray<KeyCode, bool> _keyDownThisFrameWrite = new EnumArray<KeyCode, bool>();
-    private EnumArray<KeyCode, bool> _keyUpThisFrameWrite = new EnumArray<KeyCode, bool>();
-    private EnumArray<KeyCode, bool> _keyStateWrite = new EnumArray<KeyCode, bool>();
-    private EnumArray<KeyCode, bool> _keyState = new EnumArray<KeyCode, bool>();
-    private EnumArray<KeyCode, bool> _keyDownThisFrame = new EnumArray<KeyCode, bool>();
-    private EnumArray<KeyCode, bool> _keyUpThisFrame = new EnumArray<KeyCode, bool>();
-    private List<(int index, bool isDown)> _pendingKeyEvents = new();
+    private InputStateBuffer<KeyCode, IKeyboard> _keyboardStateBuffer;
 
 
     // ── State: Mouse ───────────────────────────────────────────
-    private EnumArray<MouseButton, bool> _mouseDownThisFrameWrite = new EnumArray<MouseButton, bool>();
-    private EnumArray<MouseButton, bool> _mouseUpThisFrameWrite = new EnumArray<MouseButton, bool>();
-    private EnumArray<MouseButton, bool> _mouseStateWrite = new EnumArray<MouseButton, bool>();
-    private EnumArray<MouseButton, bool> _mouseState = new EnumArray<MouseButton, bool>();
-    private EnumArray<MouseButton, bool> _mouseDownThisFrame = new EnumArray<MouseButton, bool>();
-    private EnumArray<MouseButton, bool> _mouseUpThisFrame = new EnumArray<MouseButton, bool>();
-    private List<(int index, bool isDown)> _pendingMouseEvents = new();
+
+    private InputStateBuffer<MouseButton, IMouse> _mouseStateBuffer;
     private Int2 _currentMousePos;
     private Int2 _prevMousePos;
 
 
     // ── State: Gamepad ─────────────────────────────────────────
-    private EnumArray<GamepadButton, bool> _gamepadStateWrite = new EnumArray<GamepadButton, bool>();
-    private EnumArray<GamepadButton, bool> _gamepadDownThisFrameWrite = new EnumArray<GamepadButton, bool>();
-    private EnumArray<GamepadButton, bool> _gamepadUpThisFrameWrite = new EnumArray<GamepadButton, bool>();
-    private EnumArray<GamepadButton, bool> _gamepadState = new EnumArray<GamepadButton, bool>();
-    private EnumArray<GamepadButton, bool> _gamepadDownThisFrame = new EnumArray<GamepadButton, bool>();
-    private EnumArray<GamepadButton, bool> _gamepadUpThisFrame = new EnumArray<GamepadButton, bool>();
-    private List<(GamepadButton index, bool isDown)> _pendingGamepadEvents = new();
+    private InputStateBuffer<GamepadButton, IGamepad> _gamepadStateBuffer;
 
 
     // ── State: Text Input ──────────────────────────────────────
@@ -93,12 +249,16 @@ public class SilkInputHandler : IInputHandler, IDisposable
         }
     }
     public float MouseWheelDelta => Mice[0].ScrollWheels[0].Y;
-    public bool IsAnyKeyDown => _keyState.Any(pressed => pressed);
+    public bool IsAnyKeyDown => _keyboardStateBuffer.Any();
 
     // ── Constructor ────────────────────────────────────────────
     public SilkInputHandler(IInputContext context)
     {
         Context = context;
+
+        _mouseStateBuffer = new(Mice);
+        _keyboardStateBuffer = new(Keyboards);
+        _gamepadStateBuffer = new(Context.Gamepads);
 
         _prevMousePos = (Int2)(Float2)Mice[0].Position;
         _currentMousePos = (Int2)(Float2)Mice[0].Position;
@@ -150,51 +310,39 @@ public class SilkInputHandler : IInputHandler, IDisposable
     private void SilkMouse_ButtonDown(IMouse mouse, Silk.NET.Input.MouseButton button)
     {
         int buttonIndex = (int)button;
-        _mouseStateWrite[buttonIndex] = true;
-        _mouseDownThisFrameWrite[buttonIndex] = true;
-        _pendingMouseEvents.Add((buttonIndex, true));
+        _mouseStateBuffer.WriteState(mouse.Index, (MouseButton)button, true);
+        _mouseStateBuffer.PendingEvents.Add((mouse.Index, (MouseButton)button, true));
     }
     private void SilkMouse_ButtonUp(IMouse mouse, Silk.NET.Input.MouseButton button)
     {
         int buttonIndex = (int)button;
-        _mouseStateWrite[buttonIndex] = false;
-        _mouseUpThisFrameWrite[buttonIndex] = true;
-        _pendingMouseEvents.Add((buttonIndex, false));
+        _mouseStateBuffer.WriteState(mouse.Index, (MouseButton)button, false);
+        _mouseStateBuffer.PendingEvents.Add((mouse.Index, (MouseButton)button, false));
     }
     private void SilkGamepad_ButtonDown(IGamepad gamepad, Silk.NET.Input.Button button)
     {
-        int buttonIndex = (int)button.Name;
-
-        _gamepadStateWrite[buttonIndex] = true;
-        _gamepadDownThisFrameWrite[buttonIndex] = true;
-        _pendingGamepadEvents.Add(((GamepadButton)button.Name, true));
+        _gamepadStateBuffer.WriteState(gamepad.Index, (GamepadButton)button.Name, true);
+        _gamepadStateBuffer.PendingEvents.Add((gamepad.Index, (GamepadButton)button.Name, true));
 
     }
 
     private void SilkGamepad_ButtonUp(IGamepad gamepad, Silk.NET.Input.Button button)
     {
-        int buttonIndex = (int)button.Name;
-
-        _gamepadStateWrite[buttonIndex] = false;
-        _gamepadUpThisFrameWrite[buttonIndex] = true;
-        _pendingGamepadEvents.Add(((GamepadButton)button.Name, false));
-
+        _gamepadStateBuffer.WriteState(gamepad.Index, (GamepadButton)button.Name, false);
+        _gamepadStateBuffer.PendingEvents.Add((gamepad.Index, (GamepadButton)button.Name, false));
     }
 
     private void SilkKeyboard_KeyDown(IKeyboard keyboard, Silk.NET.Input.Key key, int keyCode)
     {
-
-        _keyStateWrite[(int)key] = true;
-        _keyDownThisFrameWrite[(int)key] = true;
-        _pendingKeyEvents.Add(((int)key, true));
+        _keyboardStateBuffer.WriteState(keyboard.Index, (KeyCode)key, true);
+        _keyboardStateBuffer.PendingEvents.Add((keyboard.Index, (KeyCode)key, true));
 
     }
     private void SilkKeyboard_KeyUp(IKeyboard keyboard, Silk.NET.Input.Key key, int keyCode)
     {
 
-        _keyStateWrite[(int)key] = false;
-        _keyUpThisFrameWrite[(int)key] = true;
-        _pendingKeyEvents.Add(((int)key, false));
+        _keyboardStateBuffer.WriteState(keyboard.Index, (KeyCode)key, false);
+        _keyboardStateBuffer.PendingEvents.Add((keyboard.Index, (KeyCode)key, false));
 
     }
 
@@ -203,68 +351,68 @@ public class SilkInputHandler : IInputHandler, IDisposable
     internal void LateUpdate()
     {
         UpdateMousePosition();
-        SwapKeyboardBuffers();
-        SwapMouseBuffers();
-        SwapGamepadBuffers();
+        _keyboardStateBuffer.Update();
+        _mouseStateBuffer.Update();
+        _gamepadStateBuffer.Update();
     }
-    private void SwapKeyboardBuffers()
-    {
-        EnumArray<KeyCode, bool>.Swap(ref _keyUpThisFrame, ref _keyUpThisFrameWrite);
-        _keyUpThisFrameWrite.Clear();
+    //private void SwapKeyboardBuffers()
+    //{
+    //    EnumArray<KeyCode, bool>.Swap(ref _keyUpThisFrame, ref _keyUpThisFrameWrite);
+    //    _keyUpThisFrameWrite.Clear();
 
-        EnumArray<KeyCode, bool>.Swap(ref _keyDownThisFrame, ref _keyDownThisFrameWrite);
-        _keyDownThisFrameWrite.Clear();
+    //    EnumArray<KeyCode, bool>.Swap(ref _keyDownThisFrame, ref _keyDownThisFrameWrite);
+    //    _keyDownThisFrameWrite.Clear();
 
-        _keyStateWrite.CopyTo(_keyState);
+    //    _keyStateWrite.CopyTo(_keyState);
 
-        foreach ((int index, bool isDown) in _pendingKeyEvents)
-        {
-            OnKeyEvent?.Invoke((KeyCode)index, isDown);
-        }
-        _pendingKeyEvents.Clear();
-    }
-    private void SwapMouseBuffers()
-    {
-        EnumArray<MouseButton, bool>.Swap(ref _mouseDownThisFrame, ref _mouseDownThisFrameWrite);
-        _mouseDownThisFrameWrite.Clear();
+    //    foreach ((int index, bool isDown) in _pendingKeyEvents)
+    //    {
+    //        OnKeyEvent?.Invoke((KeyCode)index, isDown);
+    //    }
+    //    _pendingKeyEvents.Clear();
+    //}
+    //private void SwapMouseBuffers()
+    //{
+    //    EnumArray<MouseButton, bool>.Swap(ref _mouseDownThisFrame, ref _mouseDownThisFrameWrite);
+    //    _mouseDownThisFrameWrite.Clear();
 
-        EnumArray<MouseButton, bool>.Swap(ref _mouseUpThisFrame, ref _mouseUpThisFrameWrite);
-        _mouseUpThisFrameWrite.Clear();
+    //    EnumArray<MouseButton, bool>.Swap(ref _mouseUpThisFrame, ref _mouseUpThisFrameWrite);
+    //    _mouseUpThisFrameWrite.Clear();
 
-        _mouseStateWrite.CopyTo(_mouseState);
+    //    _mouseStateWrite.CopyTo(_mouseState);
 
-        foreach ((int index, bool isDown) in _pendingMouseEvents)
-        {
-            OnMouseEvent?.Invoke((MouseButton)index, MousePosition.X, MousePosition.Y, isDown, false);
-        }
-        _pendingMouseEvents.Clear();
-    }
-    private void SwapGamepadBuffers()
-    {
-        EnumArray<GamepadButton, bool>.Swap(ref _gamepadDownThisFrame, ref _gamepadDownThisFrameWrite);
-        _gamepadDownThisFrameWrite.Clear();
+    //    foreach ((int index, bool isDown) in _pendingMouseEvents)
+    //    {
+    //        OnMouseEvent?.Invoke((MouseButton)index, MousePosition.X, MousePosition.Y, isDown, false);
+    //    }
+    //    _pendingMouseEvents.Clear();
+    //}
+    //private void SwapGamepadBuffers()
+    //{
+    //    EnumArray<GamepadButton, bool>.Swap(ref _gamepadDownThisFrame, ref _gamepadDownThisFrameWrite);
+    //    _gamepadDownThisFrameWrite.Clear();
 
-        EnumArray<GamepadButton, bool>.Swap(ref _gamepadUpThisFrame, ref _gamepadUpThisFrameWrite);
-        _gamepadUpThisFrameWrite.Clear();
+    //    EnumArray<GamepadButton, bool>.Swap(ref _gamepadUpThisFrame, ref _gamepadUpThisFrameWrite);
+    //    _gamepadUpThisFrameWrite.Clear();
 
-        _gamepadStateWrite.CopyTo(_gamepadState);
+    //    _gamepadStateWrite.CopyTo(_gamepadState);
 
-        //foreach ((GamepadButton index, bool isDown) in _pendingGamepadEvents)
-        //{
-        //}
-        _pendingGamepadEvents.Clear();
-    }
+    //    //foreach ((GamepadButton index, bool isDown) in _pendingGamepadEvents)
+    //    //{
+    //    //}
+    //    _pendingGamepadEvents.Clear();
+    //}
     private void UpdateMousePosition()
     {
         _prevMousePos = _currentMousePos;
         _currentMousePos = (Int2)(Float2)Mice[0].Position;
         if (!_prevMousePos.Equals(_currentMousePos))
         {
-            if (_mouseState[MouseButton.Left])
+            if (_mouseStateBuffer.GetState(MouseButton.Left))
                 OnMouseEvent?.Invoke(MouseButton.Left, MousePosition.X, MousePosition.Y, false, true);
-            else if (_mouseState[MouseButton.Right])
+            else if (_mouseStateBuffer.GetState(MouseButton.Right))
                 OnMouseEvent?.Invoke(MouseButton.Right, MousePosition.X, MousePosition.Y, false, true);
-            else if (_mouseState[MouseButton.Middle])
+            else if (_mouseStateBuffer.GetState(MouseButton.Middle))
                 OnMouseEvent?.Invoke(MouseButton.Middle, MousePosition.X, MousePosition.Y, false, true);
             else
                 OnMouseEvent?.Invoke(MouseButton.Unknown, MousePosition.X, MousePosition.Y, false, true);
@@ -279,21 +427,18 @@ public class SilkInputHandler : IInputHandler, IDisposable
             return c;
         return null;
     }
-    public bool GetKey(KeyCode key) => _keyState[(int)key];
+    public bool GetKey(KeyCode key) => _keyboardStateBuffer.GetState(key);
     public bool GetKeyDown(KeyCode key)
     {
-        return _keyDownThisFrame[(int)key];
+        return _keyboardStateBuffer.GetDownThisFrame(key);
     }
-    public bool GetKeyUp(KeyCode key) => _keyUpThisFrame[(int)key];
+    public bool GetKeyUp(KeyCode key) => _keyboardStateBuffer.GetUpThisFrame(key);
 
 
     // ── Public Query API: Mouse ────────────────────────────────
-    public bool GetMouseButton(int button) => _mouseState[button];
-    public bool GetMouseButtonDown(int button)
-    {
-        return _mouseDownThisFrame[button];// && !_mouseUpThisFrame[button];
-    }
-    public bool GetMouseButtonUp(int button) => _mouseUpThisFrame[button];
+    public bool GetMouseButton(int button) => _mouseStateBuffer.GetState((MouseButton)button);
+    public bool GetMouseButtonDown(int button) => _mouseStateBuffer.GetDownThisFrame((MouseButton)button);
+    public bool GetMouseButtonUp(int button) => _mouseStateBuffer.GetUpThisFrame((MouseButton)button);
     public void SetCursorVisible(bool visible, int miceIndex = 0) => Mice[miceIndex].Cursor.CursorMode = visible ? CursorMode.Normal : CursorMode.Disabled;
 
 
@@ -308,23 +453,19 @@ public class SilkInputHandler : IInputHandler, IDisposable
         if (!IsGamepadConnected(gamepadIndex))
             return false;
 
-        if ((int)button < 0 || (int)button >= _gamepadState.Length) return false;
-
-        return _gamepadState[button];
+        return _gamepadStateBuffer.GetState(gamepadIndex, button);
     }
     public bool GetGamepadButtonDown(int gamepadIndex, GamepadButton button)
     {
         if (!IsGamepadConnected(gamepadIndex))
             return false;
-        if ((int)button < 0 || (int)button >= _gamepadDownThisFrame.Length) return false;
-        return _gamepadDownThisFrame[button];
+        return _gamepadStateBuffer.GetDownThisFrame(gamepadIndex, button);
     }
     public bool GetGamepadButtonUp(int gamepadIndex, GamepadButton button)
     {
         if (!IsGamepadConnected(gamepadIndex))
             return false;
-        if ((int)button < 0 || (int)button >= _gamepadUpThisFrame.Length) return false;
-        return _gamepadUpThisFrame[button];
+        return _gamepadStateBuffer.GetUpThisFrame(gamepadIndex, button);
     }
     public Vector2 GetGamepadAxis(int gamepadIndex, int axisIndex)
     {

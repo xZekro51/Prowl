@@ -68,7 +68,7 @@ public struct EnumArray<TEnum, TValue> where TEnum : struct, Enum
         }
         set
         {
-            Values[Convert.ToInt32(key)] = value;
+            this[Convert.ToInt32(key)] = value;
         }
     }
 
