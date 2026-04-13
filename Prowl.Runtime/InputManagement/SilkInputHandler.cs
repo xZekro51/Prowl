@@ -166,7 +166,7 @@ public class SilkInputHandler : IInputHandler, IDisposable
         int buttonIndex = (int)button.Name;
 
         _gamepadStateWrite[buttonIndex] = true;
-        _mouseDownThisFrameWrite[buttonIndex] = true;
+        _gamepadDownThisFrameWrite[buttonIndex] = true;
         _pendingGamepadEvents.Add(((GamepadButton)button.Name, true));
 
     }
@@ -176,7 +176,7 @@ public class SilkInputHandler : IInputHandler, IDisposable
         int buttonIndex = (int)button.Name;
 
         _gamepadStateWrite[buttonIndex] = false;
-        _mouseUpThisFrameWrite[buttonIndex] = true;
+        _gamepadUpThisFrameWrite[buttonIndex] = true;
         _pendingGamepadEvents.Add(((GamepadButton)button.Name, false));
 
     }
@@ -245,14 +245,13 @@ public class SilkInputHandler : IInputHandler, IDisposable
         _gamepadDownThisFrameWrite.Clear();
 
         EnumArray<GamepadButton, bool>.Swap(ref _gamepadUpThisFrame, ref _gamepadUpThisFrameWrite);
-        _gamepadUpThisFrame.Clear();
+        _gamepadUpThisFrameWrite.Clear();
 
         _gamepadStateWrite.CopyTo(_gamepadState);
 
-        foreach ((GamepadButton index, bool isDown) in _pendingGamepadEvents)
-        {
-            OnKeyEvent?.Invoke((KeyCode)(int)index, isDown);
-        }
+        //foreach ((GamepadButton index, bool isDown) in _pendingGamepadEvents)
+        //{
+        //}
         _pendingGamepadEvents.Clear();
     }
     private void UpdateMousePosition()
@@ -261,11 +260,11 @@ public class SilkInputHandler : IInputHandler, IDisposable
         _currentMousePos = (Int2)(Float2)Mice[0].Position;
         if (!_prevMousePos.Equals(_currentMousePos))
         {
-            if (_mouseDownThisFrame[MouseButton.Left])
+            if (_mouseState[MouseButton.Left])
                 OnMouseEvent?.Invoke(MouseButton.Left, MousePosition.X, MousePosition.Y, false, true);
-            else if (_mouseDownThisFrame[MouseButton.Right])
+            else if (_mouseState[MouseButton.Right])
                 OnMouseEvent?.Invoke(MouseButton.Right, MousePosition.X, MousePosition.Y, false, true);
-            else if (_mouseDownThisFrame[MouseButton.Middle])
+            else if (_mouseState[MouseButton.Middle])
                 OnMouseEvent?.Invoke(MouseButton.Middle, MousePosition.X, MousePosition.Y, false, true);
             else
                 OnMouseEvent?.Invoke(MouseButton.Unknown, MousePosition.X, MousePosition.Y, false, true);
