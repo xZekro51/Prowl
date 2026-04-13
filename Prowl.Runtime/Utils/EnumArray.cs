@@ -4,6 +4,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using System.Text;
 using System.Threading.Tasks;
 
@@ -30,7 +31,7 @@ public struct EnumArray<TEnum, TValue> where TEnum : struct, Enum
         var enumValues = Enum.GetValues<TEnum>();
         for (int i = 0; i < enumValues.Length; i++)
         {
-            int intValue = Convert.ToInt32(enumValues[i]);
+            int intValue = Unsafe.As<TEnum, int>(ref Unsafe.AsRef(in enumValues[i]));
             if (i == 0)
             {
                 MinValue = intValue;
@@ -64,11 +65,11 @@ public struct EnumArray<TEnum, TValue> where TEnum : struct, Enum
     {
         get
         {
-            return this[Convert.ToInt32(key)];
+            return this[Unsafe.As<TEnum, int>(ref key)];
         }
         set
         {
-            this[Convert.ToInt32(key)] = value;
+            this[Unsafe.As<TEnum, int>(ref key)] = value;
         }
     }
 
