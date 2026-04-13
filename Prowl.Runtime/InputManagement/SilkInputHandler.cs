@@ -93,7 +93,7 @@ public class SilkInputHandler : IInputHandler, IDisposable
         }
     }
     public float MouseWheelDelta => Mice[0].ScrollWheels[0].Y;
-    public bool IsAnyKeyDown => _keyDownThisFrame.Any(pressed => pressed);
+    public bool IsAnyKeyDown => _keyState.Any(pressed => pressed);
 
     // ── Constructor ────────────────────────────────────────────
     public SilkInputHandler(IInputContext context)
