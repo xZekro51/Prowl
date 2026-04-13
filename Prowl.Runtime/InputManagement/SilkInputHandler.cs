@@ -33,12 +33,20 @@ public class InputStateBuffer<TEnum,TInput> where TEnum : struct, Enum where TIn
 
     public readonly List<(int deviceIndex, TEnum enumIndex, bool isDown)> PendingEvents = [];
 
+    private EnumArray<TEnum, bool> _stateWriteGlobal = new EnumArray<TEnum, bool>();
+    private EnumArray<TEnum, bool> _downThisFrameWriteGlobal = new EnumArray<TEnum, bool>();
+    private EnumArray<TEnum, bool> _upThisFrameWriteGlobal = new EnumArray<TEnum, bool>();
+    private EnumArray<TEnum, bool> _stateGlobal = new EnumArray<TEnum, bool>();
+    private EnumArray<TEnum, bool> _downThisFrameGlobal = new EnumArray<TEnum, bool>();
+    private EnumArray<TEnum, bool> _upThisFrameGlobal = new EnumArray<TEnum, bool>();
+
     private EnumArray<TEnum, bool>[] _stateWrite;
     private EnumArray<TEnum, bool>[] _downThisFrameWrite;
     private EnumArray<TEnum, bool>[] _upThisFrameWrite;
     private EnumArray<TEnum, bool>[] _state;
     private EnumArray<TEnum, bool>[] _downThisFrame;
     private EnumArray<TEnum, bool>[] _upThisFrame;
+
     public void ClearFrameBuffers()
     {
         for (int i = 0; i < Length; i++)
@@ -46,9 +54,21 @@ public class InputStateBuffer<TEnum,TInput> where TEnum : struct, Enum where TIn
             _downThisFrame[i].Clear();
             _upThisFrame[i].Clear();
         }
+        _downThisFrameGlobal.Clear();
+        _upThisFrameGlobal.Clear();
     }
+
     public void InitializeArrays()
     {
+        _stateGlobal.Clear();
+        _downThisFrameGlobal.Clear();
+        _upThisFrameGlobal.Clear();
+
+        _stateWriteGlobal.Clear();
+        _downThisFrameWriteGlobal.Clear();
+        _upThisFrameWriteGlobal.Clear();
+
+
         _stateWrite = new EnumArray<TEnum, bool>[Length];
         _downThisFrameWrite = new EnumArray<TEnum, bool>[Length];
         _upThisFrameWrite = new EnumArray<TEnum, bool>[Length];
@@ -77,76 +97,33 @@ public class InputStateBuffer<TEnum,TInput> where TEnum : struct, Enum where TIn
     public void WriteState(int deviceIndex, TEnum input, bool isDown)
     {
         _stateWrite[deviceIndex][input] = isDown;
+        _stateWriteGlobal[input] = isDown;
+
         if (isDown)
+        {
             _downThisFrameWrite[deviceIndex][input] = true;
+            _downThisFrameWriteGlobal[input] = true;
+        }
         else
+        {
             _upThisFrameWrite[deviceIndex][input] = true;
+            _upThisFrameWriteGlobal[input] = true;
+        }
+
     }
 
-    public bool Any()
-    {
-        for (int i = 0; i < Length; i++)
-        {
-            if (_state[i].Any(pressed => pressed)) return true;
-        }
-        return false;
-    }
+    public bool Any() => _stateGlobal.Any(pressed => pressed);
 
 
-    public bool GetState(int input)
-    {
-        for (int i = 0; i < Length; i++)
-        {
-            if (_state[i][input]) return true;
-        }
-        return false;
-    }
+    public bool GetState(int input) => _stateGlobal[input];
 
-    public bool GetDownThisFrame(int input)
-    {
-        for (int i = 0; i < Length; i++)
-        {
-            if (_downThisFrame[i][input]) return true;
-        }
-        return false;
-    }
+    public bool GetDownThisFrame(int input) => _downThisFrameGlobal[input];
 
-    public bool GetUpThisFrame(int input)
-    {
-        for (int i = 0; i < Length; i++)
-        {
-            if (_upThisFrame[i][input]) return true;
-        }
-        return false;
-    }
+    public bool GetUpThisFrame(int input) => _upThisFrameGlobal[input];
 
-    public bool GetState(TEnum input)
-    {
-        for (int i = 0; i < Length; i++)
-        {
-            if (_state[i][input])
-            {
-                return true;
-            }
-        }
-        return false;
-    }
-    public bool GetDownThisFrame(TEnum input)
-    {
-        for (int i = 0; i < Length; i++)
-        {
-            if (_downThisFrame[i][input]) return true;
-        }
-        return false;
-    }
-    public bool GetUpThisFrame(TEnum input)
-    {
-        for (int i = 0; i < Length; i++)
-        {
-            if (_upThisFrame[i][input]) return true;
-        }
-        return false;
-    }
+    public bool GetState(TEnum input) => _stateGlobal[input];
+    public bool GetDownThisFrame(TEnum input) => _downThisFrameGlobal[input];
+    public bool GetUpThisFrame(TEnum input) => _upThisFrameGlobal[input];
 
 
 
@@ -162,6 +139,21 @@ public class InputStateBuffer<TEnum,TInput> where TEnum : struct, Enum where TIn
             _downThisFrameWrite[i].Clear();
             _upThisFrameWrite[i].Clear();
         }
+
+        _stateWriteGlobal.CopyTo(_stateGlobal);
+
+        //for (int i = 0; i < _stateGlobal.Length; i++)
+        //{
+        //    if (_stateGlobal[i])
+        //    {
+        //        //Console.WriteLine("Input " + (TEnum)(object)i + " was pressed this frame.");
+        //    }
+        //}
+
+        EnumArray<TEnum, bool>.Swap(ref _downThisFrameGlobal, ref _downThisFrameWriteGlobal);
+        EnumArray<TEnum, bool>.Swap(ref _upThisFrameGlobal, ref _upThisFrameWriteGlobal);
+        _downThisFrameWriteGlobal.Clear();
+        _upThisFrameWriteGlobal.Clear();
     }
 
     public void Update()
@@ -169,7 +161,7 @@ public class InputStateBuffer<TEnum,TInput> where TEnum : struct, Enum where TIn
         int newLenth = _devices.Count;
         if (newLenth != Length)
         {
-            Console.WriteLine("Device count changed from " + Length + " to " + newLenth + ". Reinitializing input state buffers.");
+            //Console.WriteLine("Device count changed from " + Length + " to " + newLenth + ". Reinitializing input state buffers.");
             Length = newLenth;
             InitializeArrays();
         }
@@ -292,7 +284,7 @@ public class SilkInputHandler : IInputHandler, IDisposable
         {
             joystick.ButtonDown += (joystick, button) =>
             {
-                Console.WriteLine("Joystick button down: " + button.Name + " on joystick " + joystick.Index);
+                //Console.WriteLine("Joystick button down: " + button.Name + " on joystick " + joystick.Index);
             };
         }
     }
