@@ -354,7 +354,24 @@ public class SilkInputHandler : IInputHandler, IDisposable
         _keyboardStateBuffer.Update();
         _mouseStateBuffer.Update();
         _gamepadStateBuffer.Update();
+        FireEvents();
     }
+
+    private void FireEvents()
+    {
+        foreach ((int deviceIndex, KeyCode key, bool isDown) in _keyboardStateBuffer.PendingEvents)
+        {
+            OnKeyEvent?.Invoke(key, isDown);
+        }
+        foreach ((int deviceIndex, MouseButton button, bool isDown) in _mouseStateBuffer.PendingEvents)
+        {
+            OnMouseEvent?.Invoke(button, MousePosition.X, MousePosition.Y, isDown, false);
+        }
+        //foreach ((int deviceIndex, GamepadButton button, bool isDown) in _gamepadStateBuffer.PendingEvents)
+        //{
+        //}
+    }
+
     //private void SwapKeyboardBuffers()
     //{
     //    EnumArray<KeyCode, bool>.Swap(ref _keyUpThisFrame, ref _keyUpThisFrameWrite);
