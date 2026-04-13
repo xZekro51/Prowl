@@ -449,7 +449,7 @@ public class TerrainEditor : ComponentEditor
         paper.Box($"{id}_sp2").Height(6);
 
         // Mesh resolution dropdown (on TerrainComponent, not TerrainData)
-        string[] meshOptions = ["16", "32", "64"];
+        string[] meshOptions = ["16", "32", "64", "128"];
         int meshCurrent = Array.IndexOf(meshOptions, terrain.MeshResolution.ToString());
         if (meshCurrent < 0) meshCurrent = 0;
         EditorGUI.Dropdown(paper, $"{id}_meshres", "Mesh Resolution", meshCurrent, meshOptions)
@@ -675,7 +675,8 @@ public class TerrainEditor : ComponentEditor
 
             if (pos.X < 0 || pos.X > 1 || pos.Y < 0 || pos.Y > 1) continue;
 
-            float scale = 0.8f + (float)rng.NextDouble() * 0.4f; // random 0.8-1.2
+            // TODO: Add MinScale/MaxScale fields to TreePrototype for per-type control
+            float scale = 0.8f + (float)rng.NextDouble() * 0.4f;
             float rotation = (float)(rng.NextDouble() * Math.PI * 2);
 
             data.Trees.Add(new TreeInstance

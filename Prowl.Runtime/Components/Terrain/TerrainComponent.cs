@@ -34,7 +34,7 @@ public class TerrainComponent : MonoBehaviour
     public int MaxLODLevel = 4;
 
     /// <summary>Resolution of the base mesh grid (vertices per side).</summary>
-    public int MeshResolution = 16;
+    public int MeshResolution = 32;
 
     /// <summary>Grass material override. If null, uses built-in Grass material.</summary>
     public AssetRef<Material> GrassMaterial;
@@ -183,7 +183,8 @@ public class TerrainComponent : MonoBehaviour
         _properties.SetFloat("_TerrainSize", terrainSize);
         _properties.SetFloat("_TerrainHeight", terrainData.Height);
         _properties.SetVector("_TerrainOffset", this.Transform.Position);
-        _properties.SetMatrix("_TerrainWorldToLocal", Transform.WorldToLocalMatrix);
+        _properties.SetMatrix("_TerrainWorldToLocal", worldToTerrain);
+        _properties.SetMatrix("_TerrainLocalToWorld", terrainToWorld);
 
         // Brush preview
         mat.SetVector("_BrushPosition", BrushPosition);
@@ -211,6 +212,7 @@ public class TerrainComponent : MonoBehaviour
             Float3 terrainUp = Float3.Normalize(Float4x4.TransformPoint(Float3.UnitY, terrainToWorld) - Float4x4.TransformPoint(Float3.Zero, terrainToWorld));
             grassMat.SetVector("_TerrainUp", terrainUp);
             grassMat.SetMatrix("_TerrainWorldToLocal", worldToTerrain);
+            grassMat.SetMatrix("_TerrainLocalToWorld", terrainToWorld);
             grassMat.SetFloat("_TerrainSize", terrainSize);
             grassMat.SetFloat("_TerrainHeight", terrainData.Height);
             var htex = terrainData.GetHeightmapTexture();
