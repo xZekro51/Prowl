@@ -363,62 +363,16 @@ public class SilkInputHandler : IInputHandler, IDisposable
         {
             OnKeyEvent?.Invoke(key, isDown);
         }
+        _keyboardStateBuffer.PendingEvents.Clear();
         foreach ((int deviceIndex, MouseButton button, bool isDown) in _mouseStateBuffer.PendingEvents)
         {
             OnMouseEvent?.Invoke(button, MousePosition.X, MousePosition.Y, isDown, false);
         }
+        _mouseStateBuffer.PendingEvents.Clear();
         //foreach ((int deviceIndex, GamepadButton button, bool isDown) in _gamepadStateBuffer.PendingEvents)
         //{
         //}
     }
-
-    //private void SwapKeyboardBuffers()
-    //{
-    //    EnumArray<KeyCode, bool>.Swap(ref _keyUpThisFrame, ref _keyUpThisFrameWrite);
-    //    _keyUpThisFrameWrite.Clear();
-
-    //    EnumArray<KeyCode, bool>.Swap(ref _keyDownThisFrame, ref _keyDownThisFrameWrite);
-    //    _keyDownThisFrameWrite.Clear();
-
-    //    _keyStateWrite.CopyTo(_keyState);
-
-    //    foreach ((int index, bool isDown) in _pendingKeyEvents)
-    //    {
-    //        OnKeyEvent?.Invoke((KeyCode)index, isDown);
-    //    }
-    //    _pendingKeyEvents.Clear();
-    //}
-    //private void SwapMouseBuffers()
-    //{
-    //    EnumArray<MouseButton, bool>.Swap(ref _mouseDownThisFrame, ref _mouseDownThisFrameWrite);
-    //    _mouseDownThisFrameWrite.Clear();
-
-    //    EnumArray<MouseButton, bool>.Swap(ref _mouseUpThisFrame, ref _mouseUpThisFrameWrite);
-    //    _mouseUpThisFrameWrite.Clear();
-
-    //    _mouseStateWrite.CopyTo(_mouseState);
-
-    //    foreach ((int index, bool isDown) in _pendingMouseEvents)
-    //    {
-    //        OnMouseEvent?.Invoke((MouseButton)index, MousePosition.X, MousePosition.Y, isDown, false);
-    //    }
-    //    _pendingMouseEvents.Clear();
-    //}
-    //private void SwapGamepadBuffers()
-    //{
-    //    EnumArray<GamepadButton, bool>.Swap(ref _gamepadDownThisFrame, ref _gamepadDownThisFrameWrite);
-    //    _gamepadDownThisFrameWrite.Clear();
-
-    //    EnumArray<GamepadButton, bool>.Swap(ref _gamepadUpThisFrame, ref _gamepadUpThisFrameWrite);
-    //    _gamepadUpThisFrameWrite.Clear();
-
-    //    _gamepadStateWrite.CopyTo(_gamepadState);
-
-    //    //foreach ((GamepadButton index, bool isDown) in _pendingGamepadEvents)
-    //    //{
-    //    //}
-    //    _pendingGamepadEvents.Clear();
-    //}
     private void UpdateMousePosition()
     {
         _prevMousePos = _currentMousePos;
