@@ -50,6 +50,16 @@ public struct EnumArray<TEnum, TValue> where TEnum : struct, Enum
         Array.Clear(Values, 0, Values.Length);
     }
 
+    public static void Swap(ref EnumArray<TEnum, TValue> a, ref EnumArray<TEnum, TValue> b)
+    {
+        var temp = a; a = b; b = temp;
+    }
+
+    public void CopyTo(EnumArray<TEnum, TValue> recipient)
+    {
+        Array.Copy(Values, recipient.Values, Values.Length);
+    }
+
     public TValue this[TEnum key]
     {
         get
