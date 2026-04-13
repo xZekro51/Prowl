@@ -60,7 +60,7 @@ public static class Window
     }
 
     private static bool isFocused = true;
-    private static SilkInputHandler WindowInputHandler;
+    private static DefaultInputHandler WindowInputHandler;
 
     public static bool IsFocused
     {
