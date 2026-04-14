@@ -25,7 +25,34 @@ public class InputStateBuffer<TEnum,TInput> where TEnum : struct, Enum where TIn
         get { return _length; }
         private set
         {
-            _length = Math.Max(1, value);
+            _length = value;
+        }
+    }
+
+    private struct BufferSet
+    {
+        public EnumArray<TEnum, bool> State;
+        public EnumArray<TEnum, bool> DownThisFrame;
+        public EnumArray<TEnum, bool> UpThisFrame;
+
+        public BufferSet()
+        {
+            State = new EnumArray<TEnum, bool>();
+            DownThisFrame = new EnumArray<TEnum, bool>();
+            UpThisFrame = new EnumArray<TEnum, bool>();
+        }
+
+        public void Clear()
+        {
+            State.Clear();
+            DownThisFrame.Clear();
+            UpThisFrame.Clear();
+        }
+
+        public readonly void ClearTransient()
+        {
+            DownThisFrame.Clear();
+            UpThisFrame.Clear();
         }
     }
 
@@ -33,119 +60,86 @@ public class InputStateBuffer<TEnum,TInput> where TEnum : struct, Enum where TIn
 
     public readonly List<(int deviceIndex, TEnum enumIndex, bool isDown)> PendingEvents = [];
 
-    private EnumArray<TEnum, bool> _stateWriteGlobal = new EnumArray<TEnum, bool>();
-    private EnumArray<TEnum, bool> _downThisFrameWriteGlobal = new EnumArray<TEnum, bool>();
-    private EnumArray<TEnum, bool> _upThisFrameWriteGlobal = new EnumArray<TEnum, bool>();
-    private EnumArray<TEnum, bool> _stateGlobal = new EnumArray<TEnum, bool>();
-    private EnumArray<TEnum, bool> _downThisFrameGlobal = new EnumArray<TEnum, bool>();
-    private EnumArray<TEnum, bool> _upThisFrameGlobal = new EnumArray<TEnum, bool>();
 
-    private EnumArray<TEnum, bool>[] _stateWrite;
-    private EnumArray<TEnum, bool>[] _downThisFrameWrite;
-    private EnumArray<TEnum, bool>[] _upThisFrameWrite;
-    private EnumArray<TEnum, bool>[] _state;
-    private EnumArray<TEnum, bool>[] _downThisFrame;
-    private EnumArray<TEnum, bool>[] _upThisFrame;
-
-    public void ClearFrameBuffers()
-    {
-        for (int i = 0; i < Length; i++)
-        {
-            _downThisFrame[i].Clear();
-            _upThisFrame[i].Clear();
-        }
-        _downThisFrameGlobal.Clear();
-        _upThisFrameGlobal.Clear();
-    }
+    private BufferSet _globalWrite;
+    private BufferSet _globalRead;
+    private BufferSet[] _deviceWrite;
+    private BufferSet[] _deviceRead;
 
     public void InitializeArrays()
     {
-        _stateGlobal.Clear();
-        _downThisFrameGlobal.Clear();
-        _upThisFrameGlobal.Clear();
+        _globalWrite = new BufferSet();
+        _globalRead = new BufferSet();
 
-        _stateWriteGlobal.Clear();
-        _downThisFrameWriteGlobal.Clear();
-        _upThisFrameWriteGlobal.Clear();
+        _deviceWrite = new BufferSet[Length];
+        _deviceRead = new BufferSet[Length];
 
-
-        _stateWrite = new EnumArray<TEnum, bool>[Length];
-        _downThisFrameWrite = new EnumArray<TEnum, bool>[Length];
-        _upThisFrameWrite = new EnumArray<TEnum, bool>[Length];
-        _state = new EnumArray<TEnum, bool>[Length];
-        _downThisFrame = new EnumArray<TEnum, bool>[Length];
-        _upThisFrame = new EnumArray<TEnum, bool>[Length];
         for (int i = 0; i < Length; i++)
         {
-            _stateWrite[i] = new EnumArray<TEnum, bool>();
-            _downThisFrameWrite[i] = new EnumArray<TEnum, bool>();
-            _upThisFrameWrite[i] = new EnumArray<TEnum, bool>();
-            _state[i] = new EnumArray<TEnum, bool>();
-            _downThisFrame[i] = new EnumArray<TEnum, bool>();
-            _upThisFrame[i] = new EnumArray<TEnum, bool>();
+            _deviceWrite[i] = new BufferSet();
+            _deviceRead[i] = new BufferSet();
         }
     }
 
-    public bool GetState(int deviceIndex, int input) => _state[deviceIndex][input];
-    public bool GetDownThisFrame(int deviceIndex, int input) => _downThisFrame[deviceIndex][input];
-    public bool GetUpThisFrame(int deviceIndex, int input) => _upThisFrame[deviceIndex][input];
+    public bool GetState(int deviceIndex, int input) => _deviceRead[deviceIndex].State[input];
+    public bool GetDownThisFrame(int deviceIndex, int input) => _deviceRead[deviceIndex].DownThisFrame[input];
+    public bool GetUpThisFrame(int deviceIndex, int input) => _deviceRead[deviceIndex].UpThisFrame[input];
 
 
-    public bool GetState(int deviceIndex, TEnum input) => _state[deviceIndex][input];
-    public bool GetDownThisFrame(int deviceIndex, TEnum input) => _downThisFrame[deviceIndex][input];
-    public bool GetUpThisFrame(int deviceIndex, TEnum input) => _upThisFrame[deviceIndex][input];
+    public bool GetState(int deviceIndex, TEnum input) => _deviceRead[deviceIndex].State[input];
+    public bool GetDownThisFrame(int deviceIndex, TEnum input) => _deviceRead[deviceIndex].DownThisFrame[input];
+    public bool GetUpThisFrame(int deviceIndex, TEnum input) => _deviceRead[deviceIndex].UpThisFrame[input];
     public void WriteState(int deviceIndex, TEnum input, bool isDown)
     {
-        _stateWrite[deviceIndex][input] = isDown;
-        _stateWriteGlobal[input] = isDown;
+        _deviceWrite[deviceIndex].State[input] = isDown;
+        _globalWrite.State[input] = isDown;
 
         if (isDown)
         {
-            _downThisFrameWrite[deviceIndex][input] = true;
-            _downThisFrameWriteGlobal[input] = true;
+            _deviceWrite[deviceIndex].DownThisFrame[input] = true;
+            _globalWrite.DownThisFrame[input] = true;
         }
         else
         {
-            _upThisFrameWrite[deviceIndex][input] = true;
-            _upThisFrameWriteGlobal[input] = true;
+            _deviceWrite[deviceIndex].UpThisFrame[input] = true;
+            _globalWrite.UpThisFrame[input] = true;
         }
 
     }
 
-    public bool Any() => _stateGlobal.Any(pressed => pressed);
+    public bool Any() => _globalRead.State.Any(pressed => pressed);
 
 
-    public bool GetState(int input) => _stateGlobal[input];
+    public bool GetState(int input) => _globalRead.State[input];
 
-    public bool GetDownThisFrame(int input) => _downThisFrameGlobal[input];
+    public bool GetDownThisFrame(int input) => _globalRead.DownThisFrame[input];
 
-    public bool GetUpThisFrame(int input) => _upThisFrameGlobal[input];
+    public bool GetUpThisFrame(int input) => _globalRead.UpThisFrame[input];
 
-    public bool GetState(TEnum input) => _stateGlobal[input];
-    public bool GetDownThisFrame(TEnum input) => _downThisFrameGlobal[input];
-    public bool GetUpThisFrame(TEnum input) => _upThisFrameGlobal[input];
+    public bool GetState(TEnum input) => _globalRead.State[input];
+    public bool GetDownThisFrame(TEnum input) => _globalRead.DownThisFrame[input];
+    public bool GetUpThisFrame(TEnum input) => _globalRead.UpThisFrame[input];
 
 
 
-    public void SwapBuffers()
+    private void SwapAllBuffers()
     {
         for (int i = 0; i < Length; i++)
         {
-            _stateWrite[i].CopyTo(_state[i]);
-
-            EnumArray<TEnum, bool>.Swap(ref _downThisFrame[i], ref _downThisFrameWrite[i]);
-            EnumArray<TEnum, bool>.Swap(ref _upThisFrame[i], ref _upThisFrameWrite[i]);
-
-            _downThisFrameWrite[i].Clear();
-            _upThisFrameWrite[i].Clear();
+            SwapBuffers(ref _deviceWrite[i], ref _deviceRead[i]);
         }
 
-        _stateWriteGlobal.CopyTo(_stateGlobal);
+        SwapBuffers(ref _globalWrite, ref _globalRead);
+    }
 
-        EnumArray<TEnum, bool>.Swap(ref _downThisFrameGlobal, ref _downThisFrameWriteGlobal);
-        EnumArray<TEnum, bool>.Swap(ref _upThisFrameGlobal, ref _upThisFrameWriteGlobal);
-        _downThisFrameWriteGlobal.Clear();
-        _upThisFrameWriteGlobal.Clear();
+    private static void SwapBuffers(ref BufferSet write, ref BufferSet read)
+    {
+        write.State.CopyTo(read.State);
+
+        EnumArray<TEnum, bool>.Swap(ref read.DownThisFrame, ref write.DownThisFrame);
+        EnumArray<TEnum, bool>.Swap(ref read.UpThisFrame, ref write.UpThisFrame);
+
+        write.ClearTransient();
     }
 
     public void Update()
@@ -158,7 +152,7 @@ public class InputStateBuffer<TEnum,TInput> where TEnum : struct, Enum where TIn
         }
         else
         {
-            SwapBuffers();
+            SwapAllBuffers();
         }
     }
 
