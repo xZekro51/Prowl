@@ -42,6 +42,7 @@ public class ProjectSettingsPanel : DockPanel
                 .Border(new UnitValue(Units.Pixels, EditorTheme.SidePixelPadding))
                 .Width(sidebarW).Height(height)
                 .BackgroundColor(EditorTheme.Neutral200)
+                .Clip()
                 .Enter())
             {
                 paper.Box("ps_sidebar_header")
