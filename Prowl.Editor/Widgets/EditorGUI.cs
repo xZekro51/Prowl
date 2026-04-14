@@ -291,7 +291,7 @@ public static class EditorGUI
         {
             if (Font != null && !string.IsNullOrEmpty(label))
                 paper.Box($"{id}_lbl")
-                    .Width(LabelW).Height(EditorTheme.RowHeight).ChildLeft(4)
+                    .Width(GetLabelWidth(paper, label, FontSz, Font)).Height(EditorTheme.RowHeight).ChildLeft(4)
                     .Alignment(PaperUI.TextAlignment.MiddleLeft)
                     .Text(label, Font).TextColor(EditorTheme.Ink500).FontSize(FontSz);
 
@@ -605,6 +605,24 @@ public static class EditorGUI
         return new WidgetResult<int>(cb => userCallback = cb);
     }
 
+    /// <summary>
+    /// Returns the width of a Label as it should appear in property drawers. This returns only values >=LabelW.
+    /// </summary>
+    public static float GetLabelWidth(Paper paper, string label, float? fontSize = null, FontFile font = null)
+    {
+        var labelSize = paper.Canvas.MeasureText(label, fontSize ?? FontSz, font ?? Font);
+        return Math.Max(LabelW, labelSize.X);
+    }
+
+    /// <summary>
+    /// Returns the measured width of a Label.
+    /// </summary>
+    public static float GetLabelWidthStrict(Paper paper, string label, float? fontSize = null, FontFile font = null)
+    {
+        var labelSize = paper.Canvas.MeasureText(label, fontSize ?? FontSz, font ?? Font);
+        return labelSize.X;
+    }
+
     // ================================================================
     //  Slider
     // ================================================================
@@ -619,13 +637,14 @@ public static class EditorGUI
             .Margin(UnitValue.Auto, EditorTheme.Spacing)
             .Enter())
         {
-            if (Font != null && !string.IsNullOrEmpty(label))
+            if (Font != null && !string.IsNullOrEmpty(label)) {
                 paper.Box($"{id}_lbl")
-                    .Width(LabelW).Height(EditorTheme.RowHeight).ChildLeft(4)
+                    .Width(GetLabelWidth(paper, label, FontSz, Font)).Height(EditorTheme.RowHeight).ChildLeft(4)
                     .Alignment(PaperUI.TextAlignment.MiddleLeft)
                     .IsNotInteractable()
                     .Text(label, Font)
                     .TextColor(EditorTheme.Ink500).FontSize(FontSz);
+            }
 
             paper.Box($"{id}_track")
                 .Height(EditorTheme.RowHeight)
@@ -771,7 +790,7 @@ public static class EditorGUI
         {
             if (Font != null && !string.IsNullOrEmpty(label))
                 paper.Box($"{id}_lbl")
-                    .Width(autoLabelWidth ? UnitValue.Auto : LabelW).Height(EditorTheme.RowHeight).ChildLeft(4)
+                    .Width(autoLabelWidth ? UnitValue.Auto : GetLabelWidth(paper, label, FontSz, Font)).Height(EditorTheme.RowHeight).ChildLeft(4)
                     .Alignment(PaperUI.TextAlignment.MiddleLeft)
                     .Text(label, Font).TextColor(EditorTheme.Ink500).FontSize(FontSz);
 
@@ -1040,7 +1059,7 @@ public static class EditorGUI
         {
             if (Font != null && !string.IsNullOrEmpty(label))
                 paper.Box($"{id}_lbl")
-                    .Width(LabelW).Height(EditorTheme.RowHeight).ChildLeft(4)
+                    .Width(GetLabelWidth(paper, label, FontSz, Font)).Height(EditorTheme.RowHeight).ChildLeft(4)
                     .Alignment(PaperUI.TextAlignment.MiddleLeft)
                     .Text(label, Font).TextColor(EditorTheme.Ink500).FontSize(FontSz);
 
@@ -1073,7 +1092,7 @@ public static class EditorGUI
         {
             if (Font != null && !string.IsNullOrEmpty(label))
                 paper.Box($"{id}_lbl")
-                    .Width(LabelW).Height(EditorTheme.RowHeight).ChildLeft(4)
+                    .Width(GetLabelWidth(paper, label, FontSz, Font)).Height(EditorTheme.RowHeight).ChildLeft(4)
                     .Alignment(PaperUI.TextAlignment.MiddleLeft)
                     .Text(label, Font).TextColor(EditorTheme.Ink500).FontSize(FontSz);
 
@@ -1110,7 +1129,7 @@ public static class EditorGUI
         {
             if (Font != null && !string.IsNullOrEmpty(label))
                 paper.Box($"{id}_lbl")
-                    .Width(LabelW).Height(EditorTheme.RowHeight).ChildLeft(4)
+                    .Width(GetLabelWidth(paper, label, FontSz, Font)).Height(EditorTheme.RowHeight).ChildLeft(4)
                     .Alignment(PaperUI.TextAlignment.MiddleLeft)
                     .Text(label, Font).TextColor(EditorTheme.Ink500).FontSize(FontSz);
 
@@ -1149,7 +1168,7 @@ public static class EditorGUI
         {
             if (Font != null && !string.IsNullOrEmpty(label))
                 paper.Box($"{id}_lbl")
-                    .Width(LabelW)
+                    .Width(GetLabelWidth(paper, label, FontSz, Font))
                     .Height(EditorTheme.RowHeight)
                     .IsNotInteractable()
                     .Alignment(PaperUI.TextAlignment.MiddleLeft)
@@ -1222,7 +1241,7 @@ public static class EditorGUI
         {
             if (Font != null && !string.IsNullOrEmpty(label))
                 paper.Box($"{id}_lbl")
-                    .Width(LabelW).Height(EditorTheme.RowHeight).ChildLeft(4)
+                    .Width(GetLabelWidth(paper, label, FontSz, Font)).Height(EditorTheme.RowHeight).ChildLeft(4)
                     .Alignment(PaperUI.TextAlignment.MiddleLeft)
                     .IsNotInteractable()
                     .Text(label, Font).TextColor(EditorTheme.Ink500).FontSize(FontSz);

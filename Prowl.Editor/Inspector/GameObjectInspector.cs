@@ -53,11 +53,11 @@ public static class GameObjectInspector
         // Enabled toggle + Name + Static
         using (paper.Row("gi_header")
             .Height(EditorTheme.RowHeight)
-            .Margin(0, 6)
+            .Margin(8, 6)
             .RowBetween(6)
             .Enter())
         {
-            paper.Box("gi_icon").Margin(6, 6, 0, 6).FontSize(EditorTheme.FontSize * 1.5f).Width(UnitValue.Auto).Text(EditorIcons.Cube, font);
+            paper.Box("gi_icon").Margin(0, 6, 0, 6).FontSize(EditorTheme.FontSize * 1.5f).Width(UnitValue.Auto).Text(EditorIcons.Cube, font);
 
             EditorGUI.Toggle(paper, "gi_enabled", "", go.Enabled)
                 .OnValueChanged(v => { var old = go.Enabled; Undo.RegisterAction("Toggle Enabled", () => { var g = Undo.FindGO(goId); if (g != null) g.Enabled = old; }, () => { var g = Undo.FindGO(goId); if (g != null) g.Enabled = v; }); go.Enabled = v; });
@@ -73,6 +73,7 @@ public static class GameObjectInspector
         using (paper.Row("gi_tag_layer")
             .Height(22)
             .RowBetween(6)
+            .Margin(8, 6)
             .Enter())
         {
             // Tag dropdown
