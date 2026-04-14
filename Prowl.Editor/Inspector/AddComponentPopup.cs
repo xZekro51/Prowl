@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 
+using Prowl.Editor.Scripting;
 using Prowl.Editor.Widgets;
 using Prowl.PaperUI;
 using Prowl.PaperUI.LayoutEngine;
@@ -211,53 +212,47 @@ public static class AddComponentPopup
     {
         var result = new List<ComponentEntry>();
 
-        foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
+
+        foreach (var type in ScriptAssemblyManager.GetAllTypes())
         {
-            Type[] types;
-            try { types = assembly.GetTypes(); }
-            catch { continue; }
+            if (!typeof(MonoBehaviour).IsAssignableFrom(type) || type.IsAbstract) continue;
+            if (type == typeof(MonoBehaviour)) continue;
+            if (type.Name == "MissingMonobehaviour") continue;
 
-            foreach (var type in types)
+            var menuAttr = type.GetCustomAttribute<AddComponentMenuAttribute>();
+            string path = menuAttr?.Path ?? type.Name;
+            string icon = menuAttr?.Icon ?? "";
+
+            int lastSlash = path.LastIndexOf('/');
+            string category = lastSlash >= 0 ? path[..lastSlash] : "";
+            string name = lastSlash >= 0 ? path[(lastSlash + 1)..] : path;
+
+            // Default icons by category
+            if (string.IsNullOrEmpty(icon))
             {
-                if (!typeof(MonoBehaviour).IsAssignableFrom(type) || type.IsAbstract) continue;
-                if (type == typeof(MonoBehaviour)) continue;
-                if (type.Name == "MissingMonobehaviour") continue;
-
-                var menuAttr = type.GetCustomAttribute<AddComponentMenuAttribute>();
-                string path = menuAttr?.Path ?? type.Name;
-                string icon = menuAttr?.Icon ?? "";
-
-                int lastSlash = path.LastIndexOf('/');
-                string category = lastSlash >= 0 ? path[..lastSlash] : "";
-                string name = lastSlash >= 0 ? path[(lastSlash + 1)..] : path;
-
-                // Default icons by category
-                if (string.IsNullOrEmpty(icon))
+                icon = category switch
                 {
-                    icon = category switch
-                    {
-                        var c when c.StartsWith("Rendering") => EditorIcons.Cube,
-                        var c when c.StartsWith("Audio") => EditorIcons.VolumeHigh,
-                        var c when c.StartsWith("Light") => EditorIcons.Sun,
-                        var c when c.Contains("Collider") => EditorIcons.VectorSquare,
-                        var c when c.Contains("Constraint") || c.Contains("Joint") => EditorIcons.Link,
-                        var c when c.StartsWith("Physics") => EditorIcons.Atom,
-                        var c when c.StartsWith("UI") => EditorIcons.Desktop,
-                        var c when c.StartsWith("Effects") => EditorIcons.Burst,
-                        var c when c.StartsWith("Terrain") => EditorIcons.Mountain,
-                        _ => EditorIcons.PuzzlePiece
-                    };
-                }
-
-                result.Add(new ComponentEntry
-                {
-                    Path = path,
-                    Category = category,
-                    Name = name,
-                    Icon = icon,
-                    Type = type
-                });
+                    var c when c.StartsWith("Rendering") => EditorIcons.Cube,
+                    var c when c.StartsWith("Audio") => EditorIcons.VolumeHigh,
+                    var c when c.StartsWith("Light") => EditorIcons.Sun,
+                    var c when c.Contains("Collider") => EditorIcons.VectorSquare,
+                    var c when c.Contains("Constraint") || c.Contains("Joint") => EditorIcons.Link,
+                    var c when c.StartsWith("Physics") => EditorIcons.Atom,
+                    var c when c.StartsWith("UI") => EditorIcons.Desktop,
+                    var c when c.StartsWith("Effects") => EditorIcons.Burst,
+                    var c when c.StartsWith("Terrain") => EditorIcons.Mountain,
+                    _ => EditorIcons.PuzzlePiece
+                };
             }
+
+            result.Add(new ComponentEntry
+            {
+                Path = path,
+                Category = category,
+                Name = name,
+                Icon = icon,
+                Type = type
+            });
         }
 
         return result;

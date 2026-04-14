@@ -7,6 +7,7 @@ using System.Runtime.InteropServices;
 
 using Prowl.Editor.Docking;
 using Prowl.Editor.Panels;
+using Prowl.Editor.Scripting;
 using Prowl.PaperUI;
 using Prowl.Runtime;
 
@@ -687,19 +688,14 @@ public class EditorApplication : Game
 
     private void ScanAndRegisterPanels()
     {
-        foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
+        foreach (var type in ScriptAssemblyManager.GetAllTypes())
         {
-            Type[] types;
-            try { types = assembly.GetTypes(); }
-            catch { continue; }
+            if (!typeof(DockPanel).IsAssignableFrom(type) || type.IsAbstract) continue;
 
-            foreach (var type in types)
-            {
-                if (!typeof(DockPanel).IsAssignableFrom(type) || type.IsAbstract) continue;
-                var attr = type.GetCustomAttribute<EditorWindowAttribute>();
-                if (attr == null) continue;
-                _registeredPanels.Add((type, attr.Path));
-            }
+            var attr = type.GetCustomAttribute<EditorWindowAttribute>();
+            if (attr == null) continue;
+
+            _registeredPanels.Add((type, attr.Path));
         }
     }
 
@@ -857,6 +853,15 @@ public class EditorApplication : Game
     //  Script Compilation
     // ================================================================
 
+    /// <summary>
+    /// Called by ScriptAssemblyManager during an in-process assembly reload
+    /// to re-scan all type registries with the newly loaded assemblies.
+    /// </summary>
+    public void ReinitializeRegistriesForReload()
+    {
+        ReinitializeRegistries();
+    }
+
     private void ReinitializeRegistries()
     {
         _registeredPanels.Clear();
@@ -872,6 +877,8 @@ public class EditorApplication : Game
         ThumbnailGeneratorRegistry.Reinitialize();
         SceneDropHandlerRegistry.Reinitialize();
         CreateGameObjectMenuRegistry.Reinitialize();
+        EditorCallbacks.Reinitialize();
+        SceneViewEditorRegistry.Reinitialize();
 
         // Re-register Window menu items for any new panels from user assemblies
         foreach (var (type, path) in _registeredPanels)
@@ -1046,6 +1053,9 @@ public class EditorApplication : Game
 
         // Restore the previously active tab
         RestoreActiveTab();
+
+        // Perform deferred assembly reload if scripts were compiled during play mode
+        ScriptAssemblyManager.PerformPendingReload();
 
         Runtime.Debug.Log("Exited play mode.");
     }

@@ -5,6 +5,7 @@ using System;
 using System.Collections.Generic;
 using System.Reflection;
 
+using Prowl.Editor.Scripting;
 using Prowl.Runtime;
 using Prowl.Runtime.Resources;
 
@@ -50,21 +51,14 @@ public static class ThumbnailGeneratorRegistry
 
         _generators.Clear();
 
-        foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
+        foreach (var type in ScriptAssemblyManager.GetAllTypes())
         {
-            Type[] types;
-            try { types = assembly.GetTypes(); }
-            catch { continue; }
+            if (type.IsAbstract || !typeof(IThumbnailGenerator).IsAssignableFrom(type)) continue;
+            var attr = type.GetCustomAttribute<CustomThumbnailGeneratorAttribute>();
+            if (attr == null) continue;
 
-            foreach (var type in types)
-            {
-                if (type.IsAbstract || !typeof(IThumbnailGenerator).IsAssignableFrom(type)) continue;
-                var attr = type.GetCustomAttribute<CustomThumbnailGeneratorAttribute>();
-                if (attr == null) continue;
-
-                var instance = (IThumbnailGenerator)Activator.CreateInstance(type)!;
-                _generators[attr.TargetType] = instance;
-            }
+            var instance = (IThumbnailGenerator)Activator.CreateInstance(type)!;
+            _generators[attr.TargetType] = instance;
         }
 
         Debug.Log($"ThumbnailGeneratorRegistry: {_generators.Count} generators registered.");

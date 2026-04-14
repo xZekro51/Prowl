@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 
+using Prowl.Editor.Scripting;
+
 namespace Prowl.Editor.Importers;
 
 /// <summary>
@@ -25,26 +27,19 @@ public static class ImporterRegistry
         _extensionToImporter.Clear();
         _nameToImporter.Clear();
 
-        foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
+        foreach (var type in ScriptAssemblyManager.GetAllTypes())
         {
-            Type[] types;
-            try { types = assembly.GetTypes(); }
-            catch { continue; }
+            if (!typeof(AssetImporter).IsAssignableFrom(type) || type.IsAbstract) continue;
 
-            foreach (var type in types)
+            var attr = type.GetCustomAttribute<ImporterForAttribute>();
+            if (attr == null) continue;
+
+            _nameToImporter[type.Name] = type;
+
+            foreach (var ext in attr.Extensions)
             {
-                if (!typeof(AssetImporter).IsAssignableFrom(type) || type.IsAbstract) continue;
-
-                var attr = type.GetCustomAttribute<ImporterForAttribute>();
-                if (attr == null) continue;
-
-                _nameToImporter[type.Name] = type;
-
-                foreach (var ext in attr.Extensions)
-                {
-                    string normalized = ext.StartsWith('.') ? ext.ToLowerInvariant() : "." + ext.ToLowerInvariant();
-                    _extensionToImporter[normalized] = type;
-                }
+                string normalized = ext.StartsWith('.') ? ext.ToLowerInvariant() : "." + ext.ToLowerInvariant();
+                _extensionToImporter[normalized] = type;
             }
         }
 

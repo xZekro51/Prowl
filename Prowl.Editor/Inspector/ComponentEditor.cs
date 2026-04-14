@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Reflection;
 
+using Prowl.Editor.Scripting;
 using Prowl.PaperUI;
 using Prowl.Runtime;
 
@@ -58,7 +59,7 @@ public static class ComponentEditorRegistry
         _typeToEditor.Clear();
         _editorCache.Clear();
 
-        foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
+        foreach (var assembly in ScriptAssemblyManager.GetAllRelevantAssemblies())
         {
             Type[] types;
             try { types = assembly.GetTypes(); }

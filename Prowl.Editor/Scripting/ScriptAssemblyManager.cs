@@ -1,7 +1,9 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Runtime.Loader;
 using System.Threading.Tasks;
 
 using Prowl.Echo;
@@ -12,11 +14,36 @@ using Prowl.Runtime.Resources;
 namespace Prowl.Editor.Scripting;
 
 /// <summary>
-/// Manages script assembly compilation, loading, and editor restart.
-/// Debounces recompile requests and orchestrates the compile → restart cycle.
+/// Manages script assembly compilation, loading, and in-process hot-reload
+/// via a collectible <see cref="ScriptAssemblyLoadContext"/>.
+/// Debounces recompile requests and orchestrates the compile → reload cycle.
 /// </summary>
 public static class ScriptAssemblyManager
 {
+    private static ScriptAssemblyLoadContext? _scriptContext;
+    private static WeakReference? _previousContextRef;
+
+    /// <summary>
+    /// Fired before script assemblies are unloaded.
+    /// Use to release references to user types.
+    /// </summary>
+    public static event Action? OnBeforeAssemblyReload;
+
+    /// <summary>
+    /// Fired after new script assemblies are loaded and registries re-initialized.
+    /// </summary>
+    public static event Action? OnAfterAssemblyReload;
+
+    /// <summary>
+    /// The user script assemblies currently loaded in the collectible ALC, or null.
+    /// </summary>
+    public static Assembly[]? LoadedScriptAssemblies { get; private set; }
+
+    /// <summary>
+    /// True when a reload has been deferred because play mode was active.
+    /// </summary>
+    public static bool ReloadPending { get; private set; }
+
     private static bool _recompileRequested;
     private static DateTime _lastScriptChange;
     private static bool _isCompiling;
@@ -42,8 +69,8 @@ public static class ScriptAssemblyManager
 
             if (result.Success)
             {
-                Runtime.Debug.Log("[ScriptAssemblyManager] Compilation successful. Restarting editor...");
-                RestartEditor(Project.Current!);
+                Runtime.Debug.Log("[ScriptAssemblyManager] Compilation successful. Reloading assemblies...");
+                ReloadAssemblies(Project.Current!);
             }
             else
             {
@@ -90,15 +117,21 @@ public static class ScriptAssemblyManager
         });
     }
 
-    /// <summary>Load pre-built script assemblies from Library/ScriptAssemblies/.
+    // ================================================================
+    //  Assembly Loading / Unloading
+    // ================================================================
+
+    /// <summary>Load pre-built script assemblies from Library/ScriptAssemblies/ into a collectible ALC.
     /// Copies to a temp path first so the original DLL stays unlocked for recompilation.</summary>
     public static void LoadAssemblies(Project project)
     {
-        LoadAssembly(project.GameAssemblyPath, "game");
-        LoadAssembly(project.EditorAssemblyPath, "editor");
+        var loaded = new List<Assembly>();
+        LoadAssembly(project.GameAssemblyPath, "game", loaded);
+        LoadAssembly(project.EditorAssemblyPath, "editor", loaded);
+        LoadedScriptAssemblies = loaded.Count > 0 ? loaded.ToArray() : null;
     }
 
-    private static void LoadAssembly(string dllPath, string label)
+    private static void LoadAssembly(string dllPath, string label, List<Assembly> loaded)
     {
         if (!File.Exists(dllPath)) return;
 
@@ -114,7 +147,11 @@ public static class ScriptAssemblyManager
 
             string tempPath = Path.Combine(tempDir, $"{Path.GetFileNameWithoutExtension(dllPath)}_{Guid.NewGuid():N}.dll");
             File.Copy(dllPath, tempPath, true);
-            Assembly.LoadFrom(tempPath);
+
+            _scriptContext ??= new ScriptAssemblyLoadContext(Path.GetDirectoryName(dllPath)!);
+            var asm = _scriptContext.LoadFromAssemblyPath(tempPath);
+            loaded.Add(asm);
+
             Runtime.Debug.Log($"[ScriptAssemblyManager] Loaded {label} assembly: {Path.GetFileName(dllPath)}");
         }
         catch (Exception ex)
@@ -123,75 +160,172 @@ public static class ScriptAssemblyManager
         }
     }
 
+    /// <summary>Unload all user script assemblies and release the collectible ALC.</summary>
+    public static void UnloadAssemblies()
+    {
+        LoadedScriptAssemblies = null;
+
+        if (_scriptContext != null)
+        {
+            _scriptContext.Unload();
+            _previousContextRef = new WeakReference(_scriptContext);
+            _scriptContext = null;
+        }
+
+        for (int i = 0; i < 3; i++)
+        {
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+        }
+
+        if (_previousContextRef != null && _previousContextRef.IsAlive)
+            Runtime.Debug.LogWarning("[ScriptAssemblyManager] Previous AssemblyLoadContext is still alive — possible reference leak.");
+        else
+            Runtime.Debug.Log("[ScriptAssemblyManager] Previous AssemblyLoadContext collected successfully.");
+    }
+
     /// <summary>Check if compiled assemblies exist for this project.</summary>
     public static bool HasScriptAssemblies(Project project)
         => File.Exists(project.GameAssemblyPath) || File.Exists(project.EditorAssemblyPath);
 
-    /// <summary>Save all state and restart the editor process.</summary>
-    private static void RestartEditor(Project project)
+    // ================================================================
+    //  Assembly Enumeration (for registry scanning)
+    // ================================================================
+
+    /// <summary>
+    /// Returns the combined set of assemblies that registries should scan:
+    /// all default-context assemblies (engine, BCL) plus any loaded script assemblies.
+    /// </summary>
+    public static IEnumerable<Assembly> GetAllRelevantAssemblies()
     {
-        // Auto-save the current scene
-        SaveSceneForRestart(project);
+        foreach (var asm in AssemblyLoadContext.Default.Assemblies)
+            yield return asm;
 
-        // Save editor layout and settings
-        EditorApplication.Instance?.SaveProjectState();
-
-        // Get the editor executable path
-        string? exePath = Environment.ProcessPath;
-        if (string.IsNullOrEmpty(exePath))
+        if (LoadedScriptAssemblies != null)
         {
-            Runtime.Debug.LogError("[ScriptAssemblyManager] Cannot determine editor executable path for restart.");
-            return;
+            foreach (var asm in LoadedScriptAssemblies)
+                yield return asm;
         }
-
-        // Build command-line args
-        string args = $"--project \"{project.RootPath}\"";
-        if (File.Exists(project.AutoSaveScenePath))
-            args += $" --restore-scene \"{project.AutoSaveScenePath}\"";
-
-        Runtime.Debug.Log($"[ScriptAssemblyManager] Restarting: {exePath} {args}");
-
-        try
-        {
-            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
-            {
-                FileName = exePath,
-                Arguments = args,
-                UseShellExecute = false,
-            });
-        }
-        catch (Exception ex)
-        {
-            Runtime.Debug.LogError($"[ScriptAssemblyManager] Failed to restart: {ex.Message}");
-            return;
-        }
-
-        Environment.Exit(0);
     }
 
-    private static void SaveSceneForRestart(Project project)
+    // ================================================================
+    //  In-Process Hot Reload
+    // ================================================================
+
+    /// <summary>
+    /// Perform an in-process assembly reload: serialize scene state, unload old assemblies,
+    /// load new ones, re-initialize registries, and restore scene state.
+    /// </summary>
+    public static void ReloadAssemblies(Project project)
     {
-        var scene = Scene.Current;
-        if (scene == null) return;
-
-        try
+        if (Application.IsPlaying)
         {
-            // Temporarily clear AssetID on scene so it serializes fully
-            var savedId = scene.AssetID;
-            scene.AssetID = Guid.Empty;
+            ReloadPending = true;
+            Runtime.Debug.LogWarning("[ScriptAssemblyManager] Scripts compiled. Reload will occur when you exit play mode.");
+            return;
+        }
 
-            var echo = Serializer.Serialize(scene);
-            scene.AssetID = savedId;
+        PerformReload(project);
+    }
 
-            if (echo != null)
+    /// <summary>
+    /// Execute a deferred reload that was postponed because play mode was active.
+    /// Call this from EditorApplication after exiting play mode.
+    /// </summary>
+    public static void PerformPendingReload()
+    {
+        if (!ReloadPending) return;
+        ReloadPending = false;
+
+        if (Project.Current == null) return;
+        Runtime.Debug.Log("[ScriptAssemblyManager] Performing deferred assembly reload...");
+        PerformReload(Project.Current);
+    }
+
+    public static IEnumerable<Type> GetAllTypes()
+    {
+        foreach (var assembly in ScriptAssemblyManager.GetAllRelevantAssemblies())
+        {
+            Type[] types;
+            try { types = assembly.GetTypes(); }
+            catch { continue; }
+
+            foreach (var type in types)
             {
-                File.WriteAllText(project.AutoSaveScenePath, echo.WriteToString());
-                Runtime.Debug.Log("[ScriptAssemblyManager] Scene auto-saved for restart.");
+                yield return type;
             }
         }
-        catch (Exception ex)
+    }
+
+    private static void PerformReload(Project project)
+    {
+        Runtime.Debug.Log("[ScriptAssemblyManager] Beginning assembly reload...");
+
+        // 1. Notify listeners to release references to user types
+        OnBeforeAssemblyReload?.Invoke();
+
+        // 2. Serialize scene state in-memory
+        EchoObject? savedScene = null;
+        var scene = Scene.Current;
+        if (scene != null)
         {
-            Runtime.Debug.LogWarning($"[ScriptAssemblyManager] Failed to auto-save scene: {ex.Message}");
+            try
+            {
+                var savedId = scene.AssetID;
+                scene.AssetID = Guid.Empty;
+                savedScene = Serializer.Serialize(scene);
+                scene.AssetID = savedId;
+            }
+            catch (Exception ex)
+            {
+                Runtime.Debug.LogWarning($"[ScriptAssemblyManager] Failed to serialize scene for reload: {ex.Message}");
+            }
         }
+
+        // Remember the scene path so EnsureSceneLoaded doesn't create a new default scene
+        string? scenePath = EditorSceneManager.CurrentScenePath;
+
+        // 3. Clear selection (references will be invalid after type swap)
+        Selection.Clear();
+
+        // 4. Unload the scene to release all component/MonoBehaviour instances
+        Scene.Unload();
+
+        // 5. Unload old assemblies (tears down the collectible ALC)
+        UnloadAssemblies();
+
+        // 6. Load new assemblies into a fresh ALC
+        LoadAssemblies(project);
+
+        // 7. Re-initialize all registries (they'll scan GetAllRelevantAssemblies())
+        EditorApplication.Instance?.ReinitializeRegistriesForReload();
+
+        // 8. Restore scene state
+        if (savedScene != null)
+        {
+            try
+            {
+                var ctx = ImportHelper.CreateTrackingContext(out _);
+                var restoredScene = Serializer.Deserialize<Scene>(savedScene, ctx);
+                if (restoredScene != null)
+                {
+                    Scene.Load(restoredScene);
+                    EditorSceneManager.CurrentScenePath = scenePath;
+                    Runtime.Debug.Log("[ScriptAssemblyManager] Scene restored after reload.");
+                }
+            }
+            catch (Exception ex)
+            {
+                Runtime.Debug.LogError($"[ScriptAssemblyManager] Failed to restore scene after reload: {ex.Message}");
+                EditorSceneManager.EnsureSceneLoaded();
+            }
+        }
+
+        Undo.Clear();
+
+        // 9. Notify listeners that reload is complete
+        OnAfterAssemblyReload?.Invoke();
+
+        Runtime.Debug.Log("[ScriptAssemblyManager] Assembly reload complete.");
     }
 }

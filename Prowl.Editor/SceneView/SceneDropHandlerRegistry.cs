@@ -6,6 +6,7 @@ using System.Collections.Generic;
 using System.Reflection;
 
 using Prowl.Editor.Panels;
+using Prowl.Editor.Scripting;
 using Prowl.Runtime;
 using Prowl.Runtime.Resources;
 using Prowl.Vector;
@@ -72,7 +73,7 @@ public static class SceneDropHandlerRegistry
 
         _handlers.Clear();
 
-        foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
+        foreach (var assembly in ScriptAssemblyManager.GetAllRelevantAssemblies())
         {
             Type[] types;
             try { types = assembly.GetTypes(); }

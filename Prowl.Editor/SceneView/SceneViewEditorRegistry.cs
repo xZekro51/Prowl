@@ -6,6 +6,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 
+using Prowl.Editor.Scripting;
 using Prowl.Runtime;
 
 namespace Prowl.Editor;
@@ -44,36 +45,37 @@ public static class SceneViewEditorRegistry
     /// <summary>The GameObject the active editor is targeting.</summary>
     public static GameObject? ActiveTarget { get; private set; }
 
+    public static void Reinitialize()
+    {
+        Deactivate();
+        _editorCache.Clear();
+        _initialized = false;
+        Initialize();
+    }
+
     public static void Initialize()
     {
         if (_initialized) return;
         _initialized = true;
         _entries = [];
 
-        foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
+        foreach (var type in ScriptAssemblyManager.GetAllTypes())
         {
-            try
+            if (!typeof(ISceneViewEditor).IsAssignableFrom(type) || type.IsInterface || type.IsAbstract)
+                continue;
+
+            var attr = type.GetCustomAttribute<SceneViewEditorForAttribute>();
+            if (attr == null) continue;
+
+            var instance = (ISceneViewEditor)Activator.CreateInstance(type)!;
+            _editorCache[type] = instance;
+
+            _entries.Add(new Entry
             {
-                foreach (var type in assembly.GetTypes())
-                {
-                    if (!typeof(ISceneViewEditor).IsAssignableFrom(type) || type.IsInterface || type.IsAbstract)
-                        continue;
-
-                    var attr = type.GetCustomAttribute<SceneViewEditorForAttribute>();
-                    if (attr == null) continue;
-
-                    var instance = (ISceneViewEditor)Activator.CreateInstance(type)!;
-                    _editorCache[type] = instance;
-
-                    _entries.Add(new Entry
-                    {
-                        ComponentType = attr.ComponentType,
-                        EditorType = type,
-                        Priority = instance.Priority,
-                    });
-                }
-            }
-            catch { /* skip assemblies that can't be reflected */ }
+                ComponentType = attr.ComponentType,
+                EditorType = type,
+                Priority = instance.Priority,
+            });
         }
 
         _entries.Sort((a, b) => a.Priority.CompareTo(b.Priority));

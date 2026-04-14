@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 
+using Prowl.Editor.Scripting;
 using Prowl.PaperUI;
 
 namespace Prowl.Editor.Inspector;
@@ -54,19 +55,14 @@ public static class PropertyEditorRegistry
         _typeToEditor.Clear();
         _editorCache.Clear();
 
-        foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
+        foreach (var type in ScriptAssemblyManager.GetAllTypes())
         {
-            Type[] types;
-            try { types = assembly.GetTypes(); }
-            catch { continue; }
+            if (!typeof(PropertyEditor).IsAssignableFrom(type) || type.IsAbstract) continue;
 
-            foreach (var type in types)
-            {
-                if (!typeof(PropertyEditor).IsAssignableFrom(type) || type.IsAbstract) continue;
-                var attr = type.GetCustomAttribute<CustomPropertyEditorAttribute>();
-                if (attr == null) continue;
-                _typeToEditor[attr.TargetType] = type;
-            }
+            var attr = type.GetCustomAttribute<CustomPropertyEditorAttribute>();
+            if (attr == null) continue;
+
+            _typeToEditor[attr.TargetType] = type;
         }
 
         Runtime.Debug.Log($"PropertyEditorRegistry: {_typeToEditor.Count} custom editors registered.");
