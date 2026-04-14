@@ -79,6 +79,9 @@ public class EditorApplication : Game
                 // Load user script assemblies before registry scanning
                 Scripting.ScriptAssemblyManager.LoadAssemblies(project);
 
+                // Initialize hotload pipeline for this project
+                Scripting.HotloadPipeline.Initialize(project);
+
                 projectAlreadyInitialized = true;
                 Window.InternalWindow.Title = $"Prowl Editor - {project.Name}";
             }
@@ -284,6 +287,9 @@ public class EditorApplication : Game
                 Scripting.ScriptAssemblyManager.LoadAssemblies(Project.Current);
                 ReinitializeRegistries();
 
+                // Initialize hotload pipeline for this project
+                Scripting.HotloadPipeline.Initialize(Project.Current);
+
                 // Load project settings
                 ProjectSettingsRegistry.OnProjectOpened();
 
@@ -305,8 +311,11 @@ public class EditorApplication : Game
         {
             EditorAssetDatabase.Instance?.ProcessFileChanges();
 
-            // Check for script recompilation
+            // Check for script recompilation (legacy path)
             Scripting.ScriptAssemblyManager.Update();
+
+            // Hotload pipeline — detects script changes, classifies, compiles, and reloads
+            Scripting.HotloadPipeline.Update();
 
             // Lazy thumbnail generation — one per frame
             ThumbnailGenerator.ProcessOne();
@@ -871,6 +880,9 @@ public class EditorApplication : Game
         MenuRegistry.RegisterSeparator("Edit");
         MenuRegistry.Register("Edit/Project Settings...", () => OpenPanel(typeof(Panels.ProjectSettingsPanel)));
         MenuRegistry.Register("Edit/Save Layout", () => SaveProjectState());
+        MenuRegistry.RegisterSeparator("Edit");
+        MenuRegistry.Register("Edit/Force Hotload", () => Scripting.HotloadPipeline.ForceFullHotload(),
+            isEnabled: () => Project.Current != null && !Scripting.HotloadPipeline.IsHotloading && !Application.IsPlaying);
         MenuRegistry.RegisterSeparator("Edit");
         MenuRegistry.Register("Edit/Preferences...", () => OpenPanel(typeof(Panels.PreferencesPanel)));
 

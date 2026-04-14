@@ -108,9 +108,20 @@ public sealed class RenderTexture : EngineObject, ISerializable
         for (int i = 0; i < numTextures; i++)
             textureFormats[i] = (TextureImageFormat)textureFormatsTag[i].ByteValue;
 
-        Type[] param = new[] { typeof(int), typeof(int), typeof(int), typeof(bool), typeof(TextureImageFormat[]) };
-        object[] values = new object[] { Width, Height, numTextures, hasDepthAttachment, textureFormats };
+        Type[] param = new[] {
+            typeof(int),
+            typeof(int),
+            //typeof(int),
+            typeof(bool),
+            typeof(TextureImageFormat[]) };
+        object[] values = new object[] {
+            Width,
+            Height,
+            //numTextures,
+            hasDepthAttachment,
+            textureFormats };
         typeof(RenderTexture).GetConstructor(param).Invoke(this, values);
+        
     }
 
     #region Pool

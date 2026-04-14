@@ -14,15 +14,36 @@ namespace Prowl.Editor.Scripting;
 /// A collectible AssemblyLoadContext for user script assemblies.
 /// Resolves dependencies against the default context first (Prowl.Runtime, etc.),
 /// falling back to the script assembly directory.
+/// Supports cooperative unloading via the <see cref="UnloadGracefully"/> method
+/// and tracks live object references for hotload diagnostics.
 /// </summary>
 public class ScriptAssemblyLoadContext : AssemblyLoadContext
 {
     private readonly string _assemblyDir;
+    private readonly List<WeakReference> _trackedObjects = [];
+
+    /// <summary>True once <see cref="UnloadGracefully"/> or <see cref="Unload"/> has been called.</summary>
+    public bool IsUnloading { get; private set; }
+
+    /// <summary>Number of tracked objects still alive.</summary>
+    public int LiveObjectCount
+    {
+        get
+        {
+            int count = 0;
+            foreach (var wr in _trackedObjects)
+            {
+                if (wr.IsAlive) count++;
+            }
+            return count;
+        }
+    }
 
     public ScriptAssemblyLoadContext(string assemblyDir)
         : base("ProwlScripts", isCollectible: true)
     {
         _assemblyDir = assemblyDir;
+        Unloading += OnUnloading;
     }
 
     protected override Assembly? Load(AssemblyName assemblyName)
@@ -42,5 +63,58 @@ public class ScriptAssemblyLoadContext : AssemblyLoadContext
         return null;
     }
 
+    /// <summary>
+    /// Track a live object created from this ALC for diagnostics.
+    /// Used by the migration engine to verify all references are released.
+    /// </summary>
+    public void TrackObject(object obj)
+    {
+        _trackedObjects.Add(new WeakReference(obj));
+    }
 
+    /// <summary>
+    /// Perform a cooperative unload: fires the <see cref="AssemblyLoadContext.Unloading"/> event
+    /// to notify subscribers, then triggers the actual unload.
+    /// </summary>
+    public void UnloadGracefully()
+    {
+        if (IsUnloading) return;
+        IsUnloading = true;
+
+        // Prune dead references before reporting
+        _trackedObjects.RemoveAll(wr => !wr.IsAlive);
+
+        int liveCount = LiveObjectCount;
+        if (liveCount > 0)
+        {
+            HotloadLogger.LogDetail($"ALC has {liveCount} tracked live object(s) before unload.");
+        }
+
+        Unload();
+    }
+
+    /// <summary>
+    /// Get diagnostic info about objects still referenced from this context.
+    /// </summary>
+    public string GetDiagnostics()
+    {
+        _trackedObjects.RemoveAll(wr => !wr.IsAlive);
+
+        var sb = new StringBuilder();
+        sb.AppendLine($"ScriptAssemblyLoadContext '{Name}': {_trackedObjects.Count} tracked reference(s)");
+
+        foreach (var wr in _trackedObjects)
+        {
+            if (wr.Target is object obj)
+                sb.AppendLine($"  - {obj.GetType().FullName}");
+        }
+
+        return sb.ToString();
+    }
+
+    private void OnUnloading(AssemblyLoadContext context)
+    {
+        IsUnloading = true;
+        HotloadLogger.LogTrace($"ALC '{Name}' is unloading...");
+    }
 }

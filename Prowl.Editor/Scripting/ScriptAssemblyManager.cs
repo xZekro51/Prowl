@@ -42,7 +42,7 @@ public static class ScriptAssemblyManager
     /// <summary>
     /// True when a reload has been deferred because play mode was active.
     /// </summary>
-    public static bool ReloadPending { get; private set; }
+    public static bool ReloadPending { get; set; }
 
     private static bool _recompileRequested;
     private static DateTime _lastScriptChange;
@@ -259,73 +259,13 @@ public static class ScriptAssemblyManager
 
     private static void PerformReload(Project project)
     {
-        Runtime.Debug.Log("[ScriptAssemblyManager] Beginning assembly reload...");
-
-        // 1. Notify listeners to release references to user types
-        OnBeforeAssemblyReload?.Invoke();
-
-        // 2. Serialize scene state in-memory
-        EchoObject? savedScene = null;
-        var scene = Scene.Current;
-        if (scene != null)
-        {
-            try
-            {
-                var savedId = scene.AssetID;
-                scene.AssetID = Guid.Empty;
-                savedScene = Serializer.Serialize(scene);
-                scene.AssetID = savedId;
-            }
-            catch (Exception ex)
-            {
-                Runtime.Debug.LogWarning($"[ScriptAssemblyManager] Failed to serialize scene for reload: {ex.Message}");
-            }
-        }
-
-        // Remember the scene path so EnsureSceneLoaded doesn't create a new default scene
-        string? scenePath = EditorSceneManager.CurrentScenePath;
-
-        // 3. Clear selection (references will be invalid after type swap)
-        Selection.Clear();
-
-        // 4. Unload the scene to release all component/MonoBehaviour instances
-        Scene.Unload();
-
-        // 5. Unload old assemblies (tears down the collectible ALC)
-        UnloadAssemblies();
-
-        // 6. Load new assemblies into a fresh ALC
-        LoadAssemblies(project);
-
-        // 7. Re-initialize all registries (they'll scan GetAllRelevantAssemblies())
-        EditorApplication.Instance?.ReinitializeRegistriesForReload();
-
-        // 8. Restore scene state
-        if (savedScene != null)
-        {
-            try
-            {
-                var ctx = ImportHelper.CreateTrackingContext(out _);
-                var restoredScene = Serializer.Deserialize<Scene>(savedScene, ctx);
-                if (restoredScene != null)
-                {
-                    Scene.Load(restoredScene);
-                    EditorSceneManager.CurrentScenePath = scenePath;
-                    Runtime.Debug.Log("[ScriptAssemblyManager] Scene restored after reload.");
-                }
-            }
-            catch (Exception ex)
-            {
-                Runtime.Debug.LogError($"[ScriptAssemblyManager] Failed to restore scene after reload: {ex.Message}");
-                EditorSceneManager.EnsureSceneLoaded();
-            }
-        }
-
-        Undo.Clear();
-
-        // 9. Notify listeners that reload is complete
-        OnAfterAssemblyReload?.Invoke();
-
-        Runtime.Debug.Log("[ScriptAssemblyManager] Assembly reload complete.");
+        // Delegate to HotloadPipeline for enhanced reload with migration support
+        HotloadPipeline.ForceFullHotload();
     }
+
+    /// <summary>Invoke OnBeforeAssemblyReload event (used by HotloadPipeline).</summary>
+    internal static void InvokeBeforeReload() => OnBeforeAssemblyReload?.Invoke();
+
+    /// <summary>Invoke OnAfterAssemblyReload event (used by HotloadPipeline).</summary>
+    internal static void InvokeAfterReload() => OnAfterAssemblyReload?.Invoke();
 }
