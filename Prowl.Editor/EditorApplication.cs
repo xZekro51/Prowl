@@ -127,6 +127,9 @@ public class EditorApplication : Game
             ProjectLauncher.Initialize();
         }
 
+        // Initialize status bar (after project loaded so it can show project-specific messages)
+        StatusBar.Initialize();
+
         // Set Windows title bar to match Darkest theme color
         ApplyDarkTitleBar();
     }
@@ -353,8 +356,10 @@ public class EditorApplication : Game
 
         float pad = EditorTheme.DockPadding;
         float dockY = EditorTheme.MenuBarHeight + pad;
-        float dockH = h - dockY - pad;
+        float dockH = h - dockY - pad - EditorTheme.StatusBarHeight;
         _dockSpace.Draw(paper, pad, dockY, w - pad * 2, dockH);
+
+        StatusBar.Draw(paper);
     }
 
     private void DrawTitleFlap(Paper paper, int w, int h)
