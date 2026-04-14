@@ -133,7 +133,7 @@ public class HierarchyPanel : DockPanel
                 paper.Box("hier_scene_name_text")
                     .Margin(8, 0)
                     .Height(EditorTheme.RowHeight)
-                    .Text($"{EditorIcons.Film}  {scene.Name}", font)
+                    .Text($"{EditorIcons.Cubes}  {scene.Name}", font)
                     .TextColor(EditorTheme.Ink500)
                     .FontSize(EditorTheme.FontSize - 1)
                     .Alignment(TextAlignment.MiddleLeft);
@@ -398,12 +398,13 @@ public class HierarchyPanel : DockPanel
 
         using (paper
             .Row($"hier_go_{goId}")
+            .RowBetween(6)
             .Height(EditorTheme.RowHeight)
             .BackgroundColor(isSelected ? EditorTheme.Purple400
                 : isDropInto ? Color.FromArgb(60, EditorTheme.Purple400) : Color.Transparent)
             .Hovered.BackgroundColor(isSelected ? EditorTheme.Purple400 : EditorTheme.Ink200).End()
             .Rounded(4)
-            .Margin(indent + 8, 0, 0, 0)
+            .Margin(indent + 8, 8, 0, 0)
             .StopEventPropagation()
             .OnClick((go, currentIndex, flatList), (cap, e) =>
             {
@@ -481,7 +482,7 @@ public class HierarchyPanel : DockPanel
                 .Width(16).Height(EditorTheme.RowHeight)
                 .Text(icon, font)
                 .TextColor(go.EnabledInHierarchy ? EditorTheme.Ink400 : EditorTheme.Ink300)
-                .FontSize(11f).Alignment(TextAlignment.MiddleCenter);
+                .FontSize(16f).Alignment(TextAlignment.MiddleCenter);
 
             // Name or rename field
             if (RenameOverlay.IsRenaming(goId))
@@ -501,9 +502,10 @@ public class HierarchyPanel : DockPanel
             // Enable/disable toggle (eye icon)
             paper.Box($"hier_vis_{goId}")
                 .Width(18).Height(EditorTheme.RowHeight)
+                .Margin(UnitValue.Auto, 4, UnitValue.Auto, UnitValue.Auto)
                 .Text(go.Enabled ? EditorIcons.Eye : EditorIcons.EyeSlash, font)
                 .TextColor(go.Enabled ? EditorTheme.Ink400 : EditorTheme.Ink300)
-                .FontSize(9f).Alignment(TextAlignment.MiddleCenter)
+                .FontSize(12f).Alignment(TextAlignment.MiddleCenter)
                 .StopEventPropagation()
                 .OnClick(go, (g, _) => { var old = g.Enabled; var id = g.Identifier; Undo.RegisterAction("Toggle Visibility", () => { var r = Undo.FindGO(id); if (r != null) r.Enabled = old; }, () => { var r = Undo.FindGO(id); if (r != null) r.Enabled = !old; }); g.Enabled = !old; });
 
