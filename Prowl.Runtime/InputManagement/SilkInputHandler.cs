@@ -142,14 +142,6 @@ public class InputStateBuffer<TEnum,TInput> where TEnum : struct, Enum where TIn
 
         _stateWriteGlobal.CopyTo(_stateGlobal);
 
-        //for (int i = 0; i < _stateGlobal.Length; i++)
-        //{
-        //    if (_stateGlobal[i])
-        //    {
-        //        //Console.WriteLine("Input " + (TEnum)(object)i + " was pressed this frame.");
-        //    }
-        //}
-
         EnumArray<TEnum, bool>.Swap(ref _downThisFrameGlobal, ref _downThisFrameWriteGlobal);
         EnumArray<TEnum, bool>.Swap(ref _upThisFrameGlobal, ref _upThisFrameWriteGlobal);
         _downThisFrameWriteGlobal.Clear();
@@ -161,7 +153,6 @@ public class InputStateBuffer<TEnum,TInput> where TEnum : struct, Enum where TIn
         int newLenth = _devices.Count;
         if (newLenth != Length)
         {
-            //Console.WriteLine("Device count changed from " + Length + " to " + newLenth + ". Reinitializing input state buffers.");
             Length = newLenth;
             InitializeArrays();
         }
@@ -361,9 +352,6 @@ public class SilkInputHandler : IInputHandler, IDisposable
             OnMouseEvent?.Invoke(button, MousePosition.X, MousePosition.Y, isDown, false);
         }
         _mouseStateBuffer.PendingEvents.Clear();
-        //foreach ((int deviceIndex, GamepadButton button, bool isDown) in _gamepadStateBuffer.PendingEvents)
-        //{
-        //}
     }
     private void UpdateMousePosition()
     {
@@ -430,17 +418,17 @@ public class SilkInputHandler : IInputHandler, IDisposable
             return false;
         return _gamepadStateBuffer.GetUpThisFrame(gamepadIndex, button);
     }
-    public Vector2 GetGamepadAxis(int gamepadIndex, int axisIndex)
+    public Float2 GetGamepadAxis(int gamepadIndex, int axisIndex)
     {
         if (!IsGamepadConnected(gamepadIndex))
-            return Vector2.Zero;
+            return Float2.Zero;
 
         IGamepad gamepad = Context.Gamepads[gamepadIndex];
         if (axisIndex < 0 || axisIndex >= gamepad.Thumbsticks.Count)
-            return Vector2.Zero;
+            return Float2.Zero;
 
         Thumbstick thumbstick = gamepad.Thumbsticks[axisIndex];
-        return new Vector2(thumbstick.X, thumbstick.Y); // We flip y to make UP on the stick positive
+        return new Float2(thumbstick.X, thumbstick.Y); // We flip y to make UP on the stick positive
     }
     public float GetGamepadTrigger(int gamepadIndex, int triggerIndex)
     {

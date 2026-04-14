@@ -19,9 +19,12 @@ public struct EnumArray<TEnum, TValue> where TEnum : struct, Enum
 
     public readonly bool Any(Func<TValue, bool> predicate)
     {
-        foreach (var value in Values)
+        Span<TValue> span = Values.AsSpan();
+
+        for (int i = 0; i < span.Length; i++)
         {
-            if (predicate(value)) return true;
+            if (predicate(span[i]))
+                return true;
         }
         return false;
     }
