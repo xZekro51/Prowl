@@ -254,7 +254,10 @@ public class SilkInputHandler : IInputHandler, IDisposable
     {
         foreach (IKeyboard keyboard in Keyboards)
         {
+            keyboard.KeyDown -= SilkKeyboard_KeyDown;
             keyboard.KeyDown += SilkKeyboard_KeyDown;
+
+            keyboard.KeyUp -= SilkKeyboard_KeyUp;
             keyboard.KeyUp += SilkKeyboard_KeyUp;
         }
     }
@@ -262,23 +265,49 @@ public class SilkInputHandler : IInputHandler, IDisposable
     {
         foreach (IGamepad gamepad in Context.Gamepads)
         {
+            gamepad.ButtonDown -= SilkGamepad_ButtonDown;
             gamepad.ButtonDown += SilkGamepad_ButtonDown;
+
+            gamepad.ButtonUp -= SilkGamepad_ButtonUp;
             gamepad.ButtonUp += SilkGamepad_ButtonUp;
-        }
-        foreach (IJoystick joystick in Context.Joysticks)
-        {
-            joystick.ButtonDown += (joystick, button) =>
-            {
-                //Console.WriteLine("Joystick button down: " + button.Name + " on joystick " + joystick.Index);
-            };
         }
     }
     private void SubscribeSilkMouseEvents()
     {
         foreach (IMouse mouse in Mice)
         {
+            mouse.MouseDown -= SilkMouse_ButtonDown;
             mouse.MouseDown += SilkMouse_ButtonDown;
+
+            mouse.MouseUp -= SilkMouse_ButtonUp;
             mouse.MouseUp += SilkMouse_ButtonUp;
+        }
+    }
+
+
+    private void UnsubscribeSilkKeyboardEvents()
+    {
+        foreach (IKeyboard keyboard in Keyboards)
+        {
+            keyboard.KeyDown -= SilkKeyboard_KeyDown;
+            keyboard.KeyUp -= SilkKeyboard_KeyUp;
+        }
+    }
+
+    private void UnsubscribeSilkGamepadEvents()
+    {
+        foreach (IGamepad gamepad in Context.Gamepads)
+        {
+            gamepad.ButtonDown -= SilkGamepad_ButtonDown;
+            gamepad.ButtonUp -= SilkGamepad_ButtonUp;
+        }
+    }
+    private void UnsubscribeSilkMouseEvents()
+    {
+        foreach (IMouse mouse in Mice)
+        {
+            mouse.MouseDown -= SilkMouse_ButtonDown;
+            mouse.MouseUp -= SilkMouse_ButtonUp;
         }
     }
 
@@ -453,7 +482,9 @@ public class SilkInputHandler : IInputHandler, IDisposable
     // ── IDisposable ────────────────────────────────────────────
     public void Dispose()
     {
-        Context.Dispose();
+        UnsubscribeSilkGamepadEvents();
+        UnsubscribeSilkKeyboardEvents();
+        UnsubscribeSilkMouseEvents();
     }
 
 }
