@@ -28,6 +28,7 @@ public partial class GameEvents
 
     [EventArgs(typeof(GameEventsArgs))]
     private static readonly EventKey _OnBeforeUpdate = new();
+    private static readonly EventKey _OnUpdate = new();
     [EventArgs(typeof(GameEventsArgs))]
     private static readonly EventKey _OnAfterUpdate = new();
 

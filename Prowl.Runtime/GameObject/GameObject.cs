@@ -6,10 +6,14 @@ using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Reflection;
+using System.Runtime.InteropServices;
 
 using Prowl.Echo;
+using Prowl.Runtime.Events;
 using Prowl.Runtime.Resources;
 using Prowl.Vector;
+
+using Vortex;
 
 namespace Prowl.Runtime;
 
@@ -64,7 +68,13 @@ public class GameObject : EngineObject, ISerializable
     public bool Enabled
     {
         get => _enabled;
-        set { if (value != _enabled) { SetEnabled(value); } }
+        set
+        {
+            if (value != _enabled)
+            {
+                SetEnabled(value);
+            }
+        }
     }
 
     /// <summary> Gets whether this gameobject is enabled in the hierarchy, so if its parent is disabled this will return false </summary>
@@ -114,7 +124,17 @@ public class GameObject : EngineObject, ISerializable
     public Scene? Scene
     {
         get => _scene != null && _scene.TryGetTarget(out Scene? scene) ? scene : null;
-        internal set => _scene = new(value);
+        internal set
+        {
+            _scene = new(value);
+            UpdateEventDelegateState(Enabled);
+            ReadOnlySpan<MonoBehaviour> components = CollectionsMarshal.AsSpan(_components);
+            for (int i = 0; i < components.Length; i++)
+            {
+                MonoBehaviour component = components[i];
+                component.UpdateEventDelegateState(Enabled);
+            }
+        }
     }
 
     /// <summary>Is this GameObject a prefab instance?</summary>
@@ -166,6 +186,59 @@ public class GameObject : EngineObject, ISerializable
     }
 
     #endregion
+
+    private Vortex.EventPriority _eventPriority;
+
+    public Vortex.EventPriority EventPriority
+    {
+        get
+        {
+            return _eventPriority;
+        }
+        set
+        {
+            _eventPriority = value;
+            if (Scene.IsValid())
+            {
+                SubscribeSceneEvents(Scene);
+                DisposeSceneEvents();
+            }
+        }
+    }
+
+
+    private EventDelegateContainer<SceneEvents.EventTypes, Unit> PreUpdateDelegate = null;
+
+    private void SubscribeSceneEvents(Scene scene)
+    {
+        if (!scene.IsValid()) return;
+
+        PreUpdateDelegate = Scene.Events.SubscribePreUpdate(PreUpdate, EventPriority);
+    }
+
+    private void DisposeSceneEvents()
+    {
+        PreUpdateDelegate?.Dispose();
+    }
+
+
+    private void UpdateEventDelegateState(bool enable)
+    {
+        if (PreUpdateDelegate == null)
+        {
+            SubscribeSceneEvents(Scene);
+        }
+        if (enable)
+        {
+
+            PreUpdateDelegate.Enable();
+
+        }
+        else
+        {
+            PreUpdateDelegate?.Disable();
+        }
+    }
 
     public Transform Transform
     {
@@ -293,7 +366,7 @@ public class GameObject : EngineObject, ISerializable
     #region Constructors
 
     /// <summary>Creates a new gameobject with the name 'New GameObject'.</summary>
-    public GameObject() : base("New GameObject") { }
+    public GameObject() : this("New GameObject") { }
 
     /// <summary>Creates a new gameobject.</summary>
     /// <param name="name">The name of the gameobject.</param>
@@ -468,8 +541,11 @@ public class GameObject : EngineObject, ISerializable
     /// </summary>
     internal void PreUpdate()
     {
-        foreach (MonoBehaviour component in _components)
+        ReadOnlySpan<MonoBehaviour> components = CollectionsMarshal.AsSpan(_components);
+
+        for (int i = 0; i < components.Length; i++)
         {
+            MonoBehaviour component = components[i];
             if (!component.HasStarted)
                 if (component.EnabledInHierarchy)
                 {
@@ -705,6 +781,11 @@ public class GameObject : EngineObject, ISerializable
     /// <returns>An IEnumerable of components of type T.</returns>
     public IEnumerable<T> GetComponents<T>() where T : MonoBehaviour => GetComponents(typeof(T)).Cast<T>();
 
+    public ReadOnlySpan<T> GetComponentsAsSpan<T>() where T : MonoBehaviour
+    {
+        return CollectionsMarshal.AsSpan(GetComponentsList<T>());
+    }
+
     /// <summary>
     /// Gets all components of the specified type attached to the GameObject.
     /// </summary>
@@ -728,6 +809,56 @@ public class GameObject : EngineObject, ISerializable
                     if (comp.GetType().IsAssignableTo(type))
                         yield return comp;
         }
+    }
+
+    public List<T> GetComponentsList<T>() where T : MonoBehaviour
+    {
+        var results = new List<T>();
+
+        var type = typeof(T);
+
+        if (type == typeof(MonoBehaviour))
+        {
+            // Special case
+            ReadOnlySpan<MonoBehaviour> compsSpan = CollectionsMarshal.AsSpan(_components);
+
+            for (int i = 0; i < compsSpan.Length; i++)
+            {
+                var comp = compsSpan[i];
+                if (comp is T t)
+                    results.Add(t);
+            }
+
+        }
+        else if (_componentCache.TryGetValue(type, out IReadOnlyCollection<MonoBehaviour>? cached))
+        {
+            if (cached is IList<MonoBehaviour> list)
+            {
+
+                for (int i = 0; i < cached.Count; i++)
+                {
+                    // Just iterate with indexer to avoid enumerator allocation, safe cast because cache only contains assignable types
+
+                    if (list[i] is T t)
+                        results.Add(t);
+
+                }
+            }
+
+
+            //foreach (MonoBehaviour comp in cached)
+            //    if (comp is T t)          // safe cast because cache only contains assignable types
+            //        results.Add(t);
+        }
+        else
+        {
+            // fallback filter (only happens on first call per type)
+            foreach (MonoBehaviour comp in _components)
+                if (comp is T t)
+                    results.Add(t);
+        }
+
+        return results;
     }
 
     /// <summary>
@@ -941,6 +1072,8 @@ public class GameObject : EngineObject, ISerializable
     /// </summary>
     public override void OnDispose()
     {
+        DisposeSceneEvents();
+
         for (int i = Children.Count - 1; i >= 0; i--)
             Children[i].Dispose();
 
@@ -975,6 +1108,7 @@ public class GameObject : EngineObject, ISerializable
     {
         _enabled = state;
         HierarchyStateChanged();
+        UpdateEventDelegateState(state);
     }
 
     /// <summary>

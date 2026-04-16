@@ -3,6 +3,7 @@
 
 using System.Collections.Generic;
 
+using Prowl.Runtime.Events;
 using Prowl.Runtime.Rendering;
 using Prowl.Runtime.Resources;
 using Prowl.Vector;
@@ -28,7 +29,7 @@ public class MeshRenderer : MonoBehaviour
         set { if (Materials.Count == 0) Materials.Add(value); else Materials[0] = value; }
     }
 
-    public override void OnRenderCollect(Camera camera, List<IRenderable> renderables, List<IRenderableLight> lights)
+    public override void OnRenderCollect(SceneEvents.OnRenderCollectArgs onRenderCollectArgs)
     {
         var mesh = Mesh.Res;
         if (mesh == null || Materials.Count == 0) return;
@@ -47,7 +48,7 @@ public class MeshRenderer : MonoBehaviour
             PropertyState props = new();
             props.SetInt("_ObjectID", InstanceID);
 
-            renderables.Add(new MeshRenderable(
+            onRenderCollectArgs.renderables.Add(new MeshRenderable(
                 mesh, mat, Transform.LocalToWorldMatrix,
                 GameObject.LayerIndex, props, subMeshIndex: subCount > 1 ? s : -1));
         }

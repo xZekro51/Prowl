@@ -5,6 +5,7 @@ using System;
 using System.Collections.Generic;
 
 using Prowl.Echo;
+using Prowl.Runtime.Events;
 using Prowl.Runtime.Rendering;
 using Prowl.Runtime.Resources;
 using Prowl.Vector;
@@ -132,7 +133,7 @@ public class TerrainComponent : MonoBehaviour
     public Float3 WorldToTerrain(Float3 worldPoint) =>
         Float4x4.TransformPoint(worldPoint, Transform.WorldToLocalMatrix);
 
-    public override void OnRenderCollect(Camera camera, List<IRenderable> renderables, List<IRenderableLight> lights)
+    public override void OnRenderCollect(SceneEvents.OnRenderCollectArgs onRenderCollectArgs)
     {
         var terrainData = Data.Res;
         if (terrainData == null) return;
@@ -142,7 +143,7 @@ public class TerrainComponent : MonoBehaviour
         Float4x4 worldToTerrain = Transform.WorldToLocalMatrix;
 
         // Camera position in terrain-local space for LOD
-        Float3 camLocal = WorldToTerrain(camera.Transform.Position);
+        Float3 camLocal = WorldToTerrain(onRenderCollectArgs.camera.Transform.Position);
         camLocal.Y = 0;
 
         if (_quadtree == null || MathF.Abs(_quadtree.ChunkSize - terrainSize) > 0.01f)
@@ -199,7 +200,7 @@ public class TerrainComponent : MonoBehaviour
         var bounds = TransformAABB(localMin, localMax, terrainToWorld);
 
         InstancedMeshRenderable.CreateBatched(
-            renderables, _baseMesh, mat, _transforms,
+            onRenderCollectArgs.renderables, _baseMesh, mat, _transforms,
             (bounds.Min + bounds.Max) * 0.5f,
             layer: GameObject.LayerIndex,
             properties: _properties, bounds: bounds);
@@ -218,11 +219,11 @@ public class TerrainComponent : MonoBehaviour
             var htex = terrainData.GetHeightmapTexture();
             if (htex != null) grassMat.SetTexture("_Heightmap", htex);
 
-            _grassRenderer?.CollectRenderables(terrainData, this, camera, grassMat, GrassDistance, GrassDensityMultiplier, renderables);
+            _grassRenderer?.CollectRenderables(terrainData, this, onRenderCollectArgs.camera, grassMat, GrassDistance, GrassDensityMultiplier, onRenderCollectArgs.renderables);
         }
 
         // Trees
-        _treeRenderer?.CollectRenderables(terrainData, this, camera, TreeDistance, renderables);
+        _treeRenderer?.CollectRenderables(terrainData, this, onRenderCollectArgs.camera, TreeDistance, onRenderCollectArgs.renderables);
     }
 
     public override void DrawGizmos()

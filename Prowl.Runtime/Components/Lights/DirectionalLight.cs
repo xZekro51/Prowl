@@ -3,6 +3,7 @@
 
 using System.Collections.Generic;
 
+using Prowl.Runtime.Events;
 using Prowl.Runtime.Rendering;
 using Prowl.Vector;
 using Prowl.Vector.Geometry;
@@ -37,9 +38,9 @@ public class DirectionalLight : Light
     private Float4[] _cascadeAtlasParams = new Float4[4]; // xy = atlas pos, z = atlas size, w = split distance
     private int _activeCascades = 0;
 
-    public override void OnRenderCollect(Camera camera, List<IRenderable> renderables, List<IRenderableLight> lights)
+    public override void OnRenderCollect(SceneEvents.OnRenderCollectArgs onRenderCollectArgs)
     {
-        lights.Add(this);
+        onRenderCollectArgs.lights.Add(this);
     }
 
     public override void DrawGizmos()
