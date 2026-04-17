@@ -1073,12 +1073,21 @@ public class GameObject : EngineObject, ISerializable
         });
     }
 
+    private EventDelegateContainer<SceneEvents.EventTypes, Unit> _disposerDelegate;
+
     /// <summary>
     /// Disposes of the GameObject and its components.
     /// </summary>
     public override void OnDispose()
     {
         DisposeSceneEvents();
+
+
+        _disposerDelegate = Scene?.Events.SubscribeOnFlush(() =>
+        {
+            Scene?.Flush(this);
+            _disposerDelegate?.Dispose();
+        }, EventPriority);
 
         for (int i = Children.Count - 1; i >= 0; i--)
             Children[i].Dispose();
