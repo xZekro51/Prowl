@@ -27,6 +27,8 @@ public abstract class EngineObject : IDisposable
 
     [HideInInspector] public string Name;
 
+
+
     public bool IsDisposed { get; private set; }
 
     public EngineObject() : this(null) { }

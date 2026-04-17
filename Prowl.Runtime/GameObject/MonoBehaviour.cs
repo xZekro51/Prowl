@@ -7,9 +7,12 @@ using System.Diagnostics.CodeAnalysis;
 
 using Prowl.Echo;
 using Prowl.PaperUI;
+using Prowl.Runtime.Events;
 using Prowl.Runtime.Rendering;
 using Prowl.Runtime.Resources;
 using Prowl.Vector;
+
+using Vortex;
 
 namespace Prowl.Runtime;
 
@@ -89,6 +92,34 @@ public abstract class MonoBehaviour : EngineObject, ISerializationCallbackReceiv
     /// </summary>
     public string Tag => _go.Tag;
 
+    private Vortex.EventPriority _eventPriority;
+
+    public Vortex.EventPriority EventPriority
+    {
+        get
+        {
+            return _eventPriority;
+        }
+        set
+        {
+            _eventPriority = value;
+            if (_eventsInitialized && Scene.IsValid())
+            {
+                SubscribeSceneEvents(Scene);
+                DisposeSceneEvents();
+            }
+        }
+    }
+
+    private EventDelegateContainer<SceneEvents.EventTypes, Unit> UpdateDelegate = null;
+    private EventDelegateContainer<SceneEvents.EventTypes, Unit> LateUpdateDelegate = null;
+    private EventDelegateContainer<SceneEvents.EventTypes, Unit> FixedUpdateDelegate = null;
+    private EventDelegateContainer<SceneEvents.EventTypes, SceneEvents.OnRenderCollectArgs> OnRenderCollectDelegate = null;
+    private EventDelegateContainer<SceneEvents.EventTypes, Paper> OnGuiDelegate = null;
+    private EventDelegateContainer<SceneEvents.EventTypes, Unit> DrawGizmosDelegate = null;
+
+    private bool _eventsInitialized = false;
+
     /// <summary>
     /// Gets or sets whether the MonoBehaviour is enabled.
     /// </summary>
@@ -101,7 +132,69 @@ public abstract class MonoBehaviour : EngineObject, ISerializationCallbackReceiv
             {
                 _enabled = value;
                 HierarchyStateChanged();
+                UpdateEventDelegateState(value);
             }
+        }
+    }
+
+    private void DisposeSceneEvents()
+    {
+        if (_eventsInitialized)
+        {
+            UpdateDelegate.Dispose();
+            LateUpdateDelegate.Dispose();
+            FixedUpdateDelegate.Dispose();
+            OnRenderCollectDelegate.Dispose();
+            OnGuiDelegate.Dispose();
+            DrawGizmosDelegate.Dispose();
+
+            _eventsInitialized = false;
+        }
+    }
+
+    internal void SubscribeSceneEvents(Scene scene)
+    {
+
+        UpdateDelegate = scene.Events.SubscribeUpdate(InternalUpdate, EventPriority);
+        LateUpdateDelegate = scene.Events.SubscribeLateUpdate(InternalLateUpdate, EventPriority);
+        FixedUpdateDelegate = scene.Events.SubscribeFixedUpdate(InternalFixedUpdate, EventPriority);
+        OnRenderCollectDelegate = scene.Events.SubscribeOnRenderCollect(OnRenderCollect, EventPriority);
+        OnGuiDelegate = scene.Events.SubscribeOnGui(OnGui, EventPriority);
+        DrawGizmosDelegate = scene.Events.SubscribeDrawGizmos(DrawGizmos, EventPriority);
+
+        _eventsInitialized = true;
+    }
+
+    internal void UpdateEventDelegateState(bool enable)
+    {
+        if (!_eventsInitialized)
+        {
+            Scene?.ToSubscribe.Add(this);
+            return;
+        }
+
+        if (enable)
+        {
+
+            UpdateDelegate.Enable();
+            LateUpdateDelegate.Enable();
+            FixedUpdateDelegate.Enable();
+            OnRenderCollectDelegate.Enable();
+            OnGuiDelegate.Enable();
+            DrawGizmosDelegate.Enable();
+
+
+        }
+        else
+        {
+
+            UpdateDelegate.Disable();
+            LateUpdateDelegate.Disable();
+            FixedUpdateDelegate.Disable();
+            OnRenderCollectDelegate.Disable();
+            OnGuiDelegate.Disable();
+            DrawGizmosDelegate.Disable();
+
         }
     }
 
@@ -312,7 +405,7 @@ public abstract class MonoBehaviour : EngineObject, ISerializationCallbackReceiv
     /// Components add their renderables/lights to the provided lists.
     /// Camera is provided for LOD and distance-based decisions.
     /// </summary>
-    public virtual void OnRenderCollect(Camera camera, List<IRenderable> renderables, List<IRenderableLight> lights) { }
+    public virtual void OnRenderCollect(SceneEvents.OnRenderCollectArgs onRenderCollectArgs) { }
 
     /// <summary>
     /// Called for rendering and handling GUI gizmos.
@@ -384,6 +477,8 @@ public abstract class MonoBehaviour : EngineObject, ISerializationCallbackReceiv
     /// </summary>
     public override void OnDispose()
     {
+        DisposeSceneEvents();
+
         if (GameObject.IsValid())
             GameObject.RemoveComponent(this);
     }

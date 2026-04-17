@@ -41,8 +41,8 @@ public class EditorApplication : Game
         Window.InitWindow(title, width, height, instance.WindowMaximized ? Silk.NET.Windowing.WindowState.Maximized : Silk.NET.Windowing.WindowState.Normal, false);
 
         Window.Position = new Silk.NET.Maths.Vector2D<int>(
-            instance.WindowX > -1 ? instance.WindowX : Window.Position.X,
-            instance.WindowY > -1 ? instance.WindowY : Window.Position.Y);
+            instance.WindowX > 0 ? instance.WindowX : Window.Position.X,
+            instance.WindowY > 0 ? instance.WindowY : Window.Position.Y);
     }
 
     public override void Initialize()
@@ -94,7 +94,7 @@ public class EditorApplication : Game
         // Initialize editor registries (now sees user types if assemblies loaded above)
         InitializeOnLoadRegistry.Initialize();
         Inspector.PropertyEditorRegistry.Initialize();
-        Inspector.ComponentEditorRegistry.Initialize();
+        Inspector.CustomEditorRegistry.Initialize();
         Inspector.AssetImporterEditorRegistry.Initialize();
         ProjectSettingsRegistry.Initialize();
         CreateAssetMenuRegistry.Initialize();
@@ -102,6 +102,12 @@ public class EditorApplication : Game
         SceneDropHandlerRegistry.Initialize();
         CreateGameObjectMenuRegistry.Initialize();
         EditorCallbacks.Initialize();
+
+        // Cursor lock toasts
+        Input.OnCursorLocked += () =>
+            Widgets.Toasts.Show("Cursor Locked", "Press Escape to release.", Widgets.ToastType.Info, 3f);
+        Input.OnCursorLockFailed += () =>
+            Widgets.Toasts.Show("Cursor Lock Failed", "No valid game view is available.", Widgets.ToastType.Warning, 3f);
 
         // Menus depend on registries above, so register after initialization
         ScanAndRegisterPanels();
@@ -263,8 +269,8 @@ public class EditorApplication : Game
         // Reset per-frame state
         GameViewInputHandler.IsGameViewFocused = false;
 
-        int w = Window.InternalWindow.Size.X;
-        int h = Window.InternalWindow.Size.Y;
+        float w = paper.ScreenRect.Size.X;
+        float h = paper.ScreenRect.Size.Y;
 
         _time += Time.UnscaledDeltaTime;
         Selection.UpdatePing((float)Time.UnscaledDeltaTime);
@@ -412,7 +418,7 @@ public class EditorApplication : Game
         StatusBar.Draw(paper);
     }
 
-    private void DrawTitleFlap(Paper paper, int w, int h)
+    private void DrawTitleFlap(Paper paper, float w, float h)
     {
         var font = EditorTheme.DefaultFont;
         if (font == null) return;
@@ -612,7 +618,6 @@ public class EditorApplication : Game
         Widgets.Toasts.Draw(paper, Time.UnscaledDeltaTime);
         Widgets.Tooltip.Draw(paper);
 
-
         // Intro animation overlay
         if (_introTime < IntroDuration)
         {
@@ -626,10 +631,40 @@ public class EditorApplication : Game
 
     private const int BarCount = 10;
 
+    public static Stream? GetEmbeddedResource(string resource)
+    {
+        var assembly = Assembly.GetExecutingAssembly();
+
+        var resourceName = "Prowl.Editor.Resources." + resource;
+
+        var stream = assembly.GetManifestResourceStream(resourceName);
+        return stream;
+    }
+
+    public static FileStream? GetResource(string resource)
+    {
+        var assembly = Assembly.GetExecutingAssembly();
+
+        var resourceName = resource;
+
+        var pathToFile = Path.GetDirectoryName(AppDomain.CurrentDomain.BaseDirectory) +
+                          resourceName;
+
+        using (var stream = assembly.GetManifestResourceStream(resourceName))
+        {
+            using (var fileStream = File.Create(pathToFile))
+            {
+                stream.Seek(0, SeekOrigin.Begin);
+                stream.CopyTo(fileStream);
+            }
+        }
+        return File.OpenRead(pathToFile);
+    }
+
     private void DrawIntro(Paper paper)
     {
-        int w = Window.InternalWindow.Size.X;
-        int h = Window.InternalWindow.Size.Y;
+        float w = paper.ScreenRect.Size.X;
+        float h = paper.ScreenRect.Size.Y;
 
         paper.Box("intro_overlay")
             .PositionType(PositionType.SelfDirected).Position(0, 0).Size(w, h)
@@ -866,7 +901,7 @@ public class EditorApplication : Game
         MenuRegistry.RegisterSeparator("File");
         MenuRegistry.Register("File/Open Project...", () => ReturnToLauncher());
         MenuRegistry.RegisterSeparator("File");
-        MenuRegistry.Register("File/Build Settings...", () => OpenPanel(typeof(Panels.ProjectSettingsPanel)));
+        MenuRegistry.Register("File/Build Project...", () => OpenPanel(typeof(Panels.BuildSettingsPanel)));
         MenuRegistry.RegisterSeparator("File");
         MenuRegistry.Register("File/Exit", () => Game.Quit());
 
@@ -920,7 +955,7 @@ public class EditorApplication : Game
         ScanAndRegisterPanels();
         InitializeOnLoadRegistry.Reinitialize();
         Inspector.PropertyEditorRegistry.Reinitialize();
-        Inspector.ComponentEditorRegistry.Reinitialize();
+        Inspector.CustomEditorRegistry.Reinitialize();
         Inspector.AssetImporterEditorRegistry.Reinitialize();
         Inspector.AddComponentPopup.Reinitialize();
         Importers.ImporterRegistry.Reinitialize();

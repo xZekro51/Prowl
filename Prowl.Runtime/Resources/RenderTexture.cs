@@ -113,13 +113,15 @@ public sealed class RenderTexture : EngineObject, ISerializable
             typeof(int),
             //typeof(int),
             typeof(bool),
-            typeof(TextureImageFormat[]) };
+            typeof(TextureImageFormat[])
+        };
         object[] values = new object[] {
             Width,
             Height,
             //numTextures,
             hasDepthAttachment,
-            textureFormats };
+            textureFormats
+        };
         typeof(RenderTexture).GetConstructor(param).Invoke(this, values);
         
     }

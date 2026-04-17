@@ -43,7 +43,7 @@ public static class StatusBar
     {
         var info = new StatusInfo
         {
-            Message = message
+            Message = message.Contains('\n') ? message.Split('\n')[0] : message
         };
 
         switch (severity)
@@ -76,7 +76,7 @@ public static class StatusBar
 
         using (paper.Row("statusbar")
             .PositionType(PositionType.SelfDirected)
-            .Position(0, Window.InternalWindow.Size.Y - EditorTheme.StatusBarHeight)
+            .Position(0, paper.ScreenRect.Size.Y - EditorTheme.StatusBarHeight)
             .Size(paper.Percent(100), EditorTheme.StatusBarHeight)
             .BackgroundColor(EditorTheme.Neutral200)
             .ChildLeft(10)

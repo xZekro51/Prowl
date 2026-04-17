@@ -154,9 +154,10 @@ public class TripleCycler : MonoBehaviour
 public sealed class StressTestGame : Game
 {
     // --- Tunables ---
-    // Total GameObjects = ObjectCount. Each gets 3-4 components.
-    // With 5000 objects × ~3.5 components = ~17,500 lifecycle calls per frame.
-    private const int ObjectCount = 5000;
+    // Total GameObjects spawned.
+    private const int ObjectCount = 10000;
+    // Average MonoBehaviours per GameObject (0.5 = half the objects get one component).
+    private const float ComponentsPerObject = 0.5f;
 
     private GameObject? _cameraGO;
     private Scene? _scene;
@@ -212,8 +213,29 @@ public sealed class StressTestGame : Game
         _scene.Add(refCube);
 
         // --- Spawn thousands of invisible GameObjects with lifecycle components ---
+        // We distribute a total component budget across all objects.
+        // Component types are picked round-robin from 4 types, each weighted equally.
         Random rng = new(42);
+        int totalBudget = (int)(ObjectCount * ComponentsPerObject);
         int componentCount = 0;
+
+        // Pre-decide which objects receive components.
+        // Spread the budget evenly: first 'totalBudget' objects (shuffled) get one component each.
+        int[] indices = new int[ObjectCount];
+        for (int i = 0; i < ObjectCount; i++) indices[i] = i;
+        // Fisher-Yates shuffle
+        for (int i = ObjectCount - 1; i > 0; i--)
+        {
+            int j = rng.Next(i + 1);
+            (indices[i], indices[j]) = (indices[j], indices[i]);
+        }
+        HashSet<int> objectsWithComponent = new(indices.AsSpan(0, Math.Min(totalBudget, ObjectCount)).ToArray());
+
+        // If budget exceeds object count, some objects need multiple components.
+        // Track how many extra components remain after assigning one each.
+        int extras = Math.Max(0, totalBudget - ObjectCount);
+
+        int typeSlot = 0; // round-robin across 4 component types
 
         for (int i = 0; i < ObjectCount; i++)
         {
@@ -226,39 +248,49 @@ public sealed class StressTestGame : Game
                 (rng.NextSingle() - 0.5f) * 200f
             );
 
-            // Every object gets a TickCounter (Update)
-            TickCounter tc = go.AddComponent<TickCounter>();
-            tc.Speed = 0.5f + rng.NextSingle() * 2.0f;
-            componentCount++;
-
-            // Every object gets a TripleCycler (Update + LateUpdate + FixedUpdate)
-            go.AddComponent<TripleCycler>();
-            componentCount++;
-
-            // 60% get a LateFollower (LateUpdate)
-            if (rng.NextSingle() < 0.6f)
+            // Determine how many components this object gets
+            int count = objectsWithComponent.Contains(i) ? 1 : 0;
+            if (extras > 0 && count > 0)
             {
-                LateFollower lf = go.AddComponent<LateFollower>();
-                lf.SmoothFactor = 1.0f + rng.NextSingle() * 10.0f;
-                componentCount++;
+                // Distribute extra components: give up to 3 more (max 4 types)
+                int give = Math.Min(extras, 3);
+                count += give;
+                extras -= give;
             }
 
-            // 40% get a FixedStepper (FixedUpdate)
-            if (rng.NextSingle() < 0.4f)
+            for (int c = 0; c < count; c++)
             {
-                FixedStepper fs = go.AddComponent<FixedStepper>();
-                fs.Magnitude = 0.1f + rng.NextSingle() * 0.5f;
+                switch (typeSlot % 4)
+                {
+                    case 0:
+                        TickCounter tc = go.AddComponent<TickCounter>();
+                        tc.Speed = 0.5f + rng.NextSingle() * 2.0f;
+                        break;
+                    case 1:
+                        go.AddComponent<TripleCycler>();
+                        break;
+                    case 2:
+                        LateFollower lf = go.AddComponent<LateFollower>();
+                        lf.SmoothFactor = 1.0f + rng.NextSingle() * 10.0f;
+                        break;
+                    case 3:
+                        FixedStepper fs = go.AddComponent<FixedStepper>();
+                        fs.Magnitude = 0.1f + rng.NextSingle() * 0.5f;
+                        break;
+                }
+                typeSlot++;
                 componentCount++;
             }
 
             _scene.Add(go);
         }
 
-        Debug.Log($"[StressTest] Spawned {ObjectCount} GameObjects with {componentCount} lifecycle components.");
+        Debug.Log($"[StressTest] Spawned {ObjectCount} GameObjects with {componentCount} lifecycle components (ratio: {(float)componentCount / ObjectCount:F2}).");
         Debug.Log($"[StressTest] Estimated per-frame calls: ~{componentCount} Update + LateUpdate + FixedUpdate dispatches.");
 
         Input.SetCursorVisible(false);
         Scene.Load(_scene);
+        Application.IsPlaying = true;
     }
 
     public override void BeginUpdate()

@@ -3,6 +3,7 @@
 
 using System.Collections.Generic;
 
+using Prowl.Runtime.Events;
 using Prowl.Runtime.Rendering;
 using Prowl.Runtime.Resources;
 using Prowl.Vector;
@@ -27,9 +28,9 @@ public abstract class Light : MonoBehaviour, IRenderableLight
     public ShadowQuality ShadowQuality = ShadowQuality.Hard;
 
 
-    public override void OnRenderCollect(Camera camera, List<IRenderable> renderables, List<IRenderableLight> lights)
+    public override void OnRenderCollect(SceneEvents.OnRenderCollectArgs onRenderCollectArgs)
     {
-        lights.Add(this);
+        onRenderCollectArgs.lights.Add(this);
     }
 
     public virtual int GetLayer() => GameObject.LayerIndex;

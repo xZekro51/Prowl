@@ -28,9 +28,9 @@ public class SpotLight : Light
     private Float4x4 _shadowMatrix;
     private Float4 _shadowAtlasParams; // xy = atlas pos, z = atlas size, w = 1.0
 
-    public override void OnRenderCollect(Camera camera, List<IRenderable> renderables, List<IRenderableLight> lights)
+    public override void OnRenderCollect(Events.SceneEvents.OnRenderCollectArgs onRenderCollectArgs)
     {
-        lights.Add(this);
+        onRenderCollectArgs.lights.Add(this);
     }
 
     public override void DrawGizmos()

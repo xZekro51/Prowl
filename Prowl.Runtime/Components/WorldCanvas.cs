@@ -103,7 +103,7 @@ public class WorldCanvas : MonoBehaviour, IRenderable
 
     }
 
-    public override void OnRenderCollect(Camera camera, List<IRenderable> renderables, List<IRenderableLight> lights)
+    public override void OnRenderCollect(Events.SceneEvents.OnRenderCollectArgs onRenderCollectArgs)
     {
         // Push this canvas as a renderable
         if (_renderTexture.IsValid() && (Material.Res?.IsValid() ?? false) && _quadMesh.IsValid())
@@ -111,7 +111,7 @@ public class WorldCanvas : MonoBehaviour, IRenderable
             _properties.Clear();
             _properties.SetInt("_ObjectID", InstanceID);
             _properties.SetTexture("_MainTex", _renderTexture.MainTexture);
-            renderables.Add(this);
+            onRenderCollectArgs.renderables.Add(this);
         }
     }
 

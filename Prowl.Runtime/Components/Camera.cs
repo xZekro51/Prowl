@@ -105,6 +105,8 @@ public class Camera : MonoBehaviour
     public uint PixelWidth { get; private set; }
     public uint PixelHeight { get; private set; }
 
+    private bool _subscribedToCameras = false;
+
     public float Aspect
     {
         get => _aspect;
@@ -136,6 +138,10 @@ public class Camera : MonoBehaviour
     public override void OnEnable()
     {
         _firstFrame = true;
+    }
+
+    public override void OnDisable()
+    {
     }
 
     public override void DrawGizmos()
@@ -223,6 +229,15 @@ public class Camera : MonoBehaviour
     public void ResetMotionHistory()
     {
         _firstFrame = true;
+    }
+
+    public override void Update()
+    {
+        if (!_subscribedToCameras)
+        {
+            _subscribedToCameras = true;
+            Scene?.AddCamera(this);
+        }
     }
 
     public Ray ScreenPointToRay(Float2 screenPoint, Float2 screenSize)

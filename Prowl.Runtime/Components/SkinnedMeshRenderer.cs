@@ -223,7 +223,7 @@ public class SkinnedMeshRenderer : MonoBehaviour
         }
     }
 
-    public override void OnRenderCollect(Camera camera, List<IRenderable> renderables, List<IRenderableLight> lights)
+    public override void OnRenderCollect(Prowl.Runtime.Events.SceneEvents.OnRenderCollectArgs onRenderCollectArgs)
     {
         var mesh = SharedMesh.Res;
         if (mesh == null || Materials.Count == 0) return;
@@ -273,7 +273,7 @@ public class SkinnedMeshRenderer : MonoBehaviour
                 props.SetInt("boneCount", _skinMatrices?.Length ?? 0);
             }
 
-            renderables.Add(new SkinnedMeshRenderable(
+            onRenderCollectArgs.renderables.Add(new SkinnedMeshRenderable(
                 mesh, mat, Transform.LocalToWorldMatrix,
                 GameObject.LayerIndex, worldBounds, props, subMeshIndex: s));
         }

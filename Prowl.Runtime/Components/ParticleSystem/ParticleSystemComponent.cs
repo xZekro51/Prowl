@@ -3,9 +3,11 @@
 
 using System;
 using System.Collections.Generic;
+
+using Prowl.Runtime.Events;
+using Prowl.Runtime.ParticleSystem.Modules;
 using Prowl.Runtime.Rendering;
 using Prowl.Runtime.Resources;
-using Prowl.Runtime.ParticleSystem.Modules;
 using Prowl.Vector;
 using Prowl.Vector.Geometry;
 
@@ -147,7 +149,7 @@ public class ParticleSystemComponent : MonoBehaviour
         }
     }
 
-    public override void OnRenderCollect(Camera camera, List<IRenderable> renderables, List<IRenderableLight> lights)
+    public override void OnRenderCollect(SceneEvents.OnRenderCollectArgs onRenderCollectArgs)
     {
         if (_particles.Count <= 0 || Material.Res == null || _quadMesh == null) return;
 
@@ -160,7 +162,7 @@ public class ParticleSystemComponent : MonoBehaviour
 
         // Create batched instanced renderables
         InstancedMeshRenderable.CreateBatched(
-            renderables,
+            onRenderCollectArgs.renderables,
             _quadMesh,
             Material.Res,
             _transforms,

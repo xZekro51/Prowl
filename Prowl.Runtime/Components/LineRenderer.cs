@@ -3,6 +3,7 @@
 
 using System.Collections.Generic;
 
+using Prowl.Runtime.Events;
 using Prowl.Runtime.Rendering;
 using Prowl.Runtime.Resources;
 using Prowl.Vector;
@@ -83,10 +84,10 @@ public class LineRenderer : MonoBehaviour, IRenderable
         }
     }
 
-    public override void OnRenderCollect(Camera camera, List<IRenderable> renderables, List<IRenderableLight> lights)
+    public override void OnRenderCollect(SceneEvents.OnRenderCollectArgs onRenderCollectArgs)
     {
         if (Material.Res != null && Points != null && Points.Count >= 2)
-            renderables.Add(this);
+            onRenderCollectArgs.renderables.Add(this);
     }
 
     private bool PointsEqual(List<Float3> a, List<Float3> b)
