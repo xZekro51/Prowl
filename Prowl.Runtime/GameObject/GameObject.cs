@@ -214,7 +214,7 @@ public class GameObject : EngineObject, ISerializable
     internal void SubscribeSceneEvents(Scene scene)
     {
 
-        PreUpdateDelegate = Scene.Events.SubscribePreUpdate(PreUpdate, EventPriority);
+        PreUpdateDelegate = scene.Events.SubscribePreUpdate(PreUpdate, EventPriority);
 
         _eventsInitialized = true;
     }
