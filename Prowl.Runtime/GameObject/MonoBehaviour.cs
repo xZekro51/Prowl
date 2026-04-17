@@ -2,8 +2,10 @@
 // Licensed under the MIT License. See the LICENSE file in the project root for details.
 
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
+using System.Reflection;
 
 using Prowl.Echo;
 using Prowl.PaperUI;
@@ -92,6 +94,51 @@ public abstract class MonoBehaviour : EngineObject, ISerializationCallbackReceiv
     /// </summary>
     public string Tag => _go.Tag;
 
+    #region Override Detection Cache
+
+    [Flags]
+    private enum OverrideFlags : byte
+    {
+        None            = 0,
+        Update          = 1 << 0,
+        LateUpdate      = 1 << 1,
+        FixedUpdate     = 1 << 2,
+        OnRenderCollect = 1 << 3,
+        OnGui           = 1 << 4,
+        DrawGizmos      = 1 << 5,
+    }
+
+    private static readonly ConcurrentDictionary<Type, OverrideFlags> s_overrideCache = new();
+
+    private static OverrideFlags DetectOverrides(Type type)
+    {
+        return s_overrideCache.GetOrAdd(type, static t =>
+        {
+            OverrideFlags flags = OverrideFlags.None;
+            Type baseType = typeof(MonoBehaviour);
+
+            if (t.GetMethod(nameof(Update), BindingFlags.Instance | BindingFlags.Public, Type.EmptyTypes)?.DeclaringType != baseType)
+                flags |= OverrideFlags.Update;
+            if (t.GetMethod(nameof(LateUpdate), BindingFlags.Instance | BindingFlags.Public, Type.EmptyTypes)?.DeclaringType != baseType)
+                flags |= OverrideFlags.LateUpdate;
+            if (t.GetMethod(nameof(FixedUpdate), BindingFlags.Instance | BindingFlags.Public, Type.EmptyTypes)?.DeclaringType != baseType)
+                flags |= OverrideFlags.FixedUpdate;
+            if (t.GetMethod(nameof(OnRenderCollect), BindingFlags.Instance | BindingFlags.Public, [typeof(SceneEvents.OnRenderCollectArgs)])?.DeclaringType != baseType)
+                flags |= OverrideFlags.OnRenderCollect;
+            if (t.GetMethod(nameof(OnGui), BindingFlags.Instance | BindingFlags.Public, [typeof(Paper)])?.DeclaringType != baseType)
+                flags |= OverrideFlags.OnGui;
+            if (t.GetMethod(nameof(DrawGizmos), BindingFlags.Instance | BindingFlags.Public, Type.EmptyTypes)?.DeclaringType != baseType)
+                flags |= OverrideFlags.DrawGizmos;
+
+            return flags;
+        });
+    }
+
+    [SerializeIgnore]
+    private OverrideFlags _overrides;
+
+    #endregion
+
     private Vortex.EventPriority _eventPriority;
 
     public Vortex.EventPriority EventPriority
@@ -141,12 +188,12 @@ public abstract class MonoBehaviour : EngineObject, ISerializationCallbackReceiv
     {
         if (_eventsInitialized)
         {
-            UpdateDelegate.Dispose();
-            LateUpdateDelegate.Dispose();
-            FixedUpdateDelegate.Dispose();
-            OnRenderCollectDelegate.Dispose();
-            OnGuiDelegate.Dispose();
-            DrawGizmosDelegate.Dispose();
+            UpdateDelegate?.Dispose();
+            LateUpdateDelegate?.Dispose();
+            FixedUpdateDelegate?.Dispose();
+            OnRenderCollectDelegate?.Dispose();
+            OnGuiDelegate?.Dispose();
+            DrawGizmosDelegate?.Dispose();
 
             _eventsInitialized = false;
         }
@@ -154,13 +201,20 @@ public abstract class MonoBehaviour : EngineObject, ISerializationCallbackReceiv
 
     internal void SubscribeSceneEvents(Scene scene)
     {
+        _overrides = DetectOverrides(GetType());
 
-        UpdateDelegate = scene.Events.SubscribeUpdate(InternalUpdate, EventPriority);
-        LateUpdateDelegate = scene.Events.SubscribeLateUpdate(InternalLateUpdate, EventPriority);
-        FixedUpdateDelegate = scene.Events.SubscribeFixedUpdate(InternalFixedUpdate, EventPriority);
-        OnRenderCollectDelegate = scene.Events.SubscribeOnRenderCollect(OnRenderCollect, EventPriority);
-        OnGuiDelegate = scene.Events.SubscribeOnGui(OnGui, EventPriority);
-        DrawGizmosDelegate = scene.Events.SubscribeDrawGizmos(DrawGizmos, EventPriority);
+        if (_overrides.HasFlag(OverrideFlags.Update))
+            UpdateDelegate = scene.Events.SubscribeUpdate(InternalUpdate, EventPriority);
+        if (_overrides.HasFlag(OverrideFlags.LateUpdate))
+            LateUpdateDelegate = scene.Events.SubscribeLateUpdate(InternalLateUpdate, EventPriority);
+        if (_overrides.HasFlag(OverrideFlags.FixedUpdate))
+            FixedUpdateDelegate = scene.Events.SubscribeFixedUpdate(InternalFixedUpdate, EventPriority);
+        if (_overrides.HasFlag(OverrideFlags.OnRenderCollect))
+            OnRenderCollectDelegate = scene.Events.SubscribeOnRenderCollect(OnRenderCollect, EventPriority);
+        if (_overrides.HasFlag(OverrideFlags.OnGui))
+            OnGuiDelegate = scene.Events.SubscribeOnGui(OnGui, EventPriority);
+        if (_overrides.HasFlag(OverrideFlags.DrawGizmos))
+            DrawGizmosDelegate = scene.Events.SubscribeDrawGizmos(DrawGizmos, EventPriority);
 
         _eventsInitialized = true;
     }
@@ -175,26 +229,21 @@ public abstract class MonoBehaviour : EngineObject, ISerializationCallbackReceiv
 
         if (enable)
         {
-
-            UpdateDelegate.Enable();
-            LateUpdateDelegate.Enable();
-            FixedUpdateDelegate.Enable();
-            OnRenderCollectDelegate.Enable();
-            OnGuiDelegate.Enable();
-            DrawGizmosDelegate.Enable();
-
-
+            UpdateDelegate?.Enable();
+            LateUpdateDelegate?.Enable();
+            FixedUpdateDelegate?.Enable();
+            OnRenderCollectDelegate?.Enable();
+            OnGuiDelegate?.Enable();
+            DrawGizmosDelegate?.Enable();
         }
         else
         {
-
-            UpdateDelegate.Disable();
-            LateUpdateDelegate.Disable();
-            FixedUpdateDelegate.Disable();
-            OnRenderCollectDelegate.Disable();
-            OnGuiDelegate.Disable();
-            DrawGizmosDelegate.Disable();
-
+            UpdateDelegate?.Disable();
+            LateUpdateDelegate?.Disable();
+            FixedUpdateDelegate?.Disable();
+            OnRenderCollectDelegate?.Disable();
+            OnGuiDelegate?.Disable();
+            DrawGizmosDelegate?.Disable();
         }
     }
 
