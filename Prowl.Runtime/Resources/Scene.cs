@@ -49,6 +49,7 @@ public class Scene : EngineObject, ISerializationCallbackReceiver
 
         Current = scene;
         Current.Enable();
+
         OnSceneLoaded?.Invoke();
     }
 
@@ -109,6 +110,9 @@ public class Scene : EngineObject, ISerializationCallbackReceiver
 
     [SerializeIgnore]
     private bool _isActive = false;
+
+    private object _lock;
+    public HashSet<EngineObject> ToSubscribe = new(ReferenceEqualityComparer.Instance);
 
     public struct FogParams
     {
@@ -238,6 +242,8 @@ public class Scene : EngineObject, ISerializationCallbackReceiver
     {
         if (_isActive) throw new Exception("Scene is already enabled!");
 
+        Events.SubscribeOnBeforeUpdates(SubscribeObjectsToEvents);
+
         _isActive = true;
 
         // Create a copy to avoid collection modification during enumeration
@@ -260,6 +266,28 @@ public class Scene : EngineObject, ISerializationCallbackReceiver
                 }
             }
         }
+    }
+
+    public void SubscribeObjectsToEvents()
+    {
+        Events.Manager.BeginBatch();
+        ReadOnlySpan<EngineObject> list = CollectionsMarshal.AsSpan(ToSubscribe.ToList());
+        ToSubscribe.Clear();
+        for (int i = 0; i < list.Length; i++)
+        {
+
+            EngineObject obj = list[i];
+            if (obj.IsDisposed) continue;
+            if (obj is GameObject go)
+            {
+                go.SubscribeSceneEvents(this);
+            }
+            else if (obj is MonoBehaviour mb)
+            {
+                mb.SubscribeSceneEvents(this);
+            }
+        }
+        Events.Manager.EndBatch();
     }
 
     /// <summary>
@@ -581,6 +609,9 @@ public class Scene : EngineObject, ISerializationCallbackReceiver
         //        GameObject go = activeGOs[i];
         //        go.PreUpdate();
         //}
+
+
+        Events.OnBeforeUpdates.Invoke();
 
         Events.PreUpdate.Invoke();
         Events.Update.Invoke();

@@ -30,6 +30,7 @@ public partial class SceneEvents
     [EventArgs(typeof(Paper))]
     private static readonly EventKey _OnGui = new();
 
+    private static readonly EventKey _OnBeforeUpdates = new();
+
     public readonly record struct OnRenderCollectArgs(Camera camera, List<IRenderable> renderables, List<IRenderableLight> lights);
 }
-//Camera camera, List<IRenderable> renderables, List<IRenderableLight> lights

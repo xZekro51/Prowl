@@ -187,6 +187,8 @@ public class GameObject : EngineObject, ISerializable
 
     #endregion
 
+    private bool _eventsInitialized = false;
+
     private Vortex.EventPriority _eventPriority;
 
     public Vortex.EventPriority EventPriority
@@ -198,7 +200,7 @@ public class GameObject : EngineObject, ISerializable
         set
         {
             _eventPriority = value;
-            if (Scene.IsValid())
+            if (_eventsInitialized && Scene.IsValid())
             {
                 SubscribeSceneEvents(Scene);
                 DisposeSceneEvents();
@@ -209,25 +211,29 @@ public class GameObject : EngineObject, ISerializable
 
     private EventDelegateContainer<SceneEvents.EventTypes, Unit> PreUpdateDelegate = null;
 
-    private void SubscribeSceneEvents(Scene scene)
+    internal void SubscribeSceneEvents(Scene scene)
     {
-        if (!scene.IsValid()) return;
 
         PreUpdateDelegate = Scene.Events.SubscribePreUpdate(PreUpdate, EventPriority);
+
+        _eventsInitialized = true;
     }
 
-    private void DisposeSceneEvents()
+    internal void DisposeSceneEvents()
     {
         PreUpdateDelegate?.Dispose();
+        _eventsInitialized = false;
     }
 
 
     private void UpdateEventDelegateState(bool enable)
     {
-        if (PreUpdateDelegate == null)
+        if (!_eventsInitialized)
         {
-            SubscribeSceneEvents(Scene);
+            Scene?.ToSubscribe.Add(this);
+            return;
         }
+
         if (enable)
         {
 

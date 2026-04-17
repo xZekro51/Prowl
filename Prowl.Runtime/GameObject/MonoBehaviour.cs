@@ -103,7 +103,7 @@ public abstract class MonoBehaviour : EngineObject, ISerializationCallbackReceiv
         set
         {
             _eventPriority = value;
-            if (Scene.IsValid())
+            if (_eventsInitialized && Scene.IsValid())
             {
                 SubscribeSceneEvents(Scene);
                 DisposeSceneEvents();
@@ -147,12 +147,13 @@ public abstract class MonoBehaviour : EngineObject, ISerializationCallbackReceiv
             OnRenderCollectDelegate.Dispose();
             OnGuiDelegate.Dispose();
             DrawGizmosDelegate.Dispose();
+
+            _eventsInitialized = false;
         }
     }
 
-    private void SubscribeSceneEvents(Scene scene)
+    internal void SubscribeSceneEvents(Scene scene)
     {
-        if (!scene.IsValid()) return;
 
         UpdateDelegate = scene.Events.SubscribeUpdate(InternalUpdate, EventPriority);
         LateUpdateDelegate = scene.Events.SubscribeLateUpdate(InternalLateUpdate, EventPriority);
@@ -160,35 +161,40 @@ public abstract class MonoBehaviour : EngineObject, ISerializationCallbackReceiv
         OnRenderCollectDelegate = scene.Events.SubscribeOnRenderCollect(OnRenderCollect, EventPriority);
         OnGuiDelegate = scene.Events.SubscribeOnGui(OnGui, EventPriority);
         DrawGizmosDelegate = scene.Events.SubscribeDrawGizmos(DrawGizmos, EventPriority);
+
+        _eventsInitialized = true;
     }
 
     internal void UpdateEventDelegateState(bool enable)
     {
+        if (!_eventsInitialized)
+        {
+            Scene?.ToSubscribe.Add(this);
+            return;
+        }
+
         if (enable)
         {
-            if (!_eventsInitialized)
-            {
-                SubscribeSceneEvents(Scene);
-                _eventsInitialized = true;
-            }
+
             UpdateDelegate.Enable();
             LateUpdateDelegate.Enable();
             FixedUpdateDelegate.Enable();
             OnRenderCollectDelegate.Enable();
             OnGuiDelegate.Enable();
             DrawGizmosDelegate.Enable();
+
+
         }
         else
         {
-            if (_eventsInitialized)
-            {
-                UpdateDelegate.Disable();
-                LateUpdateDelegate.Disable();
-                FixedUpdateDelegate.Disable();
-                OnRenderCollectDelegate.Disable();
-                OnGuiDelegate.Disable();
-                DrawGizmosDelegate.Disable();
-            }
+
+            UpdateDelegate.Disable();
+            LateUpdateDelegate.Disable();
+            FixedUpdateDelegate.Disable();
+            OnRenderCollectDelegate.Disable();
+            OnGuiDelegate.Disable();
+            DrawGizmosDelegate.Disable();
+
         }
     }
 
