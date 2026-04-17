@@ -36,12 +36,6 @@ public static class Window
         set { InternalWindow.Position = value; }
     }
 
-    public static Vector2D<int> Position
-    {
-        get { return InternalWindow.Position; }
-        set { InternalWindow.Position = value; }
-    }
-
     public static Vector2D<int> Size
     {
         get { return InternalWindow.Size; }
