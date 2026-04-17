@@ -41,8 +41,8 @@ public class EditorApplication : Game
         Window.InitWindow(title, width, height, instance.WindowMaximized ? Silk.NET.Windowing.WindowState.Maximized : Silk.NET.Windowing.WindowState.Normal, false);
 
         Window.Position = new Silk.NET.Maths.Vector2D<int>(
-            instance.WindowX > -1 ? instance.WindowX : Window.Position.X,
-            instance.WindowY > -1 ? instance.WindowY : Window.Position.Y);
+            instance.WindowX > 0 ? instance.WindowX : Window.Position.X,
+            instance.WindowY > 0 ? instance.WindowY : Window.Position.Y);
     }
 
     public override void Initialize()
