@@ -174,14 +174,39 @@ public class BuildSettings : ProjectSettingsBase
 
         paper.Box("bld_sp3").Height(12);
 
-        // Build buttons
-        using (paper.Row("bld_buttons").Height(32).RowBetween(8).ChildLeft(4).Enter())
-        {
-            EditorGUI.Button(paper, "bld_build", $"{EditorIcons.Hammer}  Build", width: 120)
-                .OnValueChanged(_ => StartBuild(false));
+    }
 
-            EditorGUI.Button(paper, "bld_buildrun", $"{EditorIcons.Play}  Build & Run", width: 140)
-                .OnValueChanged(_ => StartBuild(true));
+    public static void BuildLog(string message, LogSeverity severity = LogSeverity.Normal)
+    {
+        if (Program.BuildMode)
+        {
+            var logMessage = new BuildSettingsPanel.BuildStatusReport()
+            {
+                Severity = severity,
+                Type = BuildSettingsPanel.BuildStatusReport.BuildStatusReportType.Info,
+                Message = message,
+            };
+            var serializedOutput = Serializer.Serialize(logMessage).WriteToString();
+            string serializedBase64 = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(serializedOutput));
+            Console.WriteLine(serializedBase64);
+        }
+        else
+        {
+            switch (severity)
+            {
+                case LogSeverity.Error:
+                    Runtime.Debug.LogError(message);
+                    break;
+                case LogSeverity.Warning:
+                    Runtime.Debug.LogWarning(message);
+                    break;
+                case LogSeverity.Success:
+                    Runtime.Debug.LogSuccess(message);
+                    break;
+                default:
+                    Runtime.Debug.Log(message);
+                    break;
+            }
         }
     }
 
