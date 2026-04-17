@@ -31,6 +31,7 @@ public partial class SceneEvents
     private static readonly EventKey _OnGui = new();
 
     private static readonly EventKey _OnBeforeUpdates = new();
+    private static readonly EventKey _OnFlush = new();
 
     public readonly record struct OnRenderCollectArgs(Camera camera, List<IRenderable> renderables, List<IRenderableLight> lights);
 }

@@ -521,6 +521,8 @@ public class Scene : EngineObject, ISerializationCallbackReceiver
     /// <summary> Unregisters all dead / disposed GameObjects </summary>
     public void Flush()
     {
+        Events.OnFlush.Invoke();
+        return;
         List<GameObject> removed = [];
         foreach (GameObject obj in _allObj)
         {
@@ -533,6 +535,16 @@ public class Scene : EngineObject, ISerializationCallbackReceiver
 
         foreach (GameObject obj in removed)
             obj.Scene = null;
+    }
+
+    public void Flush(GameObject gameObject)
+    {
+        if (gameObject.IsDisposed)
+        {
+            _allObj.Remove(gameObject);
+            _allObjSet.Remove(gameObject);
+            gameObject.Scene = null;
+        }
     }
 
     public override void OnDispose()
