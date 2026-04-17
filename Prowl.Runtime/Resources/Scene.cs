@@ -10,6 +10,7 @@ using System.Runtime.InteropServices;
 using Prowl.Echo;
 using Prowl.PaperUI;
 using Prowl.Runtime.Events;
+using Prowl.Runtime.Audio;
 using Prowl.Runtime.Rendering;
 using Prowl.Vector;
 
@@ -320,6 +321,19 @@ public class Scene : EngineObject, ISerializationCallbackReceiver
         }
 
         _isActive = false;
+    }
+
+    public List<Camera> _cameras = new();
+
+    public void AddCamera(Camera camera)
+    {
+        if (!_cameras.Contains(camera))
+            _cameras.Add(camera);
+    }
+
+    public void RemoveCamera(Camera camera)
+    {
+        _cameras.Remove(camera);
     }
 
 
@@ -680,7 +694,7 @@ public class Scene : EngineObject, ISerializationCallbackReceiver
     {
         // Renderables are now collected per-camera inside pipeline.Render()
 
-        var Cameras = ActiveObjects.SelectMany(x => x.GetComponentsInChildren<Camera>()).ToList();
+        var Cameras = _cameras.ToList(); //ActiveObjects.SelectMany(x => x.GetComponentsInChildren<Camera>()).ToList();
 
         Cameras.Sort((a, b) => a.Depth.CompareTo(b.Depth));
 

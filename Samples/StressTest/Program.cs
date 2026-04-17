@@ -155,8 +155,8 @@ public sealed class StressTestGame : Game
 {
     // --- Tunables ---
     // Total GameObjects = ObjectCount. Each gets 3-4 components.
-    // With 10,000 objects × ~3.5 components = ~35,000 lifecycle calls per frame.
-    private const int ObjectCount = 20000;
+    // With 5000 objects × ~3.5 components = ~17,500 lifecycle calls per frame.
+    private const int ObjectCount = 100;
 
     private GameObject? _cameraGO;
     private Scene? _scene;
@@ -259,6 +259,7 @@ public sealed class StressTestGame : Game
 
         Input.SetCursorVisible(false);
         Scene.Load(_scene);
+        Application.IsPlaying = true;
     }
 
     public override void BeginUpdate()
