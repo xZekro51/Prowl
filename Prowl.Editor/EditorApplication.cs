@@ -10,6 +10,7 @@ using Prowl.Editor.Panels;
 using Prowl.Editor.Scripting;
 using Prowl.PaperUI;
 using Prowl.Runtime;
+using Prowl.Vector;
 
 namespace Prowl.Editor;
 
