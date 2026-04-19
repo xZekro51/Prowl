@@ -545,6 +545,7 @@ public class InspectorPanel : DockPanel
         // Full message (word-wrapped)
         EditorGUI.Header(paper, "log_msg_hdr", "Message");
         paper.Box("log_msg")
+            .Wrap(Scribe.TextWrapMode.Wrap)
             .Width(UnitValue.Stretch()).Height(UnitValue.Auto).MinHeight(40)
             .BackgroundColor(EditorTheme.Neutral400).Rounded(3)
             .ChildLeft(8).ChildRight(8).ChildTop(6).ChildBottom(6)

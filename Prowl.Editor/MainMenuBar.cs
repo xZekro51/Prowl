@@ -26,7 +26,7 @@ public static class MainMenuBar
             .Size(paper.Percent(100), EditorTheme.MenuBarHeight)
             .BackgroundColor(EditorTheme.Neutral200)
             .ChildLeft(10)
-            .RowBetween(10)
+            .RowBetween(4)
             .Enter())
         {
             for (int i = 0; i < items.Count; i++)
@@ -34,9 +34,11 @@ public static class MainMenuBar
                 int index = i;
                 var item = items[i];
 
+                float labelSize = paper.MeasureText(item.Label, EditorTheme.FontSize, font).X;
+
                 using (paper.Box($"menu_{index}")
                     .Height(EditorTheme.MenuBarHeight)
-                    .Width(UnitValue.Auto)
+                    .Width(labelSize+12)
                     .BackgroundColor(_openMenuIndex == index ? EditorTheme.Ink200 : Color.Transparent)
                     .Hovered.BackgroundColor(EditorTheme.Ink200).End()
                         .Text(item.Label, font)
