@@ -71,7 +71,7 @@ public class DefaultRenderPipeline : RenderPipeline
         if (s_skyDome.IsNotValid())
         {
             using var stream = EmbeddedResources.GetStream("Assets/Defaults/SkyDome.obj");
-            s_skyDome = AssetImporting.ObjParser.ParseMesh(stream, "SkyDome");
+            s_skyDome = AssetImporting.Obj.ObjImporter.ParseMeshOnly(stream, "SkyDome");
         }
 
         // Pre-compute and upload BRDF integration LUT for PBR
@@ -108,7 +108,7 @@ public class DefaultRenderPipeline : RenderPipeline
 
         foreach (ImageEffect effect in camera.Effects)
         {
-            if (effect == null) continue;
+            if (effect == null || !effect.Enabled) continue;
             RenderStage stage = effect.Stage;
             if (effectsByStage.ContainsKey(stage))
                 effectsByStage[stage].Add(effect);

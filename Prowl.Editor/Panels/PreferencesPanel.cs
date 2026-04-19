@@ -189,7 +189,6 @@ public class PreferencesPanel : DockPanel
             PrefTextField(paper, s, "Bold Font", theme.DefaultBoldFontName, v => theme.DefaultBoldFontName = v);
         });
 
-
         // ── Sizing ──
         EditorGUI.Foldout(paper, "pref_scl_general", "General Sizing", () =>
         {
