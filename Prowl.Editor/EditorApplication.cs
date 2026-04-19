@@ -43,6 +43,13 @@ public class EditorApplication : Game
         Window.Position = new Silk.NET.Maths.Vector2D<int>(
             instance.WindowX > 0 ? instance.WindowX : Window.Position.X,
             instance.WindowY > 0 ? instance.WindowY : Window.Position.Y);
+
+        PaperInstance?.SetReferenceResolution(width / Window.ContentScale * EditorTheme.UserScale, height / Window.ContentScale * EditorTheme.UserScale);
+    }
+
+    public override void Resize(int width, int height)
+    {
+        PaperInstance?.SetReferenceResolution(width / Window.ContentScale * EditorTheme.UserScale, height / Window.ContentScale * EditorTheme.UserScale);
     }
 
     public override void Initialize()
@@ -54,6 +61,8 @@ public class EditorApplication : Game
         // Set invariant culture for consistent number parsing/formatting in the editor (e.g. asset import settings)
         System.Threading.Thread.CurrentThread.CurrentCulture = System.Globalization.CultureInfo.InvariantCulture;
         InitializeFont();
+
+        Resize(Window.Size.X, Window.Size.Y);
 
         PaperInstance.TextMode = Prowl.Quill.TextRenderMode.Bitmap;
 
