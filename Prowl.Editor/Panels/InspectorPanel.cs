@@ -421,11 +421,9 @@ public class InspectorPanel : DockPanel
                 EditorGUI.Label(paper, "insp_sub_tex_size", $"Size: {tex.Width} x {tex.Height}");
                 EditorGUI.Label(paper, "insp_sub_tex_fmt", $"Format: {tex.ImageFormat}");
             }
-            else if (asset is Prowl.Runtime.Resources.Mesh mesh)
+            else if (asset is Prowl.Runtime.Resources.Mesh mesh && parentEntry != null && subEntry != null)
             {
-                EditorGUI.Label(paper, "insp_sub_mesh_verts", $"Vertices: {mesh.Vertices?.Length ?? 0:N0}");
-                EditorGUI.Label(paper, "insp_sub_mesh_tris", $"Triangles: {(mesh.Indices?.Length ?? 0) / 3:N0}");
-                EditorGUI.Label(paper, "insp_sub_mesh_bounds", $"Bounds: {mesh.bounds.Size}");
+                Inspector.MeshAssetEditor.DrawForSubAsset(paper, "insp_sub_mesh", parentEntry, subEntry, mesh);
             }
             else
             {
@@ -547,6 +545,7 @@ public class InspectorPanel : DockPanel
         // Full message (word-wrapped)
         EditorGUI.Header(paper, "log_msg_hdr", "Message");
         paper.Box("log_msg")
+            .Wrap(Scribe.TextWrapMode.Wrap)
             .Width(UnitValue.Stretch()).Height(UnitValue.Auto).MinHeight(40)
             .BackgroundColor(EditorTheme.Neutral400).Rounded(3)
             .ChildLeft(8).ChildRight(8).ChildTop(6).ChildBottom(6)

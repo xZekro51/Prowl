@@ -2,6 +2,7 @@
 // Licensed under the MIT License. See the LICENSE file in the project root for details.
 
 using System;
+using System.Runtime.InteropServices;
 
 using Prowl.Runtime.Events;
 
@@ -17,18 +18,142 @@ public static class Window
     public static IWindow InternalWindow { get; internal set; }
     public static IInputContext InternalInput { get; internal set; }
 
-    //public static event Action? Load;
-    //public static event Action<float>? Update;
-    //public static event Action<float>? Render;
-    //public static event Action<float>? PostRender;
-    //public static event Action<bool>? FocusChanged;
-    //public static event Action<Vector2D<int>>? Resize;
-    //public static event Action<Vector2D<int>>? FramebufferResize;
-    //public static event Action? Closing;
+    // --- Per-monitor DPI awareness on Windows ----------------------------------------------
+    [DllImport("user32.dll")]
+    private static extern bool SetProcessDpiAwarenessContext(nint dpiContext);
+
+    [DllImport("shcore.dll")]
+    private static extern int SetProcessDpiAwareness(int level);
+
+    [DllImport("user32.dll")]
+    private static extern bool SetProcessDPIAware();
+
+    private static readonly nint DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 = -4;
+
+    private static void EnsureDpiAwareOnWindows()
+    {
+        if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows)) return;
+        try { if (SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2)) return; } catch { }
+        try { if (SetProcessDpiAwareness(2) == 0) return; } catch { }
+        try { SetProcessDPIAware(); } catch { }
+    }
+
+    public static event Action? Load;
+    public static event Action<float>? Update;
+    public static event Action<float>? Render;
+    public static event Action<float>? PostRender;
+    public static event Action<bool>? FocusChanged;
+    public static event Action<Vector2D<int>>? Resize;
+    public static event Action<Vector2D<int>>? FramebufferResize;
+    public static event Action? Closing;
 
     //public static event Action<Vector2D<int>>? Move;
     //public static event Action<WindowState>? StateChanged;
     //public static event Action<string[]>? FileDrop;
+
+    private static nint s_contentScaleProc;
+    private static bool s_contentScaleResolved;
+
+    /// <summary>
+    /// System content scale factor (1.0 = 100%, 1.25 = 125%, 1.5 = 150%, etc.).
+    /// Derived from framebuffer-to-window size ratio reported by GLFW.
+    /// </summary>
+    public static float ContentScale
+    {
+        get
+        {
+            if (InternalWindow == null) return 1f;
+
+            nint? nativeGlfw = InternalWindow.Native?.Glfw;
+            if (nativeGlfw.HasValue && TryGetContentScale(nativeGlfw.Value, out float scale))
+                return scale;
+
+            // If the scale through the native method is unavailable, Framebuffer pixels ÷ logical pixels = OS content scale
+            var fb = InternalWindow.FramebufferSize;
+            var win = InternalWindow.Size;
+            return win.X > 0 ? (float)fb.X / win.X : 1f;
+        }
+    }
+
+    private static unsafe bool TryGetContentScale(nint glfwWindow, out float scale)
+    {
+        scale = 1f;
+
+        if (!s_contentScaleResolved)
+        {
+            s_contentScaleResolved = true;
+            try
+            {
+                // Resolve from the same native library Silk.NET already loaded
+                s_contentScaleProc = Silk.NET.GLFW.GlfwProvider.GLFW.Value.Context.GetProcAddress("glfwGetWindowContentScale");
+            }
+            catch { /* symbol not exported (GLFW < 3.3) */ }
+        }
+
+        if (s_contentScaleProc == 0)
+            return false;
+
+        float x, y;
+        ((delegate* unmanaged[Cdecl]<nint, float*, float*, void>)s_contentScaleProc)(glfwWindow, &x, &y);
+        scale = x;
+        return true;
+    }
+
+    private static nint s_contentScaleProc;
+    private static bool s_contentScaleResolved;
+
+    /// <summary>
+    /// System content scale factor (1.0 = 100%, 1.25 = 125%, 1.5 = 150%, 2.0 = retina, etc.).
+    /// <para>
+    /// Silk.NET.GLFW 2.22 does not expose <c>glfwGetWindowContentScale</c> as a managed method,
+    /// so this resolves the symbol via <see cref="INativeContext.GetProcAddress"/> and calls it
+    /// directly. If that fails (non-GLFW backend, older GLFW, or the symbol isn't reachable),
+    /// we fall back to the <c>FramebufferSize / Size</c> ratio — which is also the correct
+    /// value on macOS retina and on DPI-aware Windows (FB in physical pixels, Size in points).
+    /// </para>
+    /// </summary>
+    public static unsafe float ContentScale
+    {
+        get
+        {
+            if (InternalWindow == null) return 1f;
+
+            nint? nativeGlfw = InternalWindow.Native?.Glfw;
+            if (nativeGlfw.HasValue && nativeGlfw.Value != 0 && TryGetContentScaleViaProc(nativeGlfw.Value, out float scale))
+                return scale;
+
+            var fb = InternalWindow.FramebufferSize;
+            var win = InternalWindow.Size;
+            return win.X > 0 ? (float)fb.X / win.X : 1f;
+        }
+    }
+
+    private static unsafe bool TryGetContentScaleViaProc(nint glfwWindow, out float scale)
+    {
+        scale = 1f;
+
+        if (!s_contentScaleResolved)
+        {
+            s_contentScaleResolved = true;
+            try
+            {
+                // Silk.NET's INativeContext GetProcAddress falls through to the GLFW shared
+                // library's own symbol table when glfwGetProcAddress returns null (i.e. for
+                // non-GL symbols). Works on Windows in our testing; on macOS / Linux this path
+                // may return 0 and we'll use the FB/Size fallback in the caller.
+                s_contentScaleProc = Silk.NET.GLFW.GlfwProvider.GLFW.Value.Context.GetProcAddress("glfwGetWindowContentScale");
+            }
+            catch { }
+        }
+
+        if (s_contentScaleProc == 0) return false;
+
+        float x, y;
+        ((delegate* unmanaged[Cdecl]<nint, float*, float*, void>)s_contentScaleProc)(glfwWindow, &x, &y);
+        if (x <= 0) return false;
+        scale = x;
+        return true;
+    }
 
     public static Vector2D<int> Position
     {

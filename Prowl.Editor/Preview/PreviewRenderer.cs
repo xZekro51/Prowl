@@ -1,9 +1,11 @@
 using System;
 using System.Linq;
 
+using Prowl.Editor.Preview;
 using Prowl.PaperUI;
 using Prowl.PaperUI.LayoutEngine;
 using Prowl.Runtime;
+using Prowl.Runtime.MeshFeatures;
 using Prowl.Runtime.Rendering;
 using Prowl.Runtime.Resources;
 using Prowl.Vector;
@@ -82,19 +84,9 @@ public class PreviewRenderer : IDisposable
         _subjectGo.Name = "PreviewSubject";
         _subjectGo.HideFlags = HideFlags.HideAndDontSave;
 
-        // Scale to fit in a ~1 unit cube centered at origin
-        var bounds = ComputeHierarchyBounds(_subjectGo);
-        float maxExtent = MathF.Max(MathF.Max(bounds.Size.X, bounds.Size.Y), bounds.Size.Z);
-        if (maxExtent > 0.001f)
-        {
-            float scale = 1f / maxExtent;
-            _subjectGo.Transform.LocalScale = new Float3(scale, scale, scale);
-            _subjectGo.Transform.Position = -bounds.Center * scale;
-        }
+        NormalizeSubjectToUnitCube(_subjectGo);
 
         _scene.Add(_subjectGo);
-
-        // Frame the normalized object
         FitToSubject(AABB.FromCenterAndSize(Float3.Zero, Float3.One));
     }
 
@@ -110,18 +102,60 @@ public class PreviewRenderer : IDisposable
         renderer.Mesh = mesh;
         renderer.Material = material ?? new Material(Shader.LoadDefault(DefaultShader.Standard));
 
-        // Scale to fit in a ~1 unit cube centered at origin
-        var bounds = mesh.bounds;
-        float maxExtent = MathF.Max(MathF.Max(bounds.Size.X, bounds.Size.Y), bounds.Size.Z);
-        if (maxExtent > 0.001f)
-        {
-            float scale = 1f / maxExtent;
-            _subjectGo.Transform.LocalScale = new Float3(scale, scale, scale);
-            _subjectGo.Transform.Position = -bounds.Center * scale;
-        }
+        NormalizeSubjectToUnitCube(_subjectGo);
+
+        _scene.Add(_subjectGo);
+        FitToSubject(AABB.FromCenterAndSize(Float3.Zero, Float3.One));
+    }
+
+    /// <summary>
+    /// Set up the preview to raymarch a <see cref="MeshSDF"/>. Renders a tight proxy cube
+    /// over the SDF bounds with the SDF raymarching material; the actual surface is traced
+    /// in the fragment shader.
+    /// </summary>
+    /// <remarks>
+    /// The proxy cube is placed at the SDF's actual bounds (no normalization), so the
+    /// distance values stored in the volume remain in world units and the sphere-tracing
+    /// step math stays consistent. The orbit camera frames the bounds.
+    /// </remarks>
+    public void SetupForMeshSDF(MeshSDF sdf)
+    {
+        ClearSubject();
+        if (sdf?.Volume == null) return;
+
+        _subjectGo = new GameObject("PreviewSubject");
+        _subjectGo.HideFlags = HideFlags.HideAndDontSave;
+
+        var bounds = sdf.Bounds;
+        var center = (bounds.Min + bounds.Max) * 0.5f;
+        var size = bounds.Max - bounds.Min;
+
+        var renderer = _subjectGo.AddComponent<MeshRenderer>();
+        renderer.Mesh = Mesh.CreateCube(size);
+        renderer.Material = SDFPreviewMaterial.Create(sdf);
+        _subjectGo.Transform.Position = center;
 
         _scene.Add(_subjectGo);
 
+        FitToSubject(bounds);
+    }
+
+    /// <summary>Set up the preview to show a Prefab's serialized GameObject hierarchy.</summary>
+    public void SetupForPrefab(PrefabAsset prefab)
+    {
+        ClearSubject();
+        if (prefab == null) return;
+
+        _subjectGo = prefab.Instantiate();
+        if (_subjectGo == null) { _subjectGo = new GameObject("PreviewSubject"); return; }
+        _subjectGo.Name = "PreviewSubject";
+        _subjectGo.HideFlags = HideFlags.HideAndDontSave;
+
+        // Non-visual prefabs (script-only hierarchies with no MeshRenderers) fall back to a
+        // unit-sized default inside the helper, rendering as an empty preview.
+        NormalizeSubjectToUnitCube(_subjectGo);
+
+        _scene.Add(_subjectGo);
         FitToSubject(AABB.FromCenterAndSize(Float3.Zero, Float3.One));
     }
 
@@ -211,6 +245,43 @@ public class PreviewRenderer : IDisposable
                 canvas.RoundedRectFilled(rx, ry, rw, rh, 4, 4, 4, 4, new Prowl.Vector.Color32(255, 255, 255, 255));
                 canvas.ClearBrushTexture();
             }));
+    }
+
+    /// <summary>
+    /// Resets the root transform of <paramref name="subject"/>, measures its world-space mesh
+    /// bounds (children included), then scales + translates the root so the aggregate bounds
+    /// fit inside a unit cube centered at the origin. Robust to hierarchies whose root has a
+    /// saved non-identity transform (e.g. prefabs) — the reset ensures the bounds we measure
+    /// are in the same frame we then apply the normalization into.
+    /// </summary>
+    private static void NormalizeSubjectToUnitCube(GameObject subject)
+    {
+        // Reset the root so computed world-space bounds are relative to a clean frame.
+        // Translating/scaling the root afterwards then produces the expected centering.
+        subject.Transform.Position = Float3.Zero;
+        subject.Transform.Rotation = Quaternion.Identity;
+        subject.Transform.LocalScale = Float3.One;
+
+        AABB bounds;
+        var meshRenderer = subject.GetComponent<MeshRenderer>();
+        var skinnedRenderer = subject.GetComponent<SkinnedMeshRenderer>();
+
+        // Fast path for single-MeshRenderer subjects (SetupForMesh case): use the mesh's own
+        // bounds directly, since there is no child hierarchy to walk and world == local at this
+        // point thanks to the identity reset above.
+        if (meshRenderer != null && meshRenderer.Mesh.Res != null && subject.Children.Count == 0)
+            bounds = meshRenderer.Mesh.Res.bounds;
+        else if (skinnedRenderer != null && skinnedRenderer.SharedMesh.Res != null && subject.Children.Count == 0)
+            bounds = skinnedRenderer.SharedMesh.Res.bounds;
+        else
+            bounds = ComputeHierarchyBounds(subject);
+
+        float maxExtent = MathF.Max(MathF.Max(bounds.Size.X, bounds.Size.Y), bounds.Size.Z);
+        if (maxExtent <= 0.001f) return; // no visuals — leave at identity
+
+        float scale = 1f / maxExtent;
+        subject.Transform.LocalScale = new Float3(scale, scale, scale);
+        subject.Transform.Position = -bounds.Center * scale;
     }
 
     private void ClearSubject()

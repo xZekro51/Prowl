@@ -9,8 +9,11 @@ public static class EditorTheme
     public static FontFile? DefaultFont;
     public static FontFile? DefaultBoldFont;
 
-    public static string DefaultFontName = "bahnschrift";
-    public static string DefaultBoldFontName = "bahnschrift";
+    public static string DefaultFontName = "segoe ui";
+    public static string DefaultBoldFontName = "segoe ui";
+
+    // DPI Scaling value
+    public static float UserScale { get; set; } = 1f;
 
     // Sizing — mutable so themes can override
     public static float MenuBarHeight = 26f;
@@ -19,7 +22,7 @@ public static class EditorTheme
     public static float Spacing = 2f;
     public static float Padding = 4f;
     public static float FontSize = 17f;
-    public static float LabelWidth = 120f;
+    public static float LabelWidth = 200f;
     public static float Roundness = 8f;
 
     public static float IndicatorSize = 28f;

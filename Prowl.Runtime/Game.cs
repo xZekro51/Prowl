@@ -76,7 +76,6 @@ public abstract class Game
             _paperRenderer = new PaperRenderer();
             _paperRenderer.Initialize(fbSize.X, fbSize.Y);
             _paper = new Paper(_paperRenderer, winSize.X, winSize.Y, new Prowl.Quill.FontAtlasSettings());
-            _paper.SetReferenceResolution(1920, 1080);
             _paper.SetClipboardHandler(new RuntimeClipboardHandler());
 
             BuiltInAssets.Initialize();
@@ -194,8 +193,9 @@ public abstract class Game
                 Graphics.UnbindFramebuffer();
                 Graphics.Viewport(0, 0, (uint)Window.InternalWindow.FramebufferSize.X, (uint)Window.InternalWindow.FramebufferSize.Y);
 
-                float dpiScale = (float)Window.InternalWindow.FramebufferSize.X / Window.InternalWindow.Size.X;
-                _paper.BeginFrame(delta.Value, dpiScale);
+                // Sync Paper's logical resolution + DPI to the window each frame.
+                PreparePaperFrame();
+                _paper.BeginFrame(delta, -1f); // negative = keep DisplayFramebufferScale set by PreparePaperFrame
 
                 BeginGui(_paper);
 
@@ -223,8 +223,8 @@ public abstract class Game
 
         WindowEvents.Resize += (size) =>
         {
-            _paper.SetResolution(size.Value.X, size.Value.Y);
-            Resize(size.Value.X, size.Value.Y);
+            // Paper's resolution is resynced from PreparePaperFrame each render frame.
+            Resize(size.X, size.Y);
         };
 
         WindowEvents.FramebufferResize += (size) =>
@@ -281,28 +281,65 @@ public abstract class Game
     public virtual void Resize(int width, int height) { }
     public virtual void Closing() { }
 
+    /// <summary>
+    /// Called each frame right before <c>Paper.BeginFrame</c>. Compresses Paper's logical
+    /// window by <see cref="Window.ContentScale"/> so widgets sit in "points" (1 unit =
+    /// 1 logical dot at 1× density, matching the OS convention), and sets
+    /// <c>DisplayFramebufferScale</c> to <see cref="Window.ContentScale"/> so the canvas emits
+    /// pixel-space vertices that land correctly in the framebuffer and font atlases rasterize
+    /// at native density.
+    /// <para>
+    /// Under this scheme a widget declared <c>Width(100)</c> occupies ~100 physical pixels at
+    /// 1× DPI and 200 physical pixels at 2× DPI — i.e. the same physical inches on the screen
+    /// regardless of display density. On non-DPI-aware platforms (Windows without the per-
+    /// monitor manifest) the OS bitmap-upscales the framebuffer on top of this, which makes
+    /// widgets look proportionally larger; on DPI-aware platforms (macOS retina, modern
+    /// Windows) the app renders straight into the physical framebuffer and sizes match native
+    /// apps.
+    /// </para>
+    /// </summary>
+    protected virtual void PreparePaperFrame()
+    {
+        var winSize = Window.InternalWindow.Size;
+        float cs = Math.Max(0.01f, Window.ContentScale);
+        _paper.SetResolution(winSize.X / cs, winSize.Y / cs);
+        _paper.DisplayFramebufferScale = new Float2(cs, cs);
+    }
+
+    /// <summary>
+    /// Returns the current mouse position in Paper-logical units. Because
+    /// <see cref="PreparePaperFrame"/> compresses Paper's logical space by <see cref="Window.ContentScale"/>,
+    /// the mouse (reported in window-logical pixels by Silk.NET on every platform) is divided
+    /// by the same factor so clicks land on widgets in the same space.
+    /// </summary>
+    protected virtual Float2 GetPaperMousePosition()
+    {
+        var p = Input.MousePosition;
+        float cs = Math.Max(0.01f, Window.ContentScale);
+        return new Float2(p.X / cs, p.Y / cs);
+    }
+
     [RequiresDynamicCode("Calls System.Enum.GetValues(Type)")]
     private void UpdatePaperInput()
     {
-        // Handle mouse position and movement
-        Int2 mousePos = Input.MousePosition;
-        _paper.SetPointerState(PaperMouseBtn.Unknown, mousePos.X, mousePos.Y, false, true);
+        // Mouse position in Paper-logical space.
+        Float2 mousePos = GetPaperMousePosition();
+        _paper.SetPointerState(PaperMouseBtn.Unknown, (float)mousePos.X, (float)mousePos.Y, false, true);
 
-        // Handle mouse buttons
         if (Input.GetMouseButtonDown(0))
-            _paper.SetPointerState(PaperMouseBtn.Left, mousePos.X, mousePos.Y, true, false);
+            _paper.SetPointerState(PaperMouseBtn.Left, (float)mousePos.X, (float)mousePos.Y, true, false);
         if (Input.GetMouseButtonUp(0))
-            _paper.SetPointerState(PaperMouseBtn.Left, mousePos.X, mousePos.Y, false, false);
+            _paper.SetPointerState(PaperMouseBtn.Left, (float)mousePos.X, (float)mousePos.Y, false, false);
 
         if (Input.GetMouseButtonDown(1))
-            _paper.SetPointerState(PaperMouseBtn.Right, mousePos.X, mousePos.Y, true, false);
+            _paper.SetPointerState(PaperMouseBtn.Right, (float)mousePos.X, (float)mousePos.Y, true, false);
         if (Input.GetMouseButtonUp(1))
-            _paper.SetPointerState(PaperMouseBtn.Right, mousePos.X, mousePos.Y, false, false);
+            _paper.SetPointerState(PaperMouseBtn.Right, (float)mousePos.X, (float)mousePos.Y, false, false);
 
         if (Input.GetMouseButtonDown(2))
-            _paper.SetPointerState(PaperMouseBtn.Middle, mousePos.X, mousePos.Y, true, false);
+            _paper.SetPointerState(PaperMouseBtn.Middle, (float)mousePos.X, (float)mousePos.Y, true, false);
         if (Input.GetMouseButtonUp(2))
-            _paper.SetPointerState(PaperMouseBtn.Middle, mousePos.X, mousePos.Y, false, false);
+            _paper.SetPointerState(PaperMouseBtn.Middle, (float)mousePos.X, (float)mousePos.Y, false, false);
 
         // Handle mouse wheel
         float wheelDelta = Input.MouseWheelDelta;
