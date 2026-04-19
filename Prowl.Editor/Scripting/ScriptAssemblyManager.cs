@@ -129,6 +129,14 @@ public static class ScriptAssemblyManager
         LoadAssembly(project.GameAssemblyPath, "game", loaded);
         LoadAssembly(project.EditorAssemblyPath, "editor", loaded);
         LoadedScriptAssemblies = loaded.Count > 0 ? loaded.ToArray() : null;
+
+        // Register with the centralized runtime AssemblyManager so that
+        // RuntimeUtils.FindType, serialization, and registry scanning all work.
+        if (LoadedScriptAssemblies != null)
+            Runtime.AssemblyManager.Register(LoadedScriptAssemblies);
+
+        // Clear serialization caches so stale null entries from before load are purged
+        Echo.Serializer.ClearCache();
     }
 
     private static void LoadAssembly(string dllPath, string label, List<Assembly> loaded)
@@ -163,6 +171,9 @@ public static class ScriptAssemblyManager
     /// <summary>Unload all user script assemblies and release the collectible ALC.</summary>
     public static void UnloadAssemblies()
     {
+        // Unregister from runtime AssemblyManager first (clears bridges and caches)
+        Runtime.AssemblyManager.UnregisterAll();
+
         LoadedScriptAssemblies = null;
 
         if (_scriptContext != null)
@@ -171,6 +182,9 @@ public static class ScriptAssemblyManager
             _previousContextRef = new WeakReference(_scriptContext);
             _scriptContext = null;
         }
+
+        // Clear Echo's serialization caches to purge stale type handles
+        Echo.Serializer.ClearCache();
 
         for (int i = 0; i < 3; i++)
         {
@@ -195,18 +209,10 @@ public static class ScriptAssemblyManager
     /// <summary>
     /// Returns the combined set of assemblies that registries should scan:
     /// all default-context assemblies (engine, BCL) plus any loaded script assemblies.
+    /// Delegates to the centralized <see cref="Runtime.AssemblyManager"/>.
     /// </summary>
     public static IEnumerable<Assembly> GetAllRelevantAssemblies()
-    {
-        foreach (var asm in AssemblyLoadContext.Default.Assemblies)
-            yield return asm;
-
-        if (LoadedScriptAssemblies != null)
-        {
-            foreach (var asm in LoadedScriptAssemblies)
-                yield return asm;
-        }
-    }
+        => Runtime.AssemblyManager.GetAllRelevantAssemblies();
 
     // ================================================================
     //  In-Process Hot Reload
@@ -243,19 +249,7 @@ public static class ScriptAssemblyManager
     }
 
     public static IEnumerable<Type> GetAllTypes()
-    {
-        foreach (var assembly in ScriptAssemblyManager.GetAllRelevantAssemblies())
-        {
-            Type[] types;
-            try { types = assembly.GetTypes(); }
-            catch { continue; }
-
-            foreach (var type in types)
-            {
-                yield return type;
-            }
-        }
-    }
+        => Runtime.AssemblyManager.GetAllTypes();
 
     private static void PerformReload(Project project)
     {

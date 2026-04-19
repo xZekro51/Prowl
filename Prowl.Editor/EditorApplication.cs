@@ -66,6 +66,8 @@ public class EditorApplication : Game
 
         _dockSpace = new DockSpace(CreateDefaultLayout());
 
+        RuntimeUtils.AdditionalAssemblyProvider = ScriptAssemblyManager.GetAllRelevantAssemblies;
+
         // If launched with --project arg, open the project and load assemblies
         // BEFORE registries scan — so user types are visible to all registries
         bool projectAlreadyInitialized = false;
@@ -1075,6 +1077,15 @@ public class EditorApplication : Game
             return;
         }
 
+        // Snapshot static fields before play mode so we can restore them on exit
+        foreach (Assembly assembly in RuntimeUtils.GetAllAssemblies())
+        {
+            if (!assembly.FullName.StartsWith("System.") && !assembly.FullName.StartsWith("Microsoft."))
+            {
+                StaticFieldCrawler.SnapshotStaticFields(assembly);
+            }
+        }
+
         // Clear selection (references will be invalid)
         Selection.Clear();
 
@@ -1131,6 +1142,9 @@ public class EditorApplication : Game
 
         // Unload the play scene
         Runtime.Resources.Scene.Unload();
+
+        // Restore static fields to their pre-play-mode values
+        StaticFieldCrawler.RestoreStaticFields();
 
         // Restore the editor scene WITHOUT lifecycle callbacks
         if (_savedEditorScene != null)

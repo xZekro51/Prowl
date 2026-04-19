@@ -302,7 +302,10 @@ public class DesktopBuildPipeline : BuildPipeline
                     // Load user game scripts assembly
                     string gameAssembly = Path.Combine(Application.DataPath, "{{project.Name}}.Game.dll");
                     if (File.Exists(gameAssembly))
-                        Assembly.LoadFrom(gameAssembly);
+                    {
+                        var asm = Assembly.LoadFrom(gameAssembly);
+                        AssemblyManager.Register(asm);
+                    }
 
                     // Initialize asset database
                     var db = new PlayerAssetDatabase(AssetPackagingMode.{{settings.PackagingMode}}, "Content");

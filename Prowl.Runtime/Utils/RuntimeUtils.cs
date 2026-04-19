@@ -44,6 +44,13 @@ public static class RuntimeUtils
     private static readonly Dictionary<TypeInfo, bool> s_deepCopyByAssignmentCache = [];
     private static readonly Dictionary<Type, int> s_executionOrderCache = [];
 
+    /// <summary>
+    /// Optional provider for additional assemblies (e.g. from a collectible AssemblyLoadContext).
+    /// Set this from the editor or host to include script assemblies in type lookups.
+    /// When null, only <see cref="AppDomain.CurrentDomain.GetAssemblies()"/> is used.
+    /// </summary>
+    public static Func<IEnumerable<Assembly>>? AdditionalAssemblyProvider { get; set; }
+
     public static void ClearCache()
     {
         s_deepCopyByAssignmentCache.Clear();
@@ -70,27 +77,7 @@ public static class RuntimeUtils
 
     public static Type? FindType(string qualifiedTypeName)
     {
-        Type? t = Type.GetType(qualifiedTypeName);
-
-        if (t != null)
-        {
-            return t;
-        }
-        else
-        {
-            foreach (Assembly asm in AppDomain.CurrentDomain.GetAssemblies())
-            {
-                t = asm.GetType(qualifiedTypeName);
-                if (t != null)
-                    return t;
-
-                // If not found, try to find by name without namespace
-                t = asm.GetTypes().FirstOrDefault(t => t.Name.Equals(qualifiedTypeName, StringComparison.OrdinalIgnoreCase));
-                if (t != null)
-                    return t;
-            }
-            return null;
-        }
+        return AssemblyManager.FindType(qualifiedTypeName);
     }
 
     public static PropertyInfo GetInstanceProperty(this Type type, string name)
@@ -284,8 +271,7 @@ public static class RuntimeUtils
 
     public static IEnumerable<Type> GetTypesWithAttribute<T>()
     {
-        Assembly[] assemblies = AppDomain.CurrentDomain.GetAssemblies();
-        foreach (Assembly assembly in assemblies)
+        foreach (Assembly assembly in GetAllAssemblies())
             foreach (Type type in assembly.GetTypes())
                 if (type.GetCustomAttributes(typeof(T), true).Length > 0)
                     yield return type;
@@ -294,7 +280,7 @@ public static class RuntimeUtils
     public static List<Type> FindTypesImplementing(Type propertyType, bool ignoreGenerics = false)
     {
         List<Type> types = [];
-        foreach (Assembly asm in AppDomain.CurrentDomain.GetAssemblies())
+        foreach (Assembly asm in GetAllAssemblies())
         {
             foreach (Type type in asm.GetTypes())
             {
@@ -324,6 +310,26 @@ public static class RuntimeUtils
             string temp = System.IO.Path.Combine(path, $"{name} ({i}){ext}");
             if (!System.IO.File.Exists(temp))
                 return temp;
+        }
+    }
+
+    /// <summary>
+    /// Returns all assemblies from the default AppDomain plus any additional assemblies
+    /// provided via <see cref="AdditionalAssemblyProvider"/> (e.g. from a collectible ALC).
+    /// </summary>
+    public static IEnumerable<Assembly> GetAllAssemblies()
+    {
+        foreach (Assembly asm in AppDomain.CurrentDomain.GetAssemblies())
+            yield return asm;
+
+        if (AdditionalAssemblyProvider != null)
+        {
+            HashSet<Assembly> seen = [.. AppDomain.CurrentDomain.GetAssemblies()];
+            foreach (Assembly asm in AdditionalAssemblyProvider())
+            {
+                if (seen.Add(asm))
+                    yield return asm;
+            }
         }
     }
 

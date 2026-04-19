@@ -4,6 +4,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Reflection;
 using System.Runtime.Loader;
 using System.Text;
@@ -44,6 +45,10 @@ public class ScriptAssemblyLoadContext : AssemblyLoadContext
     {
         _assemblyDir = assemblyDir;
         Unloading += OnUnloading;
+
+        // Bridge assembly resolution so that Type.GetType(assemblyQualifiedName) in the
+        // default context can find types defined in this collectible ALC.
+        Default.Resolving += OnDefaultContextResolving;
     }
 
     protected override Assembly? Load(AssemblyName assemblyName)
@@ -64,6 +69,18 @@ public class ScriptAssemblyLoadContext : AssemblyLoadContext
     }
 
     /// <summary>
+    /// Resolves assembly requests from the default context by forwarding to this ALC.
+    /// This allows <c>Type.GetType(assemblyQualifiedName)</c> and serialization frameworks
+    /// to find user script types without them being in the default context.
+    /// </summary>
+    private Assembly? OnDefaultContextResolving(AssemblyLoadContext context, AssemblyName assemblyName)
+    {
+        if (IsUnloading) return null;
+
+        return Assemblies.FirstOrDefault(a => a.GetName().Name == assemblyName.Name);
+    }
+
+    /// <summary>
     /// Track a live object created from this ALC for diagnostics.
     /// Used by the migration engine to verify all references are released.
     /// </summary>
@@ -80,6 +97,9 @@ public class ScriptAssemblyLoadContext : AssemblyLoadContext
     {
         if (IsUnloading) return;
         IsUnloading = true;
+
+        // Remove the default-context resolving bridge before unload
+        Default.Resolving -= OnDefaultContextResolving;
 
         // Prune dead references before reporting
         _trackedObjects.RemoveAll(wr => !wr.IsAlive);
@@ -115,6 +135,7 @@ public class ScriptAssemblyLoadContext : AssemblyLoadContext
     private void OnUnloading(AssemblyLoadContext context)
     {
         IsUnloading = true;
+        Default.Resolving -= OnDefaultContextResolving;
         HotloadLogger.LogTrace($"ALC '{Name}' is unloading...");
     }
 }
