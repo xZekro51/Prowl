@@ -507,6 +507,72 @@ public class Scene : EngineObject, ISerializationCallbackReceiver
         return null;
     }
 
+    /// <summary>
+    /// Assigns an <see cref="Vortex.EventPriority"/> to every GameObject and MonoBehaviour
+    /// based on its position in the scene hierarchy using a depth-first traversal.
+    /// <para>
+    /// Priority scheme per GO at hierarchy levels <c>[L0, L1, …, Ln]</c>:
+    /// <list type="bullet">
+    ///   <item>GameObject itself:  <c>(L0, L1, …, Ln)</c></item>
+    ///   <item>Component i:        <c>(L0, L1, …, Ln, 0, i)</c>  — <c>0</c> discriminator sorts before children</item>
+    ///   <item>Child j:            <c>(L0, L1, …, Ln, 1, j)</c>  — <c>1</c> discriminator sorts after components</item>
+    /// </list>
+    /// </para>
+    /// </summary>
+    public void RecalculateEventPriorities()
+    {
+        // Stack-based DFS. Each entry carries the parent's levels array.
+        // Children are built as (parentLevels + [1, childIndex]).
+        var stack = new Stack<(GameObject go, int[] parentLevels, int siblingIndex)>();
+
+        // Push roots in reverse so first root is processed first.
+        var roots = RootObjects.ToList();
+        for (int i = roots.Count - 1; i >= 0; i--)
+            stack.Push((roots[i], [], i));
+
+        while (stack.Count > 0)
+        {
+            (GameObject go, int[] parentLevels, int sibIdx) = stack.Pop();
+
+            if (go.IsDisposed) continue;
+
+            // GO priority = parentLevels + (1, siblingIndex), or just (siblingIndex) for roots.
+            int[] goLevels;
+            if (parentLevels.Length == 0)
+            {
+                goLevels = [sibIdx];
+            }
+            else
+            {
+                goLevels = new int[parentLevels.Length + 2];
+                parentLevels.CopyTo(goLevels, 0);
+                goLevels[parentLevels.Length] = 1;     // discriminator: child
+                goLevels[parentLevels.Length + 1] = sibIdx;
+            }
+
+            go.EventPriority = new Vortex.EventPriority(goLevels);
+
+            // Components: (goLevels + [0, componentIndex])
+            ReadOnlySpan<MonoBehaviour> components = go.GetComponentsAsSpan<MonoBehaviour>();
+            if (components.Length > 0)
+            {
+                int[] compLevels = new int[goLevels.Length + 2];
+                goLevels.CopyTo(compLevels, 0);
+                compLevels[goLevels.Length] = 0; // discriminator: component (sorts before children)
+                for (int c = 0; c < components.Length; c++)
+                {
+                    compLevels[compLevels.Length - 1] = c;
+                    components[c].EventPriority = new Vortex.EventPriority((int[])compLevels.Clone());
+                }
+            }
+
+            // Push children in reverse order so first child is processed first.
+            List<GameObject> children = go.Children;
+            for (int i = children.Count - 1; i >= 0; i--)
+                stack.Push((children[i], goLevels, i));
+        }
+    }
+
     /// <summary> Unregisters all GameObjects. </summary>
     public void Clear()
     {

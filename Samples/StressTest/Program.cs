@@ -106,6 +106,7 @@ public class FixedStepper : MonoBehaviour
 
     public override void FixedUpdate()
     {
+        var lol = this.EventPriority;
         _phase += Time.FixedDeltaTime;
         // Oscillate a velocity vector
         _velocity = new Float3(
@@ -155,7 +156,7 @@ public sealed class StressTestGame : Game
 {
     // --- Tunables ---
     // Total GameObjects spawned.
-    private const int ObjectCount = 20000;
+    private const int ObjectCount = 5000;
     // Average MonoBehaviours per GameObject (0.5 = half the objects get one component).
     private const float ComponentsPerObject = 0.5f;
 

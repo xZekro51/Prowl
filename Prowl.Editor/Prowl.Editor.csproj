@@ -27,7 +27,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Vortex" Version="1.0.15" />
+    <PackageReference Include="Vortex" Version="1.1.2" />
   </ItemGroup>
 
   <ItemGroup>

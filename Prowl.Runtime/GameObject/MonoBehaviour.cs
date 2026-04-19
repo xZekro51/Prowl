@@ -158,6 +158,23 @@ public abstract class MonoBehaviour : EngineObject, ISerializationCallbackReceiv
         }
     }
 
+    /// <summary>
+    /// Updates this component's <see cref="EventPriority"/> based on its owning GameObject's
+    /// priority and this component's index. Uses discriminator <c>0</c> so components sort
+    /// after their GO but before its children.
+    /// </summary>
+    public void UpdateEventPriority()
+    {
+        if (!GameObject.IsValid()) return;
+
+        ReadOnlySpan<int> goLevels = GameObject.EventPriority.Levels;
+        int[] levels = new int[goLevels.Length + 2];
+        goLevels.CopyTo(levels);
+        levels[goLevels.Length] = 0; // discriminator: component
+        levels[goLevels.Length + 1] = GameObject._components.IndexOf(this);
+        EventPriority = new Vortex.EventPriority(levels);
+    }
+
     private EventDelegateContainer<SceneEvents.EventTypes, Unit> UpdateDelegate = null;
     private EventDelegateContainer<SceneEvents.EventTypes, Unit> LateUpdateDelegate = null;
     private EventDelegateContainer<SceneEvents.EventTypes, Unit> FixedUpdateDelegate = null;
@@ -357,6 +374,8 @@ public abstract class MonoBehaviour : EngineObject, ISerializationCallbackReceiv
 
         bool isEnabled = _enabled && _go.EnabledInHierarchy;
         _enabledInHierarchy = isEnabled;
+
+        UpdateEventPriority();
     }
 
     /// <summary>
