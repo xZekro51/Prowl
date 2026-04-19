@@ -587,7 +587,7 @@ public class Scene : EngineObject, ISerializationCallbackReceiver
     /// <summary> Unregisters all dead / disposed GameObjects </summary>
     public void Flush()
     {
-        Events.OnFlush.Invoke();
+        Events?.OnFlush.Invoke();
         return;
         List<GameObject> removed = [];
         foreach (GameObject obj in _allObj)
