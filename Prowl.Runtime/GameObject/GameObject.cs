@@ -1273,6 +1273,8 @@ public class GameObject : EngineObject, ISerializable
     {
         DeserializeHeader(value);
 
+        //Debug.Log($"Deserialized gameObject {Name}");
+
         // Always generate fresh identifier — Scene restores them after deserialization
         _identifier = Guid.NewGuid();
         _static = value["Static"]?.ByteValue == 1;
@@ -1311,6 +1313,9 @@ public class GameObject : EngineObject, ISerializable
         {
             // Fallback for Missing Type
             EchoObject? typeProperty = compTag.Get("$type");
+
+            Type resolvedType = typeof(MonoBehaviour);
+
             // If the type is missing or string null/whitespace something is wrong, so just let the Deserializer handle it, maybe it knows what to do
             if (typeProperty != null && !string.IsNullOrWhiteSpace(typeProperty.StringValue))
             {
@@ -1331,9 +1336,11 @@ public class GameObject : EngineObject, ISerializable
                     HandleMissingComponent(compTag, ctx);
                     continue;
                 }
+
+                resolvedType = oType;
             }
 
-            MonoBehaviour? component = Serializer.Deserialize<MonoBehaviour>(compTag, ctx);
+            MonoBehaviour? component = Serializer.Deserialize(compTag, resolvedType, ctx) as MonoBehaviour;
             if (component.IsNotValid()) continue;
             _components.Add(component);
             _componentCache.Add(component.GetType(), component);
