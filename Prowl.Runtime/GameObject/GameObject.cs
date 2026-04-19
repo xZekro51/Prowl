@@ -127,6 +127,7 @@ public class GameObject : EngineObject, ISerializable
         internal set
         {
             _scene = new(value);
+            UpdateEventPriority();
             UpdateEventDelegateState(Enabled);
             ReadOnlySpan<MonoBehaviour> components = CollectionsMarshal.AsSpan(_components);
             for (int i = 0; i < components.Length; i++)
@@ -208,6 +209,53 @@ public class GameObject : EngineObject, ISerializable
         }
     }
 
+
+    /// <summary>
+    /// Recalculates this GameObject's <see cref="EventPriority"/> based on its parent's
+    /// priority and its sibling index. Components get a distinct priority that sorts
+    /// after the GO but before its children.
+    /// Does not recurse into children — call on each child separately if needed.
+    /// </summary>
+    public void UpdateEventPriority()
+    {
+        int[] goLevels;
+
+        if (_parent != null)
+        {
+            // Child: parentLevels + (1, siblingIndex)
+            int sibIdx = _parent.Children.IndexOf(this);
+            if (sibIdx < 0) sibIdx = 0;
+            ReadOnlySpan<int> pLevels = _parent.EventPriority.Levels;
+            goLevels = new int[pLevels.Length + 2];
+            pLevels.CopyTo(goLevels);
+            goLevels[pLevels.Length] = 1;       // discriminator: child
+            goLevels[pLevels.Length + 1] = sibIdx;
+        }
+        else
+        {
+            // Root: (rootIndex)
+            Scene? scene = Scene;
+            int sibIdx = scene != null ? scene.GetRootIndex(this) : 0;
+            if (sibIdx < 0) sibIdx = 0;
+            goLevels = [sibIdx];
+        }
+
+        EventPriority = new Vortex.EventPriority(goLevels);
+
+        // Components: goLevels + (0, componentIndex) — 0 discriminator sorts before children.
+        ReadOnlySpan<MonoBehaviour> components = GetComponentsAsSpan<MonoBehaviour>();
+        if (components.Length > 0)
+        {
+            int[] compLevels = new int[goLevels.Length + 2];
+            goLevels.CopyTo(compLevels, 0);
+            compLevels[goLevels.Length] = 0; // discriminator: component
+            for (int i = 0; i < components.Length; i++)
+            {
+                compLevels[compLevels.Length - 1] = i;
+                components[i].EventPriority = new Vortex.EventPriority((int[])compLevels.Clone());
+            }
+        }
+    }
 
     private EventDelegateContainer<SceneEvents.EventTypes, Unit> PreUpdateDelegate = null;
 
@@ -547,6 +595,7 @@ public class GameObject : EngineObject, ISerializable
     /// </summary>
     internal void PreUpdate()
     {
+
         ReadOnlySpan<MonoBehaviour> components = CollectionsMarshal.AsSpan(_components);
 
         for (int i = 0; i < components.Length; i++)

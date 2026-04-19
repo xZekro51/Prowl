@@ -106,6 +106,7 @@ public class FixedStepper : MonoBehaviour
 
     public override void FixedUpdate()
     {
+        var lol = this.EventPriority;
         _phase += Time.FixedDeltaTime;
         // Oscillate a velocity vector
         _velocity = new Float3(
@@ -155,7 +156,7 @@ public sealed class StressTestGame : Game
 {
     // --- Tunables ---
     // Total GameObjects spawned.
-    private const int ObjectCount = 10000;
+    private const int ObjectCount = 5000;
     // Average MonoBehaviours per GameObject (0.5 = half the objects get one component).
     private const float ComponentsPerObject = 0.5f;
 
@@ -174,6 +175,10 @@ public sealed class StressTestGame : Game
     // Camera fly
     private float _yaw;
     private float _pitch;
+
+    // FPS tracking
+    private float _fpsTimer;
+    private int _fpsFrameCount;
 
     public override void Initialize()
     {
@@ -295,6 +300,16 @@ public sealed class StressTestGame : Game
 
     public override void BeginUpdate()
     {
+        _fpsFrameCount++;
+        _fpsTimer += Time.DeltaTime;
+        if (_fpsTimer >= 5.0f)
+        {
+            float avgFps = _fpsFrameCount / _fpsTimer;
+            Debug.Log($"[StressTest] Average FPS over last {_fpsTimer:F1}s: {avgFps:F1}");
+            _fpsFrameCount = 0;
+            _fpsTimer = 0f;
+        }
+
         HandleCameraMovement();
     }
 
