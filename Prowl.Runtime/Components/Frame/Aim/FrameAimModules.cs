@@ -14,6 +14,8 @@ public class FrameComposer : FrameAimComponent
 {
     [Range(0f, 1f)] public float ScreenX = 0.5f;
     [Range(0f, 1f)] public float ScreenY = 0.5f;
+    /*[Range(0f, 2)] public float ClampX = 2f;
+    [Range(0f, 2)] public float ClampY = 2f;*/
     [Range(0f, 1f)] public float DeadZoneWidth = 0.1f;
     [Range(0f, 1f)] public float DeadZoneHeight = 0.1f;
     [Range(0f, 2f)] public float SoftZoneWidth = 0.8f;
@@ -28,25 +30,56 @@ public class FrameComposer : FrameAimComponent
     {
         if (lookAt == null) return;
 
-        Float3 targetPos = lookAt.Position;
-        Float3 dir = Float3.Normalize(targetPos - state.Position);
+        Float3 toTarget = lookAt.Position - state.Position;
+        if (Float3.LengthSquared(toTarget) < 0.0001f) return;
 
-        if (Float3.LengthSquared(dir) < 0.0001f) return;
+        Float3 dir = Float3.Normalize(toTarget);
 
-        Float3 localDir = Quaternion.Inverse(state.Orientation) * dir;
+        // Decompose the angle between the camera forward and the target into
+        // yaw (horizontal) and pitch (vertical) using the camera's own axes.
+        // This avoids the Atan2(y, z) singularity that flips the camera when
+        // the target is behind it.
+        Float3 fwd = state.Orientation * Float3.UnitZ;
+        Float3 right = state.Orientation * Float3.UnitX;
+        Float3 up = state.Orientation * Float3.UnitY;
+
+        float fwdDot = Float3.Dot(dir, fwd);
+        float rightDot = Float3.Dot(dir, right);
+        float upDot = Float3.Dot(dir, up);
+
+        // Yaw: signed angle in the camera's horizontal plane (range -π to π).
+        float yawRad = Maths.Atan2(rightDot, fwdDot);
+
+        // Pitch: elevation angle. Using the horizontal length as denominator
+        // keeps the result in -π/2..π/2 regardless of whether the target is
+        // in front of or behind the camera.
+        float horizLen = Maths.Sqrt(fwdDot * fwdDot + rightDot * rightDot);
+        float pitchRad = Maths.Atan2(upDot, horizLen);
+
+        // Map to normalised screen coordinates (0 = screen centre).
         float halfFovRad = Maths.ToRadians(state.FieldOfView * 0.5f);
         Float2 screenOffset = new(
-            Maths.Atan2(localDir.X, localDir.Z) / halfFovRad * 0.5f,
-            Maths.Atan2(localDir.Y, localDir.Z) / halfFovRad * 0.5f
+            yawRad / halfFovRad * 0.5f,
+            pitchRad / halfFovRad * 0.5f
         );
 
         Float2 desiredScreen = new(ScreenX - 0.5f, ScreenY - 0.5f);
         Float2 error = screenOffset - desiredScreen;
 
+        // Dead-zone: suppress error when the target is inside the dead zone.
         float dzHalfX = DeadZoneWidth * 0.5f;
         float dzHalfY = DeadZoneHeight * 0.5f;
         if (Maths.Abs(error.X) < dzHalfX) error = new Float2(0, error.Y);
         if (Maths.Abs(error.Y) < dzHalfY) error = new Float2(error.X, 0);
+
+        // Soft-zone: clamp the error so the target never drifts further than
+        // the soft-zone boundary, which provides an implicit hard limit.
+        float szHalfX = Maths.Max(SoftZoneWidth * 0.5f, dzHalfX);
+        float szHalfY = Maths.Max(SoftZoneHeight * 0.5f, dzHalfY);
+        /*error = new Float2(
+            Maths.Clamp(error.X, -ClampX, ClampX),
+            Maths.Clamp(error.Y, -ClampY, ClampY)
+        );*/
 
         if (!_initialized) { _previousScreenOffset = error; _initialized = true; }
 
@@ -58,11 +91,12 @@ public class FrameComposer : FrameAimComponent
         );
         _previousScreenOffset = dampedError;
 
-        float yawCorrection = dampedError.X * state.FieldOfView;
-        float pitchCorrection = -dampedError.Y * state.FieldOfView;
+        // Convert screen-space error back to angular correction (degrees).
+        float yawCorrectionDeg = dampedError.X * state.FieldOfView;
+        float pitchCorrectionDeg = -dampedError.Y * state.FieldOfView;
 
-        Quaternion yawRot = Quaternion.AxisAngle(Float3.UnitY, Maths.ToRadians(yawCorrection));
-        Quaternion pitchRot = Quaternion.AxisAngle(Float3.UnitX, Maths.ToRadians(pitchCorrection));
+        Quaternion yawRot = Quaternion.AxisAngle(Float3.UnitY, Maths.ToRadians(yawCorrectionDeg));
+        Quaternion pitchRot = Quaternion.AxisAngle(Float3.UnitX, Maths.ToRadians(pitchCorrectionDeg));
         state.Orientation = yawRot * state.Orientation * pitchRot;
     }
 
