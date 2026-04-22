@@ -22,13 +22,13 @@ public static partial class WindowEvents
     private static readonly EventKey _Load = new();
     [EventArgs(typeof(FloatArgs))]
     private static readonly EventKey _Update = new();
-    [EventArgs(typeof(FloatArgs))]
+    [EventArgs(typeof(float))]
     private static readonly EventKey _Render = new();
     [EventArgs(typeof(FloatArgs))]
     private static readonly EventKey _PostRender = new();
     [EventArgs(typeof(BoolArgs))]
     private static readonly EventKey _FocusChanged = new();
-    [EventArgs(typeof(Vector2IntArgs))]
+    [EventArgs(typeof(Vector2D<int>))]
     private static readonly EventKey _Resize = new();
     [EventArgs(typeof(Vector2IntArgs))]
     private static readonly EventKey _FramebufferResize = new();

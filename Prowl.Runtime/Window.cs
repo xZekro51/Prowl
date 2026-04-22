@@ -99,34 +99,6 @@ public static class Window
         return true;
     }
 
-    private static nint s_contentScaleProc;
-    private static bool s_contentScaleResolved;
-
-    /// <summary>
-    /// System content scale factor (1.0 = 100%, 1.25 = 125%, 1.5 = 150%, 2.0 = retina, etc.).
-    /// <para>
-    /// Silk.NET.GLFW 2.22 does not expose <c>glfwGetWindowContentScale</c> as a managed method,
-    /// so this resolves the symbol via <see cref="INativeContext.GetProcAddress"/> and calls it
-    /// directly. If that fails (non-GLFW backend, older GLFW, or the symbol isn't reachable),
-    /// we fall back to the <c>FramebufferSize / Size</c> ratio — which is also the correct
-    /// value on macOS retina and on DPI-aware Windows (FB in physical pixels, Size in points).
-    /// </para>
-    /// </summary>
-    public static unsafe float ContentScale
-    {
-        get
-        {
-            if (InternalWindow == null) return 1f;
-
-            nint? nativeGlfw = InternalWindow.Native?.Glfw;
-            if (nativeGlfw.HasValue && nativeGlfw.Value != 0 && TryGetContentScaleViaProc(nativeGlfw.Value, out float scale))
-                return scale;
-
-            var fb = InternalWindow.FramebufferSize;
-            var win = InternalWindow.Size;
-            return win.X > 0 ? (float)fb.X / win.X : 1f;
-        }
-    }
 
     private static unsafe bool TryGetContentScaleViaProc(nint glfwWindow, out float scale)
     {
@@ -241,7 +213,7 @@ public static class Window
 
     public static void OnRender(double delta)
     {
-        WindowEvents.Render.Invoke(new((float)delta));
+        WindowEvents.Render.Invoke((float)delta);
         WindowEvents.PostRender.Invoke(new((float)delta));
     }
 
@@ -252,7 +224,7 @@ public static class Window
 
     public static void OnResize(Vector2D<int> size)
     {
-        WindowEvents.Resize.Invoke(new(size));
+        WindowEvents.Resize.Invoke(size);
     }
 
     public static void OnFramebufferResize(Vector2D<int> size)
