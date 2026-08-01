@@ -11,6 +11,7 @@ using Prowl.PaperUI;
 using Prowl.Runtime.GUI;
 using Prowl.Runtime.Resources;
 using Prowl.Runtime.UI;
+using Prowl.Tweening;
 using Prowl.Vector;
 
 namespace Prowl.Runtime;
@@ -310,6 +311,7 @@ public abstract class Game
             while (fixedTimeAccumulator >= Time.FixedDeltaTime && count++ < Time.MaxFixedIterations)
             {
                 if (currentScene.IsValid()) currentScene.FixedUpdate();
+                Tween.FixedUpdate(Time.FixedDeltaTime);
                 fixedTimeAccumulator -= Time.FixedDeltaTime;
             }
 
@@ -327,6 +329,15 @@ public abstract class Game
         }
 
         OnUpdate(currentScene);
+
+        // Tweens tick after Update so a script can start one and see it applied the same frame.
+        // Scaled time is withheld while gameplay is paused or we're in edit mode, which freezes
+        // gameplay tweens there; tweens created with SetUpdate(isIndependentUpdate: true) run on
+        // unscaled time regardless, which is what editor and UI animations want.
+        // Tween.Update also performs the per-frame cleanup, so it must run every frame.
+        float tweenDelta = Application.ShouldRunGameplay ? Time.DeltaTime : 0f;
+        Tween.Update(tweenDelta, Time.UnscaledDeltaTime);
+        Tween.LateUpdate(tweenDelta, Time.UnscaledDeltaTime);
 
         // Consume step request re-pause after one frame
         if (Application.StepRequested)
