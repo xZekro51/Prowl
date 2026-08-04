@@ -242,14 +242,20 @@ public class EditorAssetBackend : AssetBackendBase
         string cachePath = GetCachePath(assetId);
         var entry = GetEntry(assetId);
 
-        // Validate cache check importer version matches current importer
-        if (onMainThread && entry != null && !string.IsNullOrEmpty(entry.ImporterType))
+        // Validate the cache against both the importer and the source file before trusting it.
+        if (onMainThread && entry != null)
         {
-            var importer = EditorRegistries.CreateImporterByName(entry.ImporterType);
-            if (importer != null && importer.Version != entry.ImporterVersion)
+            var importer = !string.IsNullOrEmpty(entry.ImporterType)
+                ? EditorRegistries.CreateImporterByName(entry.ImporterType) : null;
+            bool importerChanged = importer != null && importer.Version != entry.ImporterVersion;
+            bool sourceChanged = IsSourceNewerThanImport(entry);
+
+            if (importerChanged || sourceChanged)
             {
-                // Cache is stale importer was updated since last import
-                Runtime.Debug.Log($"Cache stale for '{entry.Path}': importer v{entry.ImporterVersion} -> v{importer.Version}. Reimporting.");
+                string why = sourceChanged
+                    ? "source file changed"
+                    : $"importer v{entry.ImporterVersion} -> v{importer!.Version}";
+                Runtime.Debug.Log($"Cache stale for '{entry.Path}': {why}. Reimporting.");
                 entry.NeedsReimport = true;
                 RunImport(entry);
                 return TryGetLoaded(assetId, out var reimported) ? reimported : null;
@@ -687,6 +693,9 @@ public class EditorAssetBackend : AssetBackendBase
 
             if (!success || ctx.MainAsset == null)
             {
+                // Clearing the list alone would strand the sub-assets in the index and their caches on
+                // disk, leaving GUIDs that resolve to a parent claiming it has no sub-assets.
+                RemoveSubAssets(entry, includeThumbnails: true);
                 entry.SubAssets = Array.Empty<SubAssetEntry>();
                 entry.NeedsReimport = false;
                 return false;
@@ -1506,11 +1515,12 @@ public class EditorAssetBackend : AssetBackendBase
         imported.Add(relativePath);
     }
 
-    public void ProcessFileChanges()
+    /// <param name="force">Drain the watcher immediately instead of waiting out its debounce window.</param>
+    public void ProcessFileChanges(bool force = false)
     {
         if (_watcher == null) return;
 
-        var events = _watcher.DrainEvents();
+        var events = _watcher.DrainEvents(force);
         if (events.Count == 0) return;
 
         var imported = new List<string>();
@@ -1640,12 +1650,72 @@ public class EditorAssetBackend : AssetBackendBase
         }
     }
 
+    /// <summary>
+    /// Reconcile the whole database against what is actually on disk: pending watcher events first, then a
+    /// full scan that picks up anything added, removed, or modified since the last import.
+    /// <para>
+    /// The watcher is best-effort - it debounces, it can drop events on buffer overflow, and it is gated
+    /// behind window focus by default - so anything that must not act on stale state calls this first.
+    /// Main-thread only, since it imports.
+    /// </para>
+    /// </summary>
+    public void Refresh()
+    {
+        if (Thread.CurrentThread.ManagedThreadId != _mainThreadId)
+        {
+            Runtime.Debug.LogWarning("AssetDatabase.Refresh must run on the main thread; ignoring.");
+            return;
+        }
+
+        ProcessFileChanges(force: true);
+        ScanAssets();
+        ImportDirty();
+        MetadataCache.Save(_project.MetadataDbPath, _guidToEntry.Values);
+        RefreshResourcesMap();
+        _folderIndexDirty = true;
+    }
+
     // ================================================================
     //  Helpers
     // ================================================================
 
     private string GetCachePath(Guid guid)
         => Path.Combine(_project.CachePath, $"{guid}.asset");
+
+    /// <summary>True when the source file has been written since the entry was last imported, i.e. the
+    /// cached import no longer represents what's on disk.</summary>
+    private bool IsSourceNewerThanImport(AssetEntry entry)
+    {
+        string absolutePath = Path.Combine(_project.AssetsPath, entry.Path);
+        if (!File.Exists(absolutePath)) return false;
+        return File.GetLastWriteTimeUtc(absolutePath).Ticks != entry.LastModifiedTicks;
+    }
+
+    /// <summary>
+    /// Reimport <paramref name="guid"/> if its cache file is missing or its source file has changed since
+    /// the last import, and report whether it did. Sub-asset GUIDs resolve to their parent, since only the
+    /// parent can be imported.
+    /// <para>
+    /// The file watcher normally keeps caches current, but it debounces and can miss changes outright
+    /// (buffer overflow, a save immediately before the work that reads the cache), and until now nothing
+    /// but a full editor restart reconciled that. Anything that reads caches straight off disk rather than
+    /// through <see cref="LoadFresh"/> - a build, above all - has to check first or it ships whatever the
+    /// asset used to be.
+    /// </para>
+    /// </summary>
+    public bool EnsureCacheUpToDate(Guid guid)
+    {
+        Guid parentGuid = _subAssetIndex.TryGetValue(guid, out var subInfo) ? subInfo.parentGuid : guid;
+
+        var entry = GetEntry(parentGuid);
+        if (entry == null) return false;
+
+        bool cacheMissing = !File.Exists(GetCachePath(guid)) || !File.Exists(GetCachePath(parentGuid));
+        if (!cacheMissing && !IsSourceNewerThanImport(entry)) return false;
+
+        Reimport(parentGuid);
+        return true;
+    }
 
     private void RemoveSubAsset(Guid subGuid, bool includeThumbnails)
     {
