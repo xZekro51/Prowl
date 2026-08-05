@@ -88,19 +88,31 @@ public static class TweenManager
 
         for (int i = 0; i < s_storageCount; i++)
             s_storages[i].Sweep();
+
+        // After the sweep, so a continuation sees fully reclaimed storage.
+        TweenAwaiterRegistry.Pump();
     }
 
     /// <summary>Advances <see cref="UpdateType.Late"/> tweens. Call after your engine's late update.</summary>
     public static void LateUpdate(float deltaTime, float unscaledDeltaTime = -1f)
-        => Tick(UpdateType.Late, deltaTime, unscaledDeltaTime);
+    {
+        Tick(UpdateType.Late, deltaTime, unscaledDeltaTime);
+        TweenAwaiterRegistry.Pump();
+    }
 
     /// <summary>Advances <see cref="UpdateType.Fixed"/> tweens. Call from your fixed-step loop.</summary>
     public static void FixedUpdate(float fixedDeltaTime, float unscaledFixedDeltaTime = -1f)
-        => Tick(UpdateType.Fixed, fixedDeltaTime, unscaledFixedDeltaTime);
+    {
+        Tick(UpdateType.Fixed, fixedDeltaTime, unscaledFixedDeltaTime);
+        TweenAwaiterRegistry.Pump();
+    }
 
     /// <summary>Advances <see cref="UpdateType.Manual"/> tweens. Call it yourself, whenever.</summary>
     public static void ManualUpdate(float deltaTime, float unscaledDeltaTime = -1f)
-        => Tick(UpdateType.Manual, deltaTime, unscaledDeltaTime);
+    {
+        Tick(UpdateType.Manual, deltaTime, unscaledDeltaTime);
+        TweenAwaiterRegistry.Pump();
+    }
 
     private static void Tick(UpdateType type, float deltaTime, float unscaledDeltaTime)
     {

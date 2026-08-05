@@ -4,6 +4,7 @@
 using System;
 using System.Collections.Generic;
 using System.Runtime.CompilerServices;
+using System.Threading;
 
 namespace Prowl.Tweening;
 
@@ -198,6 +199,25 @@ public readonly struct Sequence : IEquatable<Sequence>
     public bool IsPlaying => Tween.IsPlaying;
     public bool IsComplete => Tween.IsComplete;
     public float Duration => Data?.Duration ?? 0f;
+
+    #endregion
+
+    #region Awaiting
+
+    /// <inheritdoc cref="Tween.AsyncWaitForCompletion(CancellationToken)"/>
+    public TweenAwaitable AsyncWaitForCompletion(CancellationToken cancellationToken = default) => Tween.AsyncWaitForCompletion(cancellationToken);
+
+    /// <inheritdoc cref="Tween.AsyncWaitForKill(CancellationToken)"/>
+    public TweenAwaitable AsyncWaitForKill(CancellationToken cancellationToken = default) => Tween.AsyncWaitForKill(cancellationToken);
+
+    /// <inheritdoc cref="Tween.AsyncWaitForStart(CancellationToken)"/>
+    public TweenAwaitable AsyncWaitForStart(CancellationToken cancellationToken = default) => Tween.AsyncWaitForStart(cancellationToken);
+
+    /// <inheritdoc cref="Tween.AsyncWaitForElapsedLoops(int, CancellationToken)"/>
+    public TweenAwaitable AsyncWaitForElapsedLoops(int loops, CancellationToken cancellationToken = default) => Tween.AsyncWaitForElapsedLoops(loops, cancellationToken);
+
+    /// <inheritdoc cref="Tween.AsyncWaitForPosition(float, CancellationToken)"/>
+    public TweenAwaitable AsyncWaitForPosition(float position, CancellationToken cancellationToken = default) => Tween.AsyncWaitForPosition(position, cancellationToken);
 
     #endregion
 
